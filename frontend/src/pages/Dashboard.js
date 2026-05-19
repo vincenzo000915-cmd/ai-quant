@@ -53,32 +53,18 @@ export default function Dashboard() {
   const [btcChart, setBtcChart] = useState([]);
   const [positions, setPositions] = useState([]);
   const [pnlData, setPnlData] = useState([]);
+  const [pnlSummary, setPnlSummary] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  // --- PnL mock generator ---
-  const generatePnlData = useCallback(() => {
-    const now = Date.now();
-    const data = [];
-    let cum = 0;
-    for (let i = 29; i >= 0; i--) {
-      const pnl = (Math.random() - 0.45) * 2000;
-      cum += pnl;
-      data.push({
-        date: new Date(now - i * 86400000).toISOString().slice(5, 10),
-        daily: Math.round(pnl * 100) / 100,
-        cumulative: Math.round(cum * 100) / 100,
-      });
-    }
-    return data;
-  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [acctRes, priceRes, posRes] = await Promise.allSettled([
+      const [acctRes, priceRes, posRes, pnlHistRes, pnlSumRes] = await Promise.allSettled([
         fetch(`${API}/api/account`),
         fetch(`${API}/api/market/btc-price`),
         fetch(`${API}/api/positions`),
+        fetch(`${API}/api/pnl/history?days=30`),
+        fetch(`${API}/api/pnl/summary`),
       ]);
 
       if (acctRes.status === 'fulfilled') {
@@ -102,6 +88,15 @@ export default function Dashboard() {
         setPositions([]);
       }
 
+      if (pnlHistRes.status === 'fulfilled') {
+        const json = await pnlHistRes.value.json();
+        setPnlData(Array.isArray(json) ? json : []);
+      }
+
+      if (pnlSumRes.status === 'fulfilled') {
+        setPnlSummary(await pnlSumRes.value.json());
+      }
+
       // BTC 歷史圖表（額外請求，每30秒刷新）
       try {
         const chartRes = await fetch(`${API}/api/market/btc-chart`);
@@ -115,9 +110,8 @@ export default function Dashboard() {
       setBtcPrice(null);
       setPositions([]);
     }
-    setPnlData(generatePnlData());
     setLoading(false);
-  }, [generatePnlData]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -159,42 +153,42 @@ export default function Dashboard() {
       {/* Loading */}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-      {/* KPI Cards */}
+      {/* KPI Cards - 顯示真實量化指標 */}
       <Grid container spacing={{ xs: 1, sm: 2.5 }} sx={{ mb: { xs: 1.5, sm: 3 } }}>
         <Grid item xs={6} md={3}>
           <StatCard
             title="帳戶餘額"
-            value={account ? `$${(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}` : '---'}
-            subtitle="USDT"
+            value={account ? `$${(account.balance || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : '---'}
+            subtitle={`USDT · ${pnlSummary?.unrealized_pnl >= 0 ? '+' : ''}${(pnlSummary?.unrealized_pnl || 0).toFixed(2)} 未實現`}
             icon={<AccountBalanceWalletIcon />}
             color="primary"
           />
         </Grid>
         <Grid item xs={6} md={3}>
           <StatCard
-            title="權益總額"
-            value={account ? `$${(account.equity || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}` : '---'}
-            subtitle="USDT"
-            icon={<ShowChartIcon />}
-            color="success"
+            title="累積 PnL"
+            value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${(pnlSummary.total_pnl || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '---'}
+            subtitle={pnlSummary ? `${pnlSummary.total_trades} 筆 · 回撤 -$${pnlSummary.max_drawdown}` : '尚未交易'}
+            icon={pnlSummary?.total_pnl >= 0 ? <TrendingUpIcon /> : <TrendingDownIcon />}
+            color={pnlSummary?.total_pnl >= 0 ? 'success' : 'error'}
           />
         </Grid>
         <Grid item xs={6} md={3}>
           <StatCard
-            title="未實現 PnL"
-            value={account ? `$${(account.unrealized_pnl || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}` : '---'}
-            subtitle="USDT"
-            icon={account?.unrealized_pnl >= 0 ? <TrendingUpIcon /> : <TrendingDownIcon />}
-            color={account?.unrealized_pnl >= 0 ? 'success' : 'error'}
+            title="勝率"
+            value={pnlSummary ? `${pnlSummary.win_rate.toFixed(1)}%` : '---'}
+            subtitle={pnlSummary ? `${pnlSummary.winning_trades}勝 / ${pnlSummary.losing_trades}敗` : '尚無交易紀錄'}
+            icon={<ShowChartIcon />}
+            color={pnlSummary?.win_rate >= 50 ? 'success' : pnlSummary?.win_rate >= 40 ? 'warning' : 'error'}
           />
         </Grid>
         <Grid item xs={6} md={3}>
           <StatCard
-            title="BTC 價格"
-            value={btcPrice ? `$${(btcPrice.price || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}` : '---'}
-            subtitle={btcPrice ? `24h: ${btcPrice.change_24h >= 0 ? '+' : ''}${(btcPrice.change_24h || 0).toFixed(2)}%` : ''}
+            title="運行中"
+            value={pnlSummary ? `${pnlSummary.running_strategies}` : '---'}
+            subtitle={pnlSummary ? `策略 · ${pnlSummary.open_positions} 持倉中` : ''}
             icon={<ShowChartIcon />}
-            color={btcPrice?.change_24h >= 0 ? 'success' : 'error'}
+            color="primary"
           />
         </Grid>
       </Grid>

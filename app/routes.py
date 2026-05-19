@@ -81,6 +81,99 @@ def list_positions():
     return jsonify([p.to_dict() for p in query.all()])
 
 
+# ===== PnL 歷史（真實資料，從 trades 表計算）=====
+
+@api_bp.route('/pnl/history', methods=['GET'])
+def pnl_history():
+    """每日 PnL + 累積 PnL（從真實 trades 表算）"""
+    from sqlalchemy import func, cast, Date
+    from datetime import datetime, timedelta
+
+    days = int(request.args.get('days', 30))
+    strategy_id = request.args.get('strategy_id')
+
+    since = datetime.utcnow() - timedelta(days=days)
+
+    q = db.session.query(
+        cast(Trade.exit_time, Date).label('date'),
+        func.sum(Trade.pnl).label('daily_pnl'),
+        func.count(Trade.id).label('trade_count'),
+    ).filter(Trade.exit_time >= since)
+
+    if strategy_id:
+        q = q.filter(Trade.strategy_id == int(strategy_id))
+
+    rows = q.group_by('date').order_by('date').all()
+
+    # 補齊缺失日期（沒交易那天 daily=0）
+    by_date = {r.date.isoformat(): {'daily': float(r.daily_pnl or 0), 'count': r.trade_count} for r in rows}
+
+    result = []
+    cum = 0.0
+    for i in range(days - 1, -1, -1):
+        d = (datetime.utcnow().date() - timedelta(days=i))
+        key = d.isoformat()
+        daily = by_date.get(key, {}).get('daily', 0)
+        count = by_date.get(key, {}).get('count', 0)
+        cum += daily
+        result.append({
+            'date': d.strftime('%m-%d'),
+            'daily': round(daily, 2),
+            'cumulative': round(cum, 2),
+            'trade_count': count,
+        })
+
+    return jsonify(result)
+
+
+@api_bp.route('/pnl/summary', methods=['GET'])
+def pnl_summary():
+    """總體 PnL 統計（用於 Dashboard KPI）"""
+    from sqlalchemy import func
+
+    total_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).scalar() or 0
+    total_trades = db.session.query(func.count(Trade.id)).scalar() or 0
+    winning = db.session.query(func.count(Trade.id)).filter(Trade.pnl > 0).scalar() or 0
+    losing = db.session.query(func.count(Trade.id)).filter(Trade.pnl < 0).scalar() or 0
+    open_positions = db.session.query(func.count(Position.id)).filter(Position.status == 'open').scalar() or 0
+    running_strategies = db.session.query(func.count(Strategy.id)).filter(Strategy.status == 'running').scalar() or 0
+    unrealized = db.session.query(func.coalesce(func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0
+
+    win_rate = (winning / total_trades * 100) if total_trades > 0 else 0
+
+    # 最大回撤（從每日累積 PnL 算）
+    from datetime import datetime, timedelta
+    from sqlalchemy import cast, Date
+    since = datetime.utcnow() - timedelta(days=90)
+    rows = db.session.query(
+        cast(Trade.exit_time, Date).label('date'),
+        func.sum(Trade.pnl).label('daily_pnl'),
+    ).filter(Trade.exit_time >= since).group_by('date').order_by('date').all()
+
+    cum = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for r in rows:
+        cum += float(r.daily_pnl or 0)
+        if cum > peak:
+            peak = cum
+        dd = peak - cum
+        if dd > max_dd:
+            max_dd = dd
+
+    return jsonify({
+        'total_pnl': round(total_pnl, 2),
+        'unrealized_pnl': round(unrealized, 2),
+        'total_trades': total_trades,
+        'winning_trades': winning,
+        'losing_trades': losing,
+        'win_rate': round(win_rate, 1),
+        'open_positions': open_positions,
+        'running_strategies': running_strategies,
+        'max_drawdown': round(max_dd, 2),
+    })
+
+
 # ===== 訂單 =====
 
 @api_bp.route('/orders', methods=['GET'])

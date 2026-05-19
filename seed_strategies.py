@@ -10,7 +10,7 @@ with app.app_context():
     strategies = [
         {
             'name': '均線交叉策略',
-            'type': 'ma_cross',
+            'type': 'ma_crossover',
             'params': {'fast': 5, 'slow': 20},
             'symbol': 'BTC/USDT',
             'timeframe': '4h',
@@ -19,7 +19,7 @@ with app.app_context():
         },
         {
             'name': 'RSI反轉策略',
-            'type': 'rsi_reversal',
+            'type': 'rsi',
             'params': {'period': 14, 'oversold': 30, 'overbought': 70},
             'symbol': 'BTC/USDT',
             'timeframe': '4h',
@@ -28,7 +28,7 @@ with app.app_context():
         },
         {
             'name': '布林帶突破策略',
-            'type': 'bollinger_breakout',
+            'type': 'bollinger',
             'params': {'period': 20, 'std': 2},
             'symbol': 'BTC/USDT',
             'timeframe': '4h',

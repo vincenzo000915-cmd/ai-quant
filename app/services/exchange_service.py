@@ -91,14 +91,49 @@ def get_exchange():
     return exchange
 
 
-def fetch_ohlcv(symbol='BTC/USDT', timeframe='4h', limit=500):
-    """獲取K線數據並存入資料庫"""
-    exchange = get_exchange()
-    raw = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+_OKX_TF_MAP = {
+    '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+    '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
+    '1d': '1D', '1w': '1W',
+}
 
+
+def _okx_symbol(symbol):
+    """BTC/USDT → BTC-USDT"""
+    return symbol.replace('/', '-')
+
+
+def fetch_ohlcv(symbol='BTC/USDT', timeframe='4h', limit=500):
+    """獲取K線數據並存入資料庫（直接 OKX REST，繞過 CCXT bug）"""
+    inst_id = _okx_symbol(symbol)
+    bar = _OKX_TF_MAP.get(timeframe, timeframe.upper())
+
+    # OKX 單次最多 300 筆，limit > 300 要分頁
+    all_rows = []
+    fetched = 0
+    after = ''
+    per_page = min(300, limit)
+
+    while fetched < limit:
+        params = {'instId': inst_id, 'bar': bar, 'limit': per_page}
+        if after:
+            params['after'] = after
+        data = _okx_get('/api/v5/market/candles', params)
+        if not data:
+            break
+        all_rows.extend(data)
+        fetched += len(data)
+        if len(data) < per_page:
+            break
+        after = data[-1][0]  # 最舊的 timestamp 當下一頁起點
+
+    if not all_rows:
+        return []
+
+    # OKX 返回 [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
     candles = []
-    for r in raw:
-        ts = r[0] // 1000  # CCXT 回傳毫秒，轉為秒
+    for r in all_rows:
+        ts = int(r[0]) // 1000  # ms → s
         candle = Candle.query.filter_by(
             symbol=symbol, timeframe=timeframe, timestamp=ts
         ).first()
@@ -108,19 +143,19 @@ def fetch_ohlcv(symbol='BTC/USDT', timeframe='4h', limit=500):
                 symbol=symbol,
                 timeframe=timeframe,
                 timestamp=ts,
-                open=r[1],
-                high=r[2],
-                low=r[3],
-                close=r[4],
-                volume=r[5],
+                open=float(r[1]),
+                high=float(r[2]),
+                low=float(r[3]),
+                close=float(r[4]),
+                volume=float(r[5]),
             )
             db.session.add(candle)
         else:
-            candle.open = r[1]
-            candle.high = r[2]
-            candle.low = r[3]
-            candle.close = r[4]
-            candle.volume = r[5]
+            candle.open = float(r[1])
+            candle.high = float(r[2])
+            candle.low = float(r[3])
+            candle.close = float(r[4])
+            candle.volume = float(r[5])
 
         candles.append(candle)
 
@@ -186,9 +221,10 @@ def cancel_order(order_id, symbol):
 
 def get_historical_prices(symbol='BTC-USDT', days=30):
     """獲取近期價格數據（OKX 公開 API，1小時K線，近48小時）"""
+    inst_id = _okx_symbol(symbol) if '/' in symbol else symbol
     try:
         data = _okx_get('/api/v5/market/candles', {
-            'instId': symbol,
+            'instId': inst_id,
             'bar': '1H',
             'limit': 48,
         })
@@ -214,8 +250,9 @@ def get_historical_prices(symbol='BTC-USDT', days=30):
 
 def get_ticker(symbol='BTC-USDT'):
     """獲取即時價格（OKX 公開 API，無需簽名）"""
+    inst_id = _okx_symbol(symbol) if '/' in symbol else symbol
     try:
-        data = _okx_get('/api/v5/market/ticker', {'instId': symbol})
+        data = _okx_get('/api/v5/market/ticker', {'instId': inst_id})
         if not data:
             raise Exception('No ticker data')
         t = data[0]
