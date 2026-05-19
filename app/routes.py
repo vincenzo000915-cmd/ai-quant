@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.extensions import db
-from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate
+from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate, ParamOptimization
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
@@ -75,6 +75,96 @@ def strategies_live_state():
     """Phase 7.2: 每 running 策略的指標即時讀數 + 距觸發 hint"""
     from app.services.live_state import all_live_states
     return jsonify(all_live_states())
+
+
+@api_bp.route('/strategies/<int:id>/optimize', methods=['POST'])
+def trigger_optimize(id):
+    """Phase 10.2: 觸發策略參數網格搜尋（非同步，丟給 Celery worker）。"""
+    from app.services.audit import log as audit
+    from app.services.param_optimizer import get_grid, grid_size
+    from app.tasks.strategy_tasks import optimize_strategy_params
+
+    strategy = Strategy.query.get_or_404(id)
+    grid = get_grid(strategy.type)
+    if not grid:
+        return jsonify({'error': f'strategy_type={strategy.type} 沒有定義參數網格，無法優化'}), 400
+
+    body = request.get_json(silent=True) or {}
+    max_combos = int(body.get('max_combos', 24))
+
+    # 防止對同一策略同時跑多個優化
+    running = ParamOptimization.query.filter(
+        ParamOptimization.strategy_id == id,
+        ParamOptimization.status.in_(['pending', 'running']),
+    ).first()
+    if running:
+        return jsonify({
+            'error': '已有一個進行中的優化任務',
+            'optimization_id': running.id,
+            'status': running.status,
+        }), 409
+
+    opt = ParamOptimization(
+        strategy_id=id,
+        status='pending',
+        grid=grid,
+        baseline_params=dict(strategy.params or {}),
+        combos_total=min(grid_size(grid) + 1, max_combos + 1),
+    )
+    db.session.add(opt)
+    db.session.commit()
+
+    task = optimize_strategy_params.delay(opt.id, max_combos)
+    audit('param_optimize_start', actor='user',
+          strategy_id=id, optimization_id=opt.id, grid=grid, max_combos=max_combos)
+
+    return jsonify({
+        'optimization_id': opt.id,
+        'task_id': task.id,
+        'status': opt.status,
+        'combos_total': opt.combos_total,
+        'message': '已排入 Celery 跑（每組 ~10-20s，多參數需數分鐘）。可輪詢 /optimize/latest 看進度。',
+    }), 202
+
+
+@api_bp.route('/strategies/<int:id>/optimize/latest', methods=['GET'])
+def latest_optimize(id):
+    """Phase 10.2: 取得策略最新一次優化結果（含進度）。"""
+    opt = (
+        ParamOptimization.query
+        .filter_by(strategy_id=id)
+        .order_by(ParamOptimization.id.desc())
+        .first()
+    )
+    if not opt:
+        return jsonify({'error': 'no optimization yet'}), 404
+    return jsonify(opt.to_dict(include_results=True))
+
+
+@api_bp.route('/strategies/<int:id>/apply-params', methods=['POST'])
+def apply_strategy_params(id):
+    """Phase 10.2: 把優化選出的最佳參數套用到 strategy.params。"""
+    from app.services.audit import log as audit
+    strategy = Strategy.query.get_or_404(id)
+    body = request.get_json(silent=True) or {}
+    new_params = body.get('params')
+    if not isinstance(new_params, dict):
+        return jsonify({'error': '需要 params 物件'}), 400
+
+    old_params = dict(strategy.params or {})
+    strategy.params = new_params
+    db.session.commit()
+
+    audit('strategy_params_applied', actor='user',
+          strategy_id=id, old=old_params, new=new_params,
+          optimization_id=body.get('optimization_id'))
+
+    return jsonify({
+        'strategy_id': id,
+        'old_params': old_params,
+        'new_params': new_params,
+        'message': '已套用。可手動重啟策略或等下次 signal 自動使用新參數。',
+    })
 
 
 @api_bp.route('/strategies/<int:id>/fan-out', methods=['POST'])

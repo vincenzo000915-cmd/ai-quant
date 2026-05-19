@@ -620,3 +620,62 @@ def auto_translate_pending(max_count: int = 5):
         except Exception:
             err += 1
     return f'auto-translate: {ok} 成功 / {err} 失敗 (共 {len(pending)} 個)'
+
+
+# ===== Phase 10.2: parameter walk-forward grid search =====
+
+@celery_app.task(bind=True)
+def optimize_strategy_params(self, optimization_id: int, max_combos: int = 24):
+    """執行已建立的 ParamOptimization 記錄 — 跑完寫回結果。"""
+    from app.models import ParamOptimization, Strategy
+    from app.services.param_optimizer import optimize
+    import datetime as _dt
+
+    opt = ParamOptimization.query.get(optimization_id)
+    if not opt:
+        return f'optimization {optimization_id} 不存在'
+
+    strategy = Strategy.query.get(opt.strategy_id)
+    if not strategy:
+        opt.status = 'error'
+        opt.error_message = 'strategy 不存在'
+        opt.completed_at = _dt.datetime.utcnow()
+        db.session.commit()
+        return 'strategy 不存在'
+
+    opt.status = 'running'
+    db.session.commit()
+
+    def _progress(done, total):
+        try:
+            opt.combos_done = done
+            opt.combos_total = total
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    try:
+        out = optimize(strategy, max_combos=max_combos, on_progress=_progress)
+        if 'error' in out:
+            opt.status = 'error'
+            opt.error_message = out['error']
+        else:
+            opt.grid = out['grid']
+            opt.baseline_params = out['baseline_params']
+            opt.baseline_oos_sharpe = out['baseline_oos_sharpe']
+            opt.candidate_results = out['candidate_results']
+            opt.best_params = out['best_params']
+            opt.best_oos_sharpe = out['best_oos_sharpe']
+            opt.combos_total = out['combos_total']
+            opt.combos_done = out['combos_done']
+            opt.status = 'completed'
+        opt.completed_at = _dt.datetime.utcnow()
+        db.session.commit()
+        return f'optimize strategy={strategy.id} done: {opt.combos_done}/{opt.combos_total}'
+    except Exception as e:
+        db.session.rollback()
+        opt.status = 'error'
+        opt.error_message = f'{type(e).__name__}: {e}'
+        opt.completed_at = _dt.datetime.utcnow()
+        db.session.commit()
+        return f'optimize error: {e}'

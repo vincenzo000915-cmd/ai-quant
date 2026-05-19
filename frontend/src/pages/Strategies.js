@@ -7,6 +7,8 @@ import {
   LinearProgress, Tooltip, Alert, Snackbar, Grid, Checkbox,
 } from '@mui/material';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
+import TuneIcon from '@mui/icons-material/Tune';
+import ParamOptimizeDialog from '../components/ParamOptimizeDialog';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
@@ -89,6 +91,9 @@ export default function Strategies() {
   const [fanOutSource, setFanOutSource] = useState(null);
   const [fanOutSelected, setFanOutSelected] = useState([]);
   const [fanOutSubmitting, setFanOutSubmitting] = useState(false);
+  // Phase 10.2: optimize modal
+  const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [optimizeTarget, setOptimizeTarget] = useState(null);
 
   const handleOpenFanOut = (strategy) => {
     setFanOutSource(strategy);
@@ -392,6 +397,13 @@ export default function Strategies() {
                             <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        {strategy.status !== 'retired' && (
+                          <Tooltip title="參數網格搜尋（walk-forward）">
+                            <IconButton size="small" sx={{ color: '#22d3ee' }} onClick={() => { setOptimizeTarget(strategy); setOptimizeOpen(true); }}>
+                              <TuneIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         {strategy.status !== 'retired' && (
                           <Tooltip title="一鍵複製此策略到其他幣種">
                             <IconButton size="small" sx={{ color: '#a78bfa' }} onClick={() => handleOpenFanOut(strategy)}>
@@ -705,6 +717,17 @@ export default function Strategies() {
           <Button onClick={() => setBacktestDialog(false)} variant="contained">關閉</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Phase 10.2: Optimize Modal */}
+      <ParamOptimizeDialog
+        open={optimizeOpen}
+        strategy={optimizeTarget}
+        onClose={() => setOptimizeOpen(false)}
+        onApplied={() => {
+          setSnackbar({ open: true, severity: 'success', message: '已套用新參數，建議到健康檢查或單獨跑回測重新驗證' });
+          fetchStrategies();
+        }}
+      />
 
       {/* Phase 10.6: Fan-out Modal */}
       <Dialog open={fanOutOpen} onClose={() => setFanOutOpen(false)} maxWidth="sm" fullWidth>

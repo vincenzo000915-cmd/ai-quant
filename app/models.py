@@ -358,6 +358,46 @@ class AuditLog(db.Model):
         }
 
 
+class ParamOptimization(db.Model):
+    """Phase 10.2: walk-forward 參數網格搜尋的執行紀錄與結果。"""
+    __tablename__ = 'param_optimizations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id', ondelete='CASCADE'), nullable=False, index=True)
+    status = db.Column(db.String(20), default='pending')   # pending / running / completed / error
+    grid = db.Column(db.JSON, default={})                  # {'period': [7,10,14], 'multiplier': [2,3]}
+    baseline_params = db.Column(db.JSON, default={})       # 跑前的 strategy.params
+    baseline_oos_sharpe = db.Column(db.Float)              # 基線 walk-forward OOS Sharpe
+    candidate_results = db.Column(db.JSON, default=[])     # [{params, is_sharpe, oos_sharpe, decay_pct, total_trades, ...}]
+    best_params = db.Column(db.JSON)
+    best_oos_sharpe = db.Column(db.Float)
+    combos_total = db.Column(db.Integer, default=0)
+    combos_done = db.Column(db.Integer, default=0)
+    error_message = db.Column(db.Text)
+    started_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+
+    def to_dict(self, include_results=True):
+        d = {
+            'id': self.id,
+            'strategy_id': self.strategy_id,
+            'status': self.status,
+            'grid': self.grid or {},
+            'baseline_params': self.baseline_params or {},
+            'baseline_oos_sharpe': self.baseline_oos_sharpe,
+            'best_params': self.best_params,
+            'best_oos_sharpe': self.best_oos_sharpe,
+            'combos_total': self.combos_total,
+            'combos_done': self.combos_done,
+            'error_message': self.error_message,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+        }
+        if include_results:
+            d['candidate_results'] = self.candidate_results or []
+        return d
+
+
 class StrategyCandidate(db.Model):
     """策略候選池 — 來自爬蟲（TradingView / GitHub）+ LLM 翻譯的策略，待回測 / 待 promote"""
     __tablename__ = 'strategy_candidates'
