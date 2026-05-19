@@ -1145,6 +1145,63 @@ def create_candidate():
     return jsonify(c.to_dict(include_code=True)), 201
 
 
+@api_bp.route('/candidates/pine', methods=['POST'])
+def submit_pine_candidate():
+    """Phase 10.5: 提交一段 Pine Script 進候選池。
+
+    TradingView 沒有官方公開 API 又有嚴格反爬，務實做法是讓 user 在 TV
+    複製腳本貼進來，後續走既有的 LLM translator pipeline 自動翻譯。
+
+    Body: {raw_code, source_url, source_name, source_author?, timeframe?, category?}
+    """
+    from app.services.audit import log as audit
+    import re
+
+    data = request.get_json() or {}
+    raw = (data.get('raw_code') or '').strip()
+    if not raw:
+        return jsonify({'error': '需要 raw_code（Pine Script 內容）'}), 400
+    if len(raw) > 50_000:
+        return jsonify({'error': 'raw_code 太長（>50KB），請刪減'}), 400
+
+    # 基本格式檢查 — Pine 一定含這些關鍵字其中之一
+    pine_markers = re.compile(r'//\s*@version=|indicator\s*\(|strategy\s*\(|study\s*\(', re.IGNORECASE)
+    if not pine_markers.search(raw):
+        return jsonify({'error': '看起來不是 Pine Script（找不到 //@version、indicator、strategy 或 study）'}), 400
+
+    source_url = data.get('source_url') or ''
+    if source_url and not source_url.startswith(('http://', 'https://')):
+        return jsonify({'error': 'source_url 必須是 http(s) 開頭'}), 400
+
+    c = StrategyCandidate(
+        source='tradingview',
+        source_url=source_url or None,
+        source_name=data.get('source_name') or 'Pine 手動貼入',
+        source_author=data.get('source_author'),
+        source_meta={'submitted_via': 'manual_paste'},
+        raw_code=raw,
+        raw_lang='pine',
+        category=data.get('category', 'swing'),
+        timeframe=data.get('timeframe', '4h'),
+        status='pending',
+    )
+    db.session.add(c)
+    db.session.commit()
+
+    audit('candidate_pine_submitted',
+          actor='user',
+          candidate_id=c.id,
+          source_url=source_url,
+          source_name=c.source_name,
+          length=len(raw))
+
+    return jsonify({
+        'id': c.id,
+        'status': c.status,
+        'message': '已收入候選池（status=pending）。下一輪 LLM 翻譯（host cron 02:30 或 /api/candidates/<id>/translate）會把它變成可回測的 Python signal。',
+    }), 201
+
+
 @api_bp.route('/candidates/<int:cid>', methods=['DELETE'])
 def delete_candidate(cid):
     c = StrategyCandidate.query.get_or_404(cid)

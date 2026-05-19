@@ -17,6 +17,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
+import ContentPasteIcon from '@mui/icons-material/ContentPaste';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -54,6 +55,38 @@ export default function Candidates() {
   const [tabIdx, setTabIdx] = useState(0);
   const [busy, setBusy] = useState(null);   // candidate id being processed
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  // Phase 10.5: pine paste modal
+  const [pineOpen, setPineOpen] = useState(false);
+  const [pineForm, setPineForm] = useState({
+    raw_code: '', source_url: '', source_name: '', source_author: '',
+    category: 'swing', timeframe: '4h',
+  });
+  const [pineSubmitting, setPineSubmitting] = useState(false);
+
+  const submitPine = async () => {
+    if (!pineForm.raw_code.trim()) {
+      showMsg('請貼入 Pine Script 內容', 'error');
+      return;
+    }
+    setPineSubmitting(true);
+    try {
+      const res = await fetch(`${API}/api/candidates/pine`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pineForm),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      showMsg(`已提交（id=${body.id}），等下次 LLM 翻譯`);
+      setPineOpen(false);
+      setPineForm({ raw_code: '', source_url: '', source_name: '', source_author: '', category: 'swing', timeframe: '4h' });
+      await load();
+    } catch (e) {
+      showMsg(`提交失敗：${e.message}`, 'error');
+    } finally {
+      setPineSubmitting(false);
+    }
+  };
 
   const showMsg = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
@@ -191,6 +224,15 @@ export default function Candidates() {
             disabled={busy === 'crawl'}
           >
             爬 GitHub
+          </Button>
+          <Button
+            startIcon={<ContentPasteIcon />}
+            onClick={() => setPineOpen(true)}
+            variant="outlined"
+            sx={{ color: '#22d3ee', borderColor: '#22d3ee' }}
+            size="small"
+          >
+            貼入 Pine Script
           </Button>
           <Button
             startIcon={<ScienceIcon />}
@@ -503,6 +545,101 @@ export default function Candidates() {
             </DialogActions>
           </>
         )}
+      </Dialog>
+
+      {/* Phase 10.5: Pine Script paste modal */}
+      <Dialog open={pineOpen} onClose={() => setPineOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <ContentPasteIcon sx={{ color: '#22d3ee' }} />
+          貼入 TradingView Pine Script
+        </DialogTitle>
+        <DialogContent dividers>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            從 TradingView 公開腳本「源代碼」複製整段 Pine 貼進來。LLM 翻譯器會自動把它翻成 Python signal，下一輪健康檢查時可回測。
+            <br />
+            <Typography variant="caption" color="text.secondary">
+              提示：TradingView Public Library → 打開腳本 → 點「源代碼」按鈕全選複製。
+            </Typography>
+          </Alert>
+          <Stack spacing={2}>
+            <TextField
+              label="Pine Script 內容 *"
+              multiline
+              minRows={10}
+              maxRows={20}
+              value={pineForm.raw_code}
+              onChange={e => setPineForm({ ...pineForm, raw_code: e.target.value })}
+              placeholder={`//@version=5\nindicator("My Strategy")\n...`}
+              fullWidth
+              sx={{ '& textarea': { fontFamily: 'JetBrains Mono, monospace', fontSize: 12 } }}
+            />
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label="來源 URL"
+                value={pineForm.source_url}
+                onChange={e => setPineForm({ ...pineForm, source_url: e.target.value })}
+                placeholder="https://www.tradingview.com/script/..."
+                fullWidth
+                size="small"
+              />
+              <TextField
+                label="策略名稱"
+                value={pineForm.source_name}
+                onChange={e => setPineForm({ ...pineForm, source_name: e.target.value })}
+                placeholder="例：Hull Suite"
+                fullWidth
+                size="small"
+              />
+            </Stack>
+            <Stack direction="row" spacing={2}>
+              <TextField
+                label="作者"
+                value={pineForm.source_author}
+                onChange={e => setPineForm({ ...pineForm, source_author: e.target.value })}
+                placeholder="例：InSilico"
+                sx={{ flex: 2 }}
+                size="small"
+              />
+              <FormControl size="small" sx={{ flex: 1 }}>
+                <InputLabel>類別</InputLabel>
+                <Select
+                  label="類別"
+                  value={pineForm.category}
+                  onChange={e => setPineForm({ ...pineForm, category: e.target.value })}
+                >
+                  <MenuItem value="ultra">極短 (15m)</MenuItem>
+                  <MenuItem value="short">短線 (1h)</MenuItem>
+                  <MenuItem value="swing">波段 (4h)</MenuItem>
+                  <MenuItem value="long">長線</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ flex: 1 }}>
+                <InputLabel>時框</InputLabel>
+                <Select
+                  label="時框"
+                  value={pineForm.timeframe}
+                  onChange={e => setPineForm({ ...pineForm, timeframe: e.target.value })}
+                >
+                  <MenuItem value="15m">15m</MenuItem>
+                  <MenuItem value="1h">1h</MenuItem>
+                  <MenuItem value="4h">4h</MenuItem>
+                  <MenuItem value="1d">1d</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPineOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            onClick={submitPine}
+            disabled={pineSubmitting || !pineForm.raw_code.trim()}
+            sx={{ bgcolor: '#22d3ee', '&:hover': { bgcolor: '#0891b2' } }}
+          >
+            {pineSubmitting ? '提交中…' : '送入候選池'}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       <Snackbar
