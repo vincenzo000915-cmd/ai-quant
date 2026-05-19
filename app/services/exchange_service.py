@@ -268,13 +268,48 @@ def fetch_okx_positions() -> list[dict]:
     return result
 
 
-def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0) -> dict:
-    """Phase 6.5: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
+# 永久性錯誤碼（不重試）— 來自 OKX docs，重試也是同樣失敗
+# 51008 insufficient balance, 51020 below min, 51119 over max
+# 51000 / 51001 / 51124 / 51169 等都是參數錯
+_OKX_PERMANENT_ERRORS = {
+    '51000', '51001', '51002', '51003', '51004', '51005', '51006',
+    '51008', '51020', '51119', '51124', '51169',
+    '50000', '50004',   # 系統參數 / 服務暫停（不是 5xx 而是 OKX 顯式拒絕）
+}
+
+
+def _is_permanent_okx_error(err_str: str) -> bool:
+    """OKX 錯誤訊息含這些 code 視為永久失敗"""
+    for code in _OKX_PERMANENT_ERRORS:
+        if code in err_str:
+            return True
+    # 其他 'invalid'/'insufficient' 字眼也視為永久
+    low = err_str.lower()
+    if 'insufficient' in low or 'invalid parameter' in low or 'parameter error' in low:
+        return True
+    return False
+
+
+def _gen_client_order_id() -> str:
+    """生成 1-32 字元 alphanumeric clOrdId"""
+    import uuid
+    # 'q' + 31 字元 hex（uuid4 hex 32 字元，取前 31）
+    return 'q' + uuid.uuid4().hex[:31]
+
+
+def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0,
+                     client_order_id: str | None = None, max_retries: int = 3) -> dict:
+    """Phase 6.5 + 8.3: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
+
+    8.3 加入：
+      - client_order_id (clOrdId) — OKX 同 clOrdId 重複呼叫返回原訂單，天然防重
+      - exponential backoff retry — 暫時性錯誤（網路 / 5xx）重試最多 max_retries 次
+      - 永久性錯誤碼直接 raise，不重試
 
     回傳 OKX 原始 order data。失敗 raise。
-    需要 API key 有 'Trade' 權限。
     """
     import os
+    import time as _time
     api_key = os.environ.get('EXCHANGE_API_KEY')
     secret = os.environ.get('EXCHANGE_SECRET')
     passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
@@ -282,8 +317,9 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
         raise RuntimeError('OKX API credentials missing in env')
 
     inst_id = symbol.replace('/', '-') + '-SWAP'   # 'BTC/USDT' -> 'BTC-USDT-SWAP'
+    cl_ord_id = client_order_id or _gen_client_order_id()
 
-    # 先設 leverage（idempotent，每次設不會出錯）
+    # 先設 leverage（OKX 原生 idempotent — 重設同值不 raise）
     try:
         _okx_post_signed('/api/v5/account/set-leverage',
                          {'instId': inst_id, 'lever': str(int(leverage)), 'mgnMode': 'cross'},
@@ -293,14 +329,11 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
         if 'leverage' not in str(e).lower():
             raise
 
-    # 計算合約張數：每張 0.01 BTC (BTC-USDT-SWAP)；用 OKX 規格表會比較準，先用粗估
-    # 我們的 size_usdt 是 margin（本金），名義 = margin × lev
+    # 計算合約張數：每張 0.01 BTC (BTC-USDT-SWAP)
     notional = size_usdt * leverage
-    # 拿當前價計算 BTC 數量
     ticker = get_ticker(symbol)
     price = float(ticker['price'])
     btc_amount = notional / price
-    # OKX BTC-USDT-SWAP contract size 0.01 BTC；sz 是張數
     contracts = round(btc_amount / 0.01, 0)
     if contracts < 1:
         contracts = 1
@@ -311,17 +344,39 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
         'side': side,            # 'buy' open long; 'sell' close long (or open short — careful)
         'ordType': 'market',
         'sz': str(int(contracts)),
+        'clOrdId': cl_ord_id,    # 8.3: 防重
         # posSide 不設讓 OKX 用 net mode（雙向 'long'/'short' 用 net 模式）
     }
 
-    data = _okx_post_signed('/api/v5/trade/order', body, api_key, secret, passphrase)
-    return {
-        'okx': data[0] if data else {},
-        'inst_id': inst_id,
-        'contracts': contracts,
-        'notional_usdt': notional,
-        'entry_price_est': price,
-    }
+    # 8.3: exponential backoff retry — 暫時性錯誤重試最多 max_retries 次
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            data = _okx_post_signed('/api/v5/trade/order', body, api_key, secret, passphrase)
+            return {
+                'okx': data[0] if data else {},
+                'inst_id': inst_id,
+                'contracts': contracts,
+                'notional_usdt': notional,
+                'entry_price_est': price,
+                'client_order_id': cl_ord_id,
+                'attempts': attempt + 1,
+            }
+        except Exception as e:
+            err_str = str(e)
+            last_err = e
+            # 永久錯誤不重試
+            if _is_permanent_okx_error(err_str):
+                raise
+            if attempt < max_retries:
+                # exponential backoff: 0.5s, 1s, 2s
+                wait = 0.5 * (2 ** attempt)
+                _time.sleep(wait)
+                continue
+            # 已達上限
+            break
+
+    raise RuntimeError(f'place_order_live exhausted retries ({max_retries+1} attempts): {last_err}')
 
 
 def cancel_order(order_id, symbol):
