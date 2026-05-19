@@ -351,14 +351,26 @@ def fetch_ohlcv_history(symbol='BTC/USDT', timeframe='4h', total_limit=2000):
     return deduped
 
 
-def get_historical_prices(symbol='BTC-USDT', days=30):
-    """獲取近期價格數據（OKX 公開 API，1小時K線，近48小時）"""
+_TF_TO_OKX_BAR = {
+    '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H',
+    '1d': '1D', '1w': '1W',
+}
+_TF_DEFAULT_LIMIT = {
+    '15m': 96, '30m': 96, '1h': 72, '4h': 90,
+    '1d': 60, '1w': 52,
+}
+
+
+def get_historical_prices(symbol='BTC-USDT', timeframe='1h', limit=None):
+    """OKX 公開 K 線（無簽名）。
+    支援 timeframe: 15m / 30m / 1h / 4h / 1d / 1w；limit 自動依 timeframe 取合理量。
+    """
     inst_id = _okx_symbol(symbol) if '/' in symbol else symbol
+    bar = _TF_TO_OKX_BAR.get(timeframe, '1H')
+    n = limit or _TF_DEFAULT_LIMIT.get(timeframe, 72)
     try:
         data = _okx_get('/api/v5/market/candles', {
-            'instId': inst_id,
-            'bar': '1H',
-            'limit': 48,
+            'instId': inst_id, 'bar': bar, 'limit': n,
         })
         if not data:
             raise Exception('No historical data')
@@ -368,8 +380,15 @@ def get_historical_prices(symbol='BTC-USDT', days=30):
             ts = int(row[0])
             close = float(row[4])
             dt = datetime.utcfromtimestamp(ts / 1000)
-            # 格式：如果是今天只顯示時間，否則顯示月-日 時:分
-            label = dt.strftime('%H:%M') if dt.date() == now_utc.date() else dt.strftime('%m-%d %H:%M')
+            # 短週期顯示 HH:MM；長週期顯示 MM-DD；非常長 (>=1d) 顯示 YYYY-MM-DD
+            if timeframe in ('15m', '30m', '1h'):
+                label = dt.strftime('%H:%M') if dt.date() == now_utc.date() else dt.strftime('%m-%d %H:%M')
+            elif timeframe == '4h':
+                label = dt.strftime('%m-%d %H:%M')
+            elif timeframe == '1d':
+                label = dt.strftime('%m-%d')
+            else:   # 1w
+                label = dt.strftime('%Y-%m-%d')
             result.append({
                 'timestamp': ts,
                 'date': label,

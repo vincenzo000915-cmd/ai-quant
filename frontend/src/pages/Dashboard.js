@@ -14,8 +14,8 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import MemoryIcon from '@mui/icons-material/Memory';
 import SpeedIcon from '@mui/icons-material/Speed';
 import {
-  AreaChart, Area, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer,
+  AreaChart, Area, LineChart, Line, ComposedChart, XAxis, YAxis,
+  CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, ReferenceDot,
 } from 'recharts';
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -209,6 +209,9 @@ export default function Dashboard() {
   const [pnlSummary, setPnlSummary] = useState(null);
   const [perfList, setPerfList] = useState([]);
   const [cfg, setCfg] = useState(null);
+  const [trades, setTrades] = useState([]);
+  const [tfBtc, setTfBtc] = useState('1h');
+  const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, signals: true });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const sysStats = useSystemStats();
@@ -247,11 +250,13 @@ export default function Dashboard() {
         setCfg(await cfgRes.value.json());
       }
 
+      // chart 用獨立 fetch（依 tfBtc 重拉）— 見下方 useEffect
+
       try {
-        const chartRes = await fetch(`${API}/api/market/btc-chart`);
-        if (chartRes.ok) {
-          const chartJson = await chartRes.json();
-          setBtcChart(Array.isArray(chartJson) ? chartJson : []);
+        const tradesRes = await fetch(`${API}/api/trades?limit=200`);
+        if (tradesRes.ok) {
+          const tj = await tradesRes.json();
+          setTrades(Array.isArray(tj) ? tj : []);
         }
       } catch {/* */}
 
@@ -265,6 +270,78 @@ export default function Dashboard() {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // BTC chart — 跟著 tfBtc 切換 + 每 60s 後台刷新
+  useEffect(() => {
+    let cancelled = false;
+    const loadChart = async () => {
+      try {
+        const r = await fetch(`${API}/api/market/btc-chart?timeframe=${tfBtc}`);
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        if (!cancelled) setBtcChart(Array.isArray(j) ? j : []);
+      } catch {/* */}
+    };
+    loadChart();
+    const id = setInterval(loadChart, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [tfBtc]);
+
+  // 計算 SMA / EMA / Bollinger Bands + 信號標記合併進 chart data
+  const btcChartEnriched = useMemo(() => {
+    if (!btcChart.length) return [];
+    const prices = btcChart.map(d => d.price);
+    const N = prices.length;
+    // SMA(20)
+    const sma20 = prices.map((_, i) => {
+      if (i < 19) return null;
+      const slice = prices.slice(i - 19, i + 1);
+      return slice.reduce((s, v) => s + v, 0) / 20;
+    });
+    // EMA(50)
+    const k = 2 / (50 + 1);
+    let ema = prices[0];
+    const ema50 = prices.map((p, i) => {
+      if (i === 0) { ema = p; return null; }
+      ema = p * k + ema * (1 - k);
+      return i >= 49 ? ema : null;
+    });
+    // Bollinger Bands (20, 2)
+    const bbU = []; const bbL = [];
+    for (let i = 0; i < N; i++) {
+      if (i < 19) { bbU.push(null); bbL.push(null); continue; }
+      const slice = prices.slice(i - 19, i + 1);
+      const mean = slice.reduce((s, v) => s + v, 0) / 20;
+      const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / 20;
+      const std = Math.sqrt(variance);
+      bbU.push(mean + 2 * std);
+      bbL.push(mean - 2 * std);
+    }
+    // 信號標記：把每根 K 線視為一個 bucket，看 trades 的 entry/exit 落在哪個 bucket
+    const tfMs = { '15m': 15*60e3, '30m': 30*60e3, '1h': 3600e3, '4h': 4*3600e3, '1d': 86400e3, '1w': 7*86400e3 }[tfBtc] || 3600e3;
+    const buckets = new Map();
+    btcChart.forEach((d, i) => buckets.set(Math.floor((d.timestamp || 0) / tfMs) * tfMs, i));
+    const buyMarks = new Array(N).fill(null);
+    const sellMarks = new Array(N).fill(null);
+    (trades || []).forEach(t => {
+      const entryBucket = Math.floor((new Date(t.entry_time).getTime()) / tfMs) * tfMs;
+      const idx = buckets.get(entryBucket);
+      if (idx !== undefined) buyMarks[idx] = t.entry_price;
+      const exitBucket = Math.floor((new Date(t.exit_time).getTime()) / tfMs) * tfMs;
+      const exitIdx = buckets.get(exitBucket);
+      if (exitIdx !== undefined) sellMarks[exitIdx] = t.exit_price;
+    });
+
+    return btcChart.map((d, i) => ({
+      ...d,
+      sma20: sma20[i],
+      ema50: ema50[i],
+      bbU: bbU[i],
+      bbL: bbL[i],
+      buy: buyMarks[i],
+      sell: sellMarks[i],
+    }));
+  }, [btcChart, trades, tfBtc]);
 
   // 每秒拉一次 BTC ticker（輕量，只更新數字）
   useEffect(() => {
@@ -605,9 +682,9 @@ export default function Dashboard() {
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
         <Grid item xs={12} md={8}>
           <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
               <Box>
-                <Typography variant="overline" sx={{ color: 'text.secondary' }}>BTC · LIVE (1s refresh)</Typography>
+                <Typography variant="overline" sx={{ color: 'text.secondary' }}>BTC · LIVE (ticker 2s)</Typography>
                 <Typography
                   className="num-mono"
                   variant="h5"
@@ -632,33 +709,110 @@ export default function Dashboard() {
               )}
             </Box>
 
-            <Box sx={{ height: 280 }}>
+            {/* === Timeframe + Indicator 切換器 === */}
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1, alignItems: 'center' }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', mr: 0.5, fontSize: '0.65rem' }}>TF:</Typography>
+              {['15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
+                <Box
+                  key={tf}
+                  component="button"
+                  onClick={() => setTfBtc(tf)}
+                  sx={{
+                    cursor: 'pointer',
+                    px: 0.8, py: 0.2,
+                    border: '1px solid',
+                    borderColor: tfBtc === tf ? C.gold : 'rgba(255,255,255,0.12)',
+                    color: tfBtc === tf ? C.gold : C.textDim,
+                    bgcolor: tfBtc === tf ? 'rgba(251,191,36,0.1)' : 'transparent',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.65rem', fontWeight: 700,
+                    borderRadius: 0.5,
+                  }}
+                >
+                  {tf}
+                </Box>
+              ))}
+              <Box sx={{ flexGrow: 1, minWidth: 4 }} />
+              <Typography variant="caption" sx={{ color: 'text.secondary', mr: 0.5, fontSize: '0.65rem' }}>指標:</Typography>
+              {[
+                { key: 'sma20', label: 'SMA20', col: C.primary },
+                { key: 'ema50', label: 'EMA50', col: C.accent },
+                { key: 'bb', label: 'BB', col: C.purple },
+                { key: 'signals', label: '信號', col: C.success },
+              ].map(ind => (
+                <Box
+                  key={ind.key}
+                  component="button"
+                  onClick={() => setIndicators(s => ({ ...s, [ind.key]: !s[ind.key] }))}
+                  sx={{
+                    cursor: 'pointer',
+                    px: 0.8, py: 0.2,
+                    border: '1px solid',
+                    borderColor: indicators[ind.key] ? ind.col : 'rgba(255,255,255,0.12)',
+                    color: indicators[ind.key] ? ind.col : C.textDim,
+                    bgcolor: indicators[ind.key] ? `${ind.col}1a` : 'transparent',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.65rem', fontWeight: 700,
+                    borderRadius: 0.5,
+                  }}
+                >
+                  {ind.label}
+                </Box>
+              ))}
+            </Box>
+
+            <Box sx={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={btcChart}>
+                <ComposedChart data={btcChartEnriched}>
                   <defs>
                     <linearGradient id="btcGradient2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.4} />
+                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.35} />
                       <stop offset="100%" stopColor={C.gold} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="2 8" stroke="rgba(99,102,241,0.08)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} minTickGap={20} />
                   <YAxis
-                    domain={['dataMin - 500', 'dataMax + 500']}
+                    domain={['dataMin - 200', 'dataMax + 200']}
                     tick={{ fontSize: 10, fill: C.textDim }}
                     axisLine={false} tickLine={false}
                     tickFormatter={v => `${(v / 1000).toFixed(1)}k`}
                   />
-                  <ReTooltip formatter={(value) => [`$${value.toLocaleString()}`, 'BTC']} />
+                  <ReTooltip formatter={(v, name) => v == null ? null : [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, name]} />
                   <Area
-                    type="monotone" dataKey="price"
-                    stroke={C.gold}
-                    fill="url(#btcGradient2)"
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
+                    type="monotone" dataKey="price" name="BTC"
+                    stroke={C.gold} fill="url(#btcGradient2)"
+                    strokeWidth={2} dot={false} isAnimationActive={false}
                   />
-                </AreaChart>
+                  {indicators.bb && (
+                    <Line type="monotone" dataKey="bbU" name="BB upper"
+                      stroke={C.purple} strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} />
+                  )}
+                  {indicators.bb && (
+                    <Line type="monotone" dataKey="bbL" name="BB lower"
+                      stroke={C.purple} strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} />
+                  )}
+                  {indicators.sma20 && (
+                    <Line type="monotone" dataKey="sma20" name="SMA20"
+                      stroke={C.primary} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  )}
+                  {indicators.ema50 && (
+                    <Line type="monotone" dataKey="ema50" name="EMA50"
+                      stroke={C.accent} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  )}
+                  {indicators.signals && (
+                    <Line type="monotone" dataKey="buy" name="開倉"
+                      stroke="transparent"
+                      dot={{ r: 5, fill: C.success, stroke: '#fff', strokeWidth: 1.5 }}
+                      isAnimationActive={false} />
+                  )}
+                  {indicators.signals && (
+                    <Line type="monotone" dataKey="sell" name="平倉"
+                      stroke="transparent"
+                      dot={{ r: 5, fill: C.error, stroke: '#fff', strokeWidth: 1.5 }}
+                      isAnimationActive={false} />
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             </Box>
 
