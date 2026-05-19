@@ -960,6 +960,9 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
+      {/* === Phase 7.2: STRATEGY LIVE STATE — 每策略指標卡 === */}
+      <StrategyLiveStateGrid C={C} />
+
       {/* === Strategy Matrix（密集模式）=== */}
       <Box className="glass-card" sx={{ p: 2.25, mb: 2.5, position: 'relative', overflow: 'hidden' }}>
         <CornerDecor position="tl" color={C.primary} />
@@ -1210,6 +1213,127 @@ export default function Dashboard() {
             </TableBody>
           </Table>
         </TableContainer>
+      </Box>
+    </Box>
+  );
+}
+
+
+function StrategyLiveStateGrid({ C }) {
+  const [states, setStates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await fetch(`${API}/api/strategies/live-state`);
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        if (!cancelled) {
+          setStates(Array.isArray(j) ? j : []);
+          setUpdatedAt(new Date());
+        }
+      } catch {/* */}
+      finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const id = setInterval(load, 30000);  // 30s 刷新（指標不會每秒變）
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  if (loading && !states.length) return null;
+  if (!states.length) return null;
+
+  const fmtAge = (iso) => {
+    if (!iso) return '尚無';
+    const ms = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(ms / 60000);
+    if (min < 60) return `${min}m 前`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h}h 前`;
+    return `${Math.floor(h / 24)}d 前`;
+  };
+
+  return (
+    <Box className="glass-card" sx={{ p: 2.25, mb: 2.5, position: 'relative', overflow: 'hidden' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+        <Box>
+          <Typography variant="overline" sx={{ color: 'text.secondary' }}>STRATEGY LIVE STATE</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1 }}>
+            [{states.length}] STREAMING · 距觸發即時讀數
+          </Typography>
+        </Box>
+        <Typography variant="caption" sx={{ color: 'text.secondary', fontFamily: 'JetBrains Mono, monospace' }}>
+          {updatedAt ? `UPDATED ${updatedAt.toTimeString().slice(0, 8)}` : ''}
+        </Typography>
+      </Box>
+
+      <Box sx={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+        gap: 1.5,
+      }}>
+        {states.map((s) => (
+          <Box key={s.id} sx={{
+            p: 1.25,
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 1,
+            bgcolor: 'rgba(255,255,255,0.02)',
+            display: 'flex', flexDirection: 'column', gap: 0.5,
+          }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <Typography variant="body2" fontWeight={700} sx={{ fontSize: '0.82rem' }}>
+                {s.name}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem', fontFamily: 'JetBrains Mono' }}>
+                {s.timeframe} · {s.category}
+              </Typography>
+            </Box>
+
+            {s.error ? (
+              <Typography variant="caption" sx={{ color: C.warning, fontSize: '0.7rem' }}>
+                ⚠ {s.error}
+              </Typography>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {(s.indicators || []).map((ind, i) => (
+                    <Box key={i} sx={{
+                      px: 0.6, py: 0.15, borderRadius: 0.5,
+                      bgcolor: 'rgba(99,102,241,0.08)',
+                      border: '1px solid rgba(99,102,241,0.18)',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: '0.68rem',
+                    }}>
+                      <Typography component="span" variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem' }}>
+                        {ind.label}
+                      </Typography>
+                      <Typography component="span" sx={{ ml: 0.5, color: 'text.primary', fontWeight: 700, fontSize: '0.7rem' }}>
+                        {ind.value}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+                {s.hint && (
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.66rem', lineHeight: 1.4, mt: 0.3 }}>
+                    {s.hint}
+                  </Typography>
+                )}
+              </>
+            )}
+
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.3, pt: 0.4, borderTop: '1px dashed rgba(255,255,255,0.06)' }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem' }}>
+                type={s.type}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem' }}>
+                上次成交: {fmtAge(s.last_trade)}
+              </Typography>
+            </Box>
+          </Box>
+        ))}
       </Box>
     </Box>
   );

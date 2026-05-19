@@ -70,6 +70,13 @@ def stop_strategy(id):
     return jsonify(strategy.to_dict())
 
 
+@api_bp.route('/strategies/live-state', methods=['GET'])
+def strategies_live_state():
+    """Phase 7.2: 每 running 策略的指標即時讀數 + 距觸發 hint"""
+    from app.services.live_state import all_live_states
+    return jsonify(all_live_states())
+
+
 @api_bp.route('/strategies/health/check', methods=['POST'])
 def strategies_health_check():
     """Phase 5.3: 觸發一次健康檢查（async，丟給 Celery worker）。
