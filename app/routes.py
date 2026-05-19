@@ -687,16 +687,17 @@ def translate_candidate(cid):
 
 @api_bp.route('/candidates/<int:cid>/promote', methods=['POST'])
 def promote_candidate(cid):
-    """佔位 — 完整 promote workflow 在 Phase 4.6 實作。
-    現在只回傳 501 + 提示，讓前端 / API 使用者知道路徑存在。
+    """把 qualified candidate 推上線 — 建立 strategies 條目並註冊 signal_fn。
+    Body 可選：{ "name": "...", "symbol": "BTC/USDT" }
     """
-    c = StrategyCandidate.query.get_or_404(cid)
-    if c.status != 'qualified':
-        return jsonify({'error': f'candidate must be qualified (status={c.status})'}), 400
-    return jsonify({
-        'error': 'promote workflow not yet implemented (Phase 4.6)',
-        'candidate_id': c.id,
-    }), 501
+    from app.services.candidate_pipeline import promote_candidate as do_promote
+    data = request.get_json() or {}
+    result = do_promote(cid, name=data.get('name'), symbol=data.get('symbol', 'BTC/USDT'))
+    if result['ok']:
+        return jsonify(result), 201
+    err = result.get('error', '')
+    code = 400 if ('not found' in err or 'must be qualified' in err or 'already exists' in err or 'missing' in err) else 500
+    return jsonify(result), code
 
 
 # ===== K線數據 =====

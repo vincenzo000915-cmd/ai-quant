@@ -3,6 +3,46 @@ import numpy as np
 import pandas as pd
 import ta
 
+# Phase 4.6: 候選策略動態註冊表 — 由 promote workflow 填充。
+# key: candidate_type (str)，value: callable(df, params) -> 'buy'/'sell'/'hold'。
+# 每個 Celery worker / gunicorn worker 啟動後第一次 promote/lookup 時冷啟動填入。
+_CANDIDATE_SIGNAL_CACHE: dict = {}
+
+
+def register_candidate_signal(candidate_type: str, signal_fn) -> None:
+    """promote 時呼叫，把翻譯產出的 signal function 塞進注冊表"""
+    _CANDIDATE_SIGNAL_CACHE[candidate_type] = signal_fn
+
+
+def _lookup_candidate_signal(strategy_type: str):
+    """快取未命中時，從 DB 重建 candidate signal_fn。失敗回 None。
+
+    strategy_type 通常帶 'cand_' 前綴，candidate.candidate_type 沒有 — 兩種都查。
+    """
+    try:
+        from app.models import StrategyCandidate
+        from app.services.candidate_sandbox import load_signal_fn
+
+        # 嘗試完整型別與去前綴型別
+        lookups = [strategy_type]
+        if strategy_type.startswith('cand_'):
+            lookups.append(strategy_type[len('cand_'):])
+
+        c = None
+        for key in lookups:
+            c = StrategyCandidate.query.filter_by(
+                candidate_type=key, status='promoted'
+            ).order_by(StrategyCandidate.updated_at.desc()).first()
+            if c:
+                break
+        if not c or not c.parsed_signal or not c.signal_fn_name:
+            return None
+        fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+        _CANDIDATE_SIGNAL_CACHE[strategy_type] = fn
+        return fn
+    except Exception:
+        return None
+
 
 def get_candle_df(candles):
     """將K線列表轉為 pandas DataFrame"""
@@ -527,7 +567,14 @@ def get_signal(strategy_type, df, params=None):
 
     func = strategy_map.get(strategy_type)
     if not func:
-        return 'hold'
+        # Phase 4.6: fallback 到 promoted candidate（type 通常會有 cand_ 前綴）
+        cand_fn = _CANDIDATE_SIGNAL_CACHE.get(strategy_type) or _lookup_candidate_signal(strategy_type)
+        if cand_fn is None:
+            return 'hold'
+        try:
+            return cand_fn(df, params or {})
+        except Exception:
+            return 'hold'
 
     if strategy_type == 'ma_crossover':
         p = params or {'fast': 7, 'slow': 25}

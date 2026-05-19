@@ -212,6 +212,71 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     }
 
 
+def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str = 'BTC/USDT') -> dict:
+    """把 qualified candidate 推上線 — 建立 Strategy 條目 + 註冊到 strategy_engine。
+
+    狀態流轉：qualified → promoted
+    回傳：{ok, strategy: {...}, candidate: {...}} 或 {ok: False, error}
+    """
+    from app.models import Strategy
+    from app.services.strategy_engine import register_candidate_signal
+    from app.services.candidate_sandbox import load_signal_fn
+
+    c = StrategyCandidate.query.get(candidate_id)
+    if c is None:
+        return {'ok': False, 'error': f'candidate {candidate_id} not found'}
+    if c.status != 'qualified':
+        return {'ok': False, 'error': f'candidate status must be qualified, got {c.status}'}
+    if not c.candidate_type or not c.parsed_signal or not c.signal_fn_name:
+        return {'ok': False, 'error': 'candidate missing candidate_type / parsed_signal / signal_fn_name'}
+
+    # candidate_type 加 cand_ 前綴避免和原 strategy_engine 靜態 map 衝突
+    if c.candidate_type.startswith('cand_'):
+        promoted_type = c.candidate_type
+    else:
+        promoted_type = f'cand_{c.candidate_type}'
+
+    # 唯一性檢查 — 同 type 已存在就拒絕
+    existing = Strategy.query.filter_by(type=promoted_type).first()
+    if existing:
+        return {'ok': False, 'error': f'strategy type "{promoted_type}" already exists (id={existing.id})'}
+
+    # 註冊到 in-memory 注冊表（這個 worker 即刻可用；其他 worker 會在 lookup 時冷啟動）
+    try:
+        signal_fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+        register_candidate_signal(promoted_type, signal_fn)
+    except Exception as e:
+        return {'ok': False, 'error': f'load_signal_fn before promote: {type(e).__name__}: {e}'}
+
+    # 建立 Strategy 條目
+    strategy = Strategy(
+        name=name or f'{c.source_name or "candidate"} (#{c.id})',
+        type=promoted_type,
+        category=c.category or 'swing',
+        params=c.default_params or {},
+        symbol=symbol,
+        timeframe=c.timeframe or '4h',
+        status='stopped',   # 預設停用，由 user 在 UI 啟用
+        max_positions=1,
+        max_daily_loss=10.0,
+        candidate_id=c.id,
+    )
+    db.session.add(strategy)
+    db.session.flush()   # 拿 strategy.id
+
+    c.status = 'promoted'
+    c.promoted_strategy_id = strategy.id
+    c.error_log = None
+    db.session.commit()
+
+    return {
+        'ok': True,
+        'strategy': strategy.to_dict(),
+        'candidate': c.to_dict(include_code=False),
+        'note': f'strategy created with type="{promoted_type}", status=stopped. 啟用前建議手動 review params。',
+    }
+
+
 def backtest_all_translated(max_count: int | None = None) -> dict:
     """批次跑所有 status='translated' 的候選回測。"""
     q = StrategyCandidate.query.filter_by(status='translated')
