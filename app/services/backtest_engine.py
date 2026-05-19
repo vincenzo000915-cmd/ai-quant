@@ -57,10 +57,12 @@ def run_backtest(
     initial_capital: float = 100.0,
     fee_pct: float = 0.1,   # 0.1% taker fee per side
     warmup: int = 60,       # 暖機 K 線數量（給指標累積足夠資料）
+    signal_fn=None,         # Phase 4: 傳入 callable(df, params) → 'buy'/'sell'/'hold'，覆寫 strategy_type 查表
 ):
     """跑單一策略的完整回測
 
     candles: [{ timestamp, open, high, low, close, volume }, ...]（按 timestamp 升序）
+    signal_fn: 若指定，跳過 get_signal 查表，直接呼叫；用於 Phase 4 候選策略沙箱回測。
     回傳: 詳細統計 + equity curve + trades 列表
     """
     t_start = time.time()
@@ -120,7 +122,13 @@ def run_backtest(
         # 2. 跑策略信號（用 [0..i] 的視窗，含當根收盤）
         window = candles[: i + 1]
         df = get_candle_df([dict(x) for x in window])  # copy
-        signal = get_signal(strategy_type, df, params)
+        if signal_fn is not None:
+            try:
+                signal = signal_fn(df, params)
+            except Exception:
+                signal = 'hold'  # 候選策略 runtime 報錯就跳過該根
+        else:
+            signal = get_signal(strategy_type, df, params)
 
         # 3. 處理信號
         if signal in ('buy', 'long') and position is None:

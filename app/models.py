@@ -234,6 +234,77 @@ class BacktestResult(db.Model):
         return d
 
 
+class StrategyCandidate(db.Model):
+    """策略候選池 — 來自爬蟲（TradingView / GitHub）+ LLM 翻譯的策略，待回測 / 待 promote"""
+    __tablename__ = 'strategy_candidates'
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    # 來源
+    source = db.Column(db.String(20), nullable=False)        # 'tradingview' / 'github' / 'manual'
+    source_url = db.Column(db.String(500))
+    source_name = db.Column(db.String(200))                  # 策略原名（爬到的）
+    source_author = db.Column(db.String(200))
+    source_meta = db.Column(db.JSON, default={})             # likes / stars / 評論數 / 抓取時間等
+
+    # 原始碼
+    raw_code = db.Column(db.Text)
+    raw_lang = db.Column(db.String(20))                      # 'pine' / 'python' / 'js'
+
+    # LLM 翻譯產出
+    parsed_signal = db.Column(db.Text)                       # 完整 Python signal function source
+    signal_fn_name = db.Column(db.String(100))               # 例 'tv_xyz_signal'
+    candidate_type = db.Column(db.String(50))                # 給 strategies.type 用的 slug
+    category = db.Column(db.String(10), default='swing')
+    timeframe = db.Column(db.String(10), default='4h')
+    default_params = db.Column(db.JSON, default={})
+    llm_notes = db.Column(db.Text)                           # LLM 對策略邏輯的說明
+    llm_model = db.Column(db.String(50))                     # 用哪個 model 翻的
+
+    # Pipeline 狀態
+    status = db.Column(db.String(20), default='pending', index=True)
+    # pending / translating / translated / backtesting / qualified / rejected / promoted / error
+    error_log = db.Column(db.Text)
+
+    # 關聯
+    backtest_result_id = db.Column(db.Integer, db.ForeignKey('backtest_results.id'))
+    promoted_strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
+
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    backtest = db.relationship('BacktestResult', foreign_keys=[backtest_result_id])
+    promoted_strategy = db.relationship('Strategy', foreign_keys=[promoted_strategy_id])
+
+    def to_dict(self, include_code=False):
+        d = {
+            'id': self.id,
+            'source': self.source,
+            'source_url': self.source_url,
+            'source_name': self.source_name,
+            'source_author': self.source_author,
+            'source_meta': self.source_meta or {},
+            'raw_lang': self.raw_lang,
+            'signal_fn_name': self.signal_fn_name,
+            'candidate_type': self.candidate_type,
+            'category': self.category,
+            'timeframe': self.timeframe,
+            'default_params': self.default_params or {},
+            'llm_notes': self.llm_notes,
+            'llm_model': self.llm_model,
+            'status': self.status,
+            'error_log': self.error_log,
+            'backtest_result_id': self.backtest_result_id,
+            'promoted_strategy_id': self.promoted_strategy_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+        if include_code:
+            d['raw_code'] = self.raw_code
+            d['parsed_signal'] = self.parsed_signal
+        return d
+
+
 class Candle(db.Model):
     """K線數據（本地緩存）"""
     __tablename__ = 'candles'

@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.extensions import db
-from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult
+from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
@@ -520,6 +520,131 @@ def estimate_returns():
         'source': 'real_backtest',
         'note': '數據來自真實歷史回測，非估算',
     })
+
+
+# ===== 策略候選池（Phase 4）=====
+
+@api_bp.route('/candidates', methods=['GET'])
+def list_candidates():
+    """列出候選策略，可按 status / source 過濾，預設按建立時間倒序"""
+    q = StrategyCandidate.query
+    status = request.args.get('status')
+    source = request.args.get('source')
+    if status:
+        q = q.filter_by(status=status)
+    if source:
+        q = q.filter_by(source=source)
+    limit = int(request.args.get('limit', 100))
+    q = q.order_by(StrategyCandidate.created_at.desc()).limit(limit)
+
+    items = q.all()
+    # 預載最新 backtest，避免 N+1
+    out = []
+    for c in items:
+        d = c.to_dict(include_code=False)
+        if c.backtest:
+            bt = c.backtest
+            d['backtest'] = {
+                'sharpe_ratio': bt.sharpe_ratio,
+                'annual_return_pct': bt.annual_return_pct,
+                'max_drawdown_pct': bt.max_drawdown_pct,
+                'profit_factor': bt.profit_factor,
+                'total_trades': bt.total_trades,
+                'win_rate': bt.win_rate,
+                'final_equity': bt.final_equity,
+            }
+        out.append(d)
+    return jsonify(out)
+
+
+@api_bp.route('/candidates/stats', methods=['GET'])
+def candidates_stats():
+    """候選池摘要（給 dashboard 統計用）"""
+    from sqlalchemy import func
+    rows = db.session.query(
+        StrategyCandidate.status,
+        func.count(StrategyCandidate.id),
+    ).group_by(StrategyCandidate.status).all()
+    by_status = {s: n for s, n in rows}
+    rows2 = db.session.query(
+        StrategyCandidate.source,
+        func.count(StrategyCandidate.id),
+    ).group_by(StrategyCandidate.source).all()
+    by_source = {s: n for s, n in rows2}
+    return jsonify({
+        'total': sum(by_status.values()),
+        'by_status': by_status,
+        'by_source': by_source,
+    })
+
+
+@api_bp.route('/candidates/<int:cid>', methods=['GET'])
+def get_candidate(cid):
+    """取得單一候選策略（含原始碼 + 翻譯 + 回測連結）"""
+    c = StrategyCandidate.query.get_or_404(cid)
+    d = c.to_dict(include_code=True)
+    if c.backtest:
+        d['backtest'] = c.backtest.to_dict(include_curve=False)
+    return jsonify(d)
+
+
+@api_bp.route('/candidates', methods=['POST'])
+def create_candidate():
+    """手動新增候選（爬蟲也會走這條，內部呼叫）"""
+    data = request.get_json() or {}
+    if not data.get('source') or not data.get('raw_code'):
+        return jsonify({'error': 'source and raw_code required'}), 400
+    c = StrategyCandidate(
+        source=data['source'],
+        source_url=data.get('source_url'),
+        source_name=data.get('source_name'),
+        source_author=data.get('source_author'),
+        source_meta=data.get('source_meta', {}),
+        raw_code=data['raw_code'],
+        raw_lang=data.get('raw_lang', 'python'),
+        candidate_type=data.get('candidate_type'),
+        category=data.get('category', 'swing'),
+        timeframe=data.get('timeframe', '4h'),
+        default_params=data.get('default_params', {}),
+        status=data.get('status', 'pending'),
+    )
+    db.session.add(c)
+    db.session.commit()
+    return jsonify(c.to_dict(include_code=True)), 201
+
+
+@api_bp.route('/candidates/<int:cid>', methods=['DELETE'])
+def delete_candidate(cid):
+    c = StrategyCandidate.query.get_or_404(cid)
+    db.session.delete(c)
+    db.session.commit()
+    return jsonify({'message': 'deleted'})
+
+
+@api_bp.route('/candidates/<int:cid>/reject', methods=['POST'])
+def reject_candidate(cid):
+    """標記為 rejected（不刪，保留紀錄）"""
+    c = StrategyCandidate.query.get_or_404(cid)
+    c.status = 'rejected'
+    data = request.get_json() or {}
+    if data.get('note'):
+        c.llm_notes = (c.llm_notes or '') + f'\n[rejected] {data["note"]}'
+    db.session.commit()
+    return jsonify(c.to_dict())
+
+
+@api_bp.route('/candidates/<int:cid>/promote', methods=['POST'])
+def promote_candidate(cid):
+    """佔位 — 完整 promote workflow 在 Phase 4.6 實作。
+    現在只回傳 501 + 提示，讓前端 / API 使用者知道路徑存在。
+    """
+    c = StrategyCandidate.query.get_or_404(cid)
+    if c.status != 'qualified':
+        return jsonify({'error': f'candidate must be qualified (status={c.status})'}), 400
+    return jsonify({
+        'error': 'promote workflow not yet implemented (Phase 4.6)',
+        'candidate_id': c.id,
+    }), 501
 
 
 # ===== K線數據 =====
