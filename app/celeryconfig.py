@@ -62,4 +62,18 @@ beat_schedule = {
         'schedule': crontab(minute='30'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 5.1: 每日爬蟲（02:00 UTC，先爬再翻譯）===
+    'auto-crawl-github': {
+        'task': 'app.tasks.strategy_tasks.auto_crawl_github',
+        'schedule': crontab(hour='2', minute='0'),
+        'options': {'queue': 'default'},
+    },
+
+    # === Phase 5.1: 每天 02:30 翻譯 pending（需要 ANTHROPIC_API_KEY，沒 key 自動跳過）===
+    'auto-translate-pending': {
+        'task': 'app.tasks.strategy_tasks.auto_translate_pending',
+        'schedule': crontab(hour='2', minute='30'),
+        'options': {'queue': 'default'},
+    },
 }

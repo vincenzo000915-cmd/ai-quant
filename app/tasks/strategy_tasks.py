@@ -382,3 +382,46 @@ def auto_backtest_translated_candidates(max_count: int = 20):
     from app.services.candidate_pipeline import backtest_all_translated
     result = backtest_all_translated(max_count=max_count)
     return f'auto-backtest: {result["count"]} 個跑完，{result["qualified"]} 個合格'
+
+
+# ===== Phase 5.1: 自動爬蟲 + 翻譯 =====
+
+@celery_app.task
+def auto_crawl_github(max_files_per_repo: int = 10):
+    """每日跑 GitHub 爬蟲，把新策略灌進候選池（status=pending，dedup by source_url）"""
+    from app.services.crawlers.github import crawl_all
+    try:
+        result = crawl_all(max_files_per_repo=max_files_per_repo)
+        t = result['totals']
+        return f'crawl: 偵測 {t["detected"]} 新增 {t["inserted"]} 略過 {t["skipped"]} 錯誤 {t["errors"]}'
+    except Exception as e:
+        return f'crawl 失敗: {type(e).__name__}: {e}'
+
+
+@celery_app.task
+def auto_translate_pending(max_count: int = 5):
+    """容器內走 Anthropic SDK 翻譯 pending 候選 — 需要 ANTHROPIC_API_KEY。
+    沒 key 就跳過、log 一行（user 應改用 host 端 translate_cli.py 跑 host cron）。
+    """
+    import os
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        return 'auto-translate skipped: no ANTHROPIC_API_KEY in env. 改用 host 端 translate_cli.py + crontab'
+
+    from app.models import StrategyCandidate
+    from app.services.candidate_pipeline import translate_and_verify
+
+    pending = StrategyCandidate.query.filter_by(status='pending').order_by(StrategyCandidate.id).limit(max_count).all()
+    if not pending:
+        return 'auto-translate: 無 pending 候選'
+
+    ok = err = 0
+    for c in pending:
+        try:
+            r = translate_and_verify(c.id)
+            if r.get('ok'):
+                ok += 1
+            else:
+                err += 1
+        except Exception:
+            err += 1
+    return f'auto-translate: {ok} 成功 / {err} 失敗 (共 {len(pending)} 個)'
