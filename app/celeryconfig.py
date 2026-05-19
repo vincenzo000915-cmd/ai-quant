@@ -97,4 +97,11 @@ beat_schedule = {
         'schedule': crontab(minute='*/5'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 10.8: 智能托管 — 每 4 小時 ===
+    'advisor-auto-apply': {
+        'task': 'app.tasks.strategy_tasks.auto_apply_advisor',
+        'schedule': crontab(minute='10', hour='*/4'),
+        'options': {'queue': 'default'},
+    },
 }

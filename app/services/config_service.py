@@ -32,6 +32,10 @@ DEFAULTS = {
     'atr_tp_mult': 3.0,
     'backtest_slippage_pct': 0.05,
     'backtest_fee_pct': 0.05,
+    # Phase 10.8: 智能托管（自動套用 advisor 建議）
+    'auto_apply_enabled': False,
+    'auto_apply_actions': [],
+    'auto_apply_max_per_day': 5,
 }
 
 

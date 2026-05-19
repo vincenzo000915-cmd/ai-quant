@@ -2,11 +2,16 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton,
   Alert, LinearProgress, Stack, Collapse, Button, Snackbar,
+  Switch, FormControlLabel, FormGroup, Checkbox, TextField,
+  Dialog, DialogTitle, DialogContent, DialogActions, Divider,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import CheckIcon from '@mui/icons-material/Check';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
+import SettingsIcon from '@mui/icons-material/Settings';
+import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -29,20 +34,26 @@ const FAN_OUT_DEFAULTS = ['ETH/USDT', 'SOL/USDT', 'AVAX/USDT'];
 
 export default function AdvisorPanel() {
   const [data, setData] = useState(null);
+  const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(true);
-  const [busyKey, setBusyKey] = useState(null);   // 'action-stratId'
+  const [busyKey, setBusyKey] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [autoSettingsOpen, setAutoSettingsOpen] = useState(false);
+  const [autoRunning, setAutoRunning] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`${API}/api/advisor/recommendations`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const body = await r.json();
-      setData(body);
+      const [advRes, cfgRes] = await Promise.all([
+        fetch(`${API}/api/advisor/recommendations`),
+        fetch(`${API}/api/config`),
+      ]);
+      if (!advRes.ok) throw new Error(`advisor HTTP ${advRes.status}`);
+      setData(await advRes.json());
+      if (cfgRes.ok) setConfig(await cfgRes.json());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -51,10 +62,54 @@ export default function AdvisorPanel() {
   }, []);
 
   useEffect(() => {
-    fetchData();
-    const t = setInterval(fetchData, 300000);
+    fetchAll();
+    const t = setInterval(fetchAll, 300000);
     return () => clearInterval(t);
-  }, [fetchData]);
+  }, [fetchAll]);
+
+  const saveAutoConfig = async (patch) => {
+    try {
+      const r = await fetch(`${API}/api/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || body.detail || `HTTP ${r.status}`);
+      setConfig(body);
+      setSnackbar({ open: true, severity: 'success', message: '托管設定已更新' });
+    } catch (e) {
+      setSnackbar({ open: true, severity: 'error', message: `失敗：${e.message}` });
+    }
+  };
+
+  const runAutoNow = async () => {
+    if (!window.confirm('立即跑一次智能托管掃描？\n會根據目前授權的 action 立刻自動執行符合的建議。')) return;
+    setAutoRunning(true);
+    try {
+      const r = await fetch(`${API}/api/advisor/auto-apply/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || body.detail || `HTTP ${r.status}`);
+      if (body.skipped) {
+        setSnackbar({ open: true, severity: 'warning', message: `已跳過：${body.reason}` });
+      } else {
+        setSnackbar({
+          open: true,
+          severity: body.applied_count > 0 ? 'success' : 'info',
+          message: `掃描完成：套用 ${body.applied_count} 項，今日 ${body.today_count_after}/${body.daily_cap}`,
+        });
+        await fetchAll();
+      }
+    } catch (e) {
+      setSnackbar({ open: true, severity: 'error', message: `失敗：${e.message}` });
+    } finally {
+      setAutoRunning(false);
+    }
+  };
 
   const applyAction = async (item) => {
     const sid = item.strategy_id;
@@ -112,7 +167,7 @@ export default function AdvisorPanel() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || body.detail || `HTTP ${res.status}`);
       setSnackbar({ open: true, severity: 'success', message: req.okMsg });
-      await fetchData();
+      await fetchAll();
     } catch (e) {
       setSnackbar({ open: true, severity: 'error', message: `失敗：${e.message}` });
     } finally {
@@ -126,8 +181,8 @@ export default function AdvisorPanel() {
   return (
     <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(34,211,238,0.20)' }}>
       <CardContent sx={{ px: 2.5, py: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
             <Typography variant="h6" fontWeight={700}>🎯 操作建議</Typography>
             {summary.total > 0 && (
               <Stack direction="row" spacing={0.5}>
@@ -137,18 +192,77 @@ export default function AdvisorPanel() {
               </Stack>
             )}
           </Box>
-          <Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+            {/* 智能托管 master toggle */}
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={!!config?.auto_apply_enabled}
+                  onChange={(e) => saveAutoConfig({ auto_apply_enabled: e.target.checked })}
+                  sx={{
+                    '& .MuiSwitch-thumb': { bgcolor: config?.auto_apply_enabled ? '#22c55e' : undefined },
+                    '& .MuiSwitch-track': { bgcolor: config?.auto_apply_enabled ? '#22c55e !important' : undefined },
+                  }}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <SmartToyIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#22c55e' : 'text.secondary' }} />
+                  <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                    智能托管
+                  </Typography>
+                  {config?.auto_apply_enabled && (config?.auto_apply_actions?.length || 0) > 0 && (
+                    <Chip
+                      size="small"
+                      label={`${config.auto_apply_actions.length} 項`}
+                      sx={{ height: 16, fontSize: 9, bgcolor: '#22c55e', color: '#000', ml: 0.5 }}
+                    />
+                  )}
+                </Box>
+              }
+              sx={{ mr: 0 }}
+            />
+            <Tooltip title="托管設定（哪些 action 允許自動執行 / 每日上限）">
+              <IconButton size="small" onClick={() => setAutoSettingsOpen(true)}>
+                <SettingsIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="立即跑一次托管掃描">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={runAutoNow}
+                  disabled={autoRunning || !config?.auto_apply_enabled}
+                >
+                  <PlayCircleIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#22c55e' : undefined }} />
+                </IconButton>
+              </span>
+            </Tooltip>
             <IconButton size="small" onClick={() => setExpanded(!expanded)}>
               {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
             </IconButton>
-            <IconButton size="small" onClick={fetchData}>
+            <IconButton size="small" onClick={fetchAll}>
               <RefreshIcon />
             </IconButton>
           </Box>
         </Box>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
-          綜合相關性 / 市場狀態 / 多 TF 訊號 / 最近回測與參數優化 — 全自動生成。所有建議都由你決定是否執行。
-        </Typography>
+
+        {config?.auto_apply_enabled && (config?.auto_apply_actions?.length || 0) > 0 ? (
+          <Alert severity="success" icon={<SmartToyIcon />} sx={{ mb: 1.5, py: 0.3 }}>
+            智能托管已啟用：自動執行 <strong>{config.auto_apply_actions.join(' / ')}</strong>，每日上限 {config.auto_apply_max_per_day} 次，每 4 小時掃描一次（+ 5min 偏移）。
+            {config.trading_mode === 'live' && (config.auto_apply_actions.includes('retire')) && (
+              <Typography component="span" variant="caption" sx={{ display: 'block', mt: 0.5, opacity: 0.85 }}>
+                ⓘ LIVE 模式下 retire 會被內部安全網跳過 — 改用 pause 代替。
+              </Typography>
+            )}
+          </Alert>
+        ) : (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            綜合相關性 / 市場狀態 / 多 TF 訊號 / 最近回測與參數優化 — 全自動生成。
+            {!config?.auto_apply_enabled && '開啟「智能托管」可讓系統按你授權自動執行；目前所有動作仍須手動點。'}
+          </Typography>
+        )}
 
         {loading && <LinearProgress sx={{ mb: 1 }} />}
         {error && <Alert severity="error" sx={{ mb: 1 }}>讀取失敗：{error}</Alert>}
@@ -219,6 +333,87 @@ export default function AdvisorPanel() {
             })}
           </Stack>
         </Collapse>
+
+        {/* 智能托管設定 Dialog */}
+        <Dialog open={autoSettingsOpen} onClose={() => setAutoSettingsOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SmartToyIcon sx={{ color: '#22c55e' }} />
+            智能托管設定
+          </DialogTitle>
+          <DialogContent dividers>
+            <Alert severity="warning" sx={{ mb: 2, py: 0.5 }}>
+              智能托管會在背景每 4 小時自動執行你勾選的 action。請按風險由低到高逐個開啟，並隨時可以關掉總開關。
+              <br />所有自動執行都會寫進 audit log + 推 Telegram。
+            </Alert>
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={!!config?.auto_apply_enabled}
+                  onChange={(e) => saveAutoConfig({ auto_apply_enabled: e.target.checked })}
+                />
+              }
+              label={<Typography fontWeight={700}>主開關 — 啟用智能托管</Typography>}
+              sx={{ mb: 1 }}
+            />
+
+            <Divider sx={{ my: 2 }} />
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>授權的自動 action（按風險排序）：</Typography>
+            <FormGroup>
+              {[
+                { val: 'apply_params', label: '🔧 套用最佳參數（最安全）', desc: '把參數優化跑出的最佳組合直接套用到策略' },
+                { val: 'pause',        label: '⏸️ 暫停策略（中等）',       desc: '當 regime 不匹配時把策略改為 stopped' },
+                { val: 'fan_out',      label: '📡 一鍵擴幣種（中等）',     desc: '為高 Sharpe 策略建立 ETH/SOL/AVAX 兄弟（status=stopped）' },
+                { val: 'retire',       label: '🪦 退役策略（最積極）',      desc: 'LIVE 模式會自動跳過 retire，只在 paper 生效' },
+              ].map(opt => {
+                const checked = (config?.auto_apply_actions || []).includes(opt.val);
+                return (
+                  <Box key={opt.val} sx={{ mb: 1 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={checked}
+                          disabled={!config?.auto_apply_enabled}
+                          onChange={(e) => {
+                            const cur = config?.auto_apply_actions || [];
+                            const next = e.target.checked ? [...cur, opt.val] : cur.filter(x => x !== opt.val);
+                            saveAutoConfig({ auto_apply_actions: next });
+                          }}
+                        />
+                      }
+                      label={<Typography variant="body2" fontWeight={600}>{opt.label}</Typography>}
+                    />
+                    <Typography variant="caption" sx={{ display: 'block', ml: 4, color: 'text.secondary' }}>
+                      {opt.desc}
+                    </Typography>
+                  </Box>
+                );
+              })}
+            </FormGroup>
+
+            <Divider sx={{ my: 2 }} />
+
+            <TextField
+              label="每日上限"
+              type="number"
+              size="small"
+              fullWidth
+              value={config?.auto_apply_max_per_day ?? 5}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isNaN(n) && n >= 0 && n <= 100) {
+                  saveAutoConfig({ auto_apply_max_per_day: n });
+                }
+              }}
+              helperText="每天最多執行幾次自動 action（保險絲）。0 = 完全不執行（等效關閉）。"
+              inputProps={{ min: 0, max: 100 }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setAutoSettingsOpen(false)}>關閉</Button>
+          </DialogActions>
+        </Dialog>
 
         <Snackbar
           open={snackbar.open}

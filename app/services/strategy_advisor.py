@@ -120,7 +120,9 @@ def build_recommendations() -> dict:
         best = opt.best_oos_sharpe
         # baseline 可能是 None（基線就跑不出 Sharpe），這種情況 best > 1 也值得套用
         beats_baseline = baseline is None or (best - baseline) >= APPLY_PARAMS_LIFT
-        if best >= 1.0 and beats_baseline and opt.best_params != opt.baseline_params:
+        # 幂等：當前 strategy.params 已經是 best 就不再建議
+        current_params = dict(s.params or {})
+        if best >= 1.0 and beats_baseline and opt.best_params != current_params:
             lift_str = f'+{(best - baseline):.2f}' if baseline is not None else f'從無 Sharpe → {best:.2f}'
             items.append({
                 'action': 'apply_params',

@@ -262,6 +262,30 @@ def advisor_recommendations():
     return jsonify(build_recommendations())
 
 
+@api_bp.route('/advisor/auto-apply/run', methods=['POST'])
+@rate_limit('10/min')
+def trigger_auto_apply():
+    """Phase 10.8: 手動觸發智能托管掃描（同步跑一次，回傳結果摘要）。"""
+    from app.services.advisor_executor import run_auto_apply
+    r = run_auto_apply()
+    return jsonify(r)
+
+
+@api_bp.route('/advisor/auto-apply/history', methods=['GET'])
+def auto_apply_history():
+    """Phase 10.8: 最近 N 條自動套用紀錄（讀 audit_log）。"""
+    from app.models import AuditLog
+    limit = min(int(request.args.get('limit', 50)), 200)
+    rows = (
+        AuditLog.query
+        .filter(AuditLog.event_type == 'advisor_auto_apply')
+        .order_by(AuditLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return jsonify([r.to_dict() for r in rows])
+
+
 @api_bp.route('/strategies/<int:id>/mtf', methods=['GET'])
 def strategy_mtf(id):
     """Phase 10.4: multi-timeframe consensus check for one strategy."""
@@ -1030,6 +1054,14 @@ def update_system_config():
         return jsonify({'error': 'atr_sl_mult out of range [0.5, 10]'}), 400
     if 'atr_tp_mult' in patch and not (0.5 <= patch['atr_tp_mult'] <= 20):
         return jsonify({'error': 'atr_tp_mult out of range [0.5, 20]'}), 400
+    # Phase 10.8: 智能托管 config 守衛
+    if 'auto_apply_actions' in patch:
+        allowed = {'apply_params', 'pause', 'retire', 'fan_out'}
+        actions = patch['auto_apply_actions']
+        if not isinstance(actions, list) or any(a not in allowed for a in actions):
+            return jsonify({'error': f'auto_apply_actions 必須是 list，元素限：{sorted(allowed)}'}), 400
+    if 'auto_apply_max_per_day' in patch and not (0 <= patch['auto_apply_max_per_day'] <= 100):
+        return jsonify({'error': 'auto_apply_max_per_day 必須 [0, 100]'}), 400
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)

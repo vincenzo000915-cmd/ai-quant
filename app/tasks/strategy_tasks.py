@@ -679,3 +679,17 @@ def optimize_strategy_params(self, optimization_id: int, max_combos: int = 24):
         opt.completed_at = _dt.datetime.utcnow()
         db.session.commit()
         return f'optimize error: {e}'
+
+
+# ===== Phase 10.8: 智能托管 — 自動套用 advisor 建議 =====
+
+@celery_app.task
+def auto_apply_advisor():
+    """每 4 小時跑一次。讀 SystemConfig.auto_apply_* 守衛 + 上限後，
+    把使用者授權的 advisor 建議直接執行（apply_params / pause / retire / fan_out）。
+    """
+    from app.services.advisor_executor import run_auto_apply
+    r = run_auto_apply()
+    if r.get('skipped'):
+        return f'auto-apply skipped: {r.get("reason")}'
+    return f'auto-apply: 套用 {r["applied_count"]} 項（今日累計 {r["today_count_after"]}/{r["daily_cap"]}）'

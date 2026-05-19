@@ -306,6 +306,12 @@ class SystemConfig(db.Model):
     backtest_slippage_pct = db.Column(db.Float, default=0.05)   # 每側 0.05% 估算市價單滑點
     backtest_fee_pct = db.Column(db.Float, default=0.05)        # OKX SWAP taker = 0.05%/side
 
+    # Phase 10.8: 智能托管 — auto-apply advisor recommendations
+    auto_apply_enabled = db.Column(db.Boolean, default=False)
+    # 允許自動套用的 action 類型清單（subset of: apply_params / pause / retire / fan_out）
+    auto_apply_actions = db.Column(db.JSON, default=list)
+    auto_apply_max_per_day = db.Column(db.Integer, default=5)
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -330,6 +336,9 @@ class SystemConfig(db.Model):
             'atr_tp_mult': self.atr_tp_mult,
             'backtest_slippage_pct': self.backtest_slippage_pct,
             'backtest_fee_pct': self.backtest_fee_pct,
+            'auto_apply_enabled': bool(self.auto_apply_enabled),
+            'auto_apply_actions': list(self.auto_apply_actions or []),
+            'auto_apply_max_per_day': self.auto_apply_max_per_day or 5,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
