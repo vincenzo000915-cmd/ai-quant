@@ -633,6 +633,21 @@ def reject_candidate(cid):
     return jsonify(c.to_dict())
 
 
+@api_bp.route('/candidates/<int:cid>/translate', methods=['POST'])
+def translate_candidate(cid):
+    """跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-15s/candidate）。"""
+    from app.services.candidate_pipeline import translate_and_verify
+    result = translate_and_verify(cid)
+    if result['ok']:
+        return jsonify(result), 200
+    # 區分缺金鑰 vs 翻譯失敗
+    err = result.get('error', '')
+    code = 400 if 'not found' in err.lower() else 500
+    if 'ANTHROPIC_API_KEY' in err:
+        code = 503
+    return jsonify(result), code
+
+
 @api_bp.route('/candidates/<int:cid>/promote', methods=['POST'])
 def promote_candidate(cid):
     """佔位 — 完整 promote workflow 在 Phase 4.6 實作。
