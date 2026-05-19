@@ -172,33 +172,8 @@ const Sparkline = ({ data, color, width = 60, height = 20 }) => {
 };
 
 // 假的系統指標（之後接真的）
-function useSystemStats() {
-  const [stats, setStats] = useState({ uptime: 0, latency: 0, cpu: 0, ram: 0, signalQ: 0, net: 0 });
-  useEffect(() => {
-    const start = Date.now();
-    const tick = () => {
-      setStats({
-        uptime: Math.floor((Date.now() - start) / 1000),
-        latency: 18 + Math.floor(Math.random() * 30),
-        cpu: 22 + Math.floor(Math.random() * 15),
-        ram: 41 + Math.floor(Math.random() * 8),
-        signalQ: Math.floor(Math.random() * 4),
-        net: 1.2 + Math.random() * 0.8,
-      });
-    };
-    tick();
-    const interval = setInterval(tick, 2500);
-    return () => clearInterval(interval);
-  }, []);
-  return stats;
-}
-
-function formatUptime(seconds) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
+// useSystemStats / formatUptime 已移除 — 那是 Hermes 留下的 Math.random 假數據
+// 真實狀態走 /api/account + /api/pnl/summary + /api/config，渲染在 SysStatBlock row
 
 export default function Dashboard() {
   const [account, setAccount] = useState(null);
@@ -214,7 +189,6 @@ export default function Dashboard() {
   const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, signals: true });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const sysStats = useSystemStats();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -466,12 +440,46 @@ export default function Dashboard() {
         background: 'rgba(8, 10, 24, 0.3)',
         backdropFilter: 'blur(12px)',
       }}>
-        <SysStatBlock label="UPTIME"    value={formatUptime(sysStats.uptime)} accent={C.success}  icon={<SpeedIcon />} />
-        <SysStatBlock label="LATENCY"   value={sysStats.latency}  suffix="ms" accent={C.accent}   icon={<BoltIcon />} />
-        <SysStatBlock label="CPU"       value={sysStats.cpu}      suffix="%"  accent={sysStats.cpu > 70 ? C.error : C.primary} icon={<MemoryIcon />} />
-        <SysStatBlock label="RAM"       value={sysStats.ram}      suffix="%"  accent={C.primary} icon={<MemoryIcon />} />
-        <SysStatBlock label="SIGNAL Q"  value={sysStats.signalQ}             accent={C.gold}    icon={<BoltIcon />} />
-        <SysStatBlock label="NET"       value={sysStats.net.toFixed(1)} suffix="MB/s" accent={C.purple} icon={<SpeedIcon />} />
+        {/* === Phase 7.3: 真實系統狀態 === */}
+        <SysStatBlock
+          label={cfg?.trading_mode === 'live' ? '🔴 LIVE' : '🟢 PAPER'}
+          value={cfg?.trading_mode === 'live' ? '實盤' : '模擬'}
+          accent={cfg?.trading_mode === 'live' ? C.error : C.success}
+          icon={<BoltIcon />}
+        />
+        <SysStatBlock
+          label="BALANCE"
+          value={account?.balance != null ? account.balance.toFixed(2) : '—'}
+          suffix={account ? ' USDT' : ''}
+          accent={C.gold}
+          icon={<MemoryIcon />}
+        />
+        <SysStatBlock
+          label="TODAY P&L"
+          value={pnlSummary?.today_pnl != null ? (pnlSummary.today_pnl >= 0 ? '+' : '') + pnlSummary.today_pnl.toFixed(2) : '0.00'}
+          accent={(pnlSummary?.today_pnl || 0) >= 0 ? C.success : C.error}
+          icon={<BoltIcon />}
+        />
+        <SysStatBlock
+          label="TODAY TRADES"
+          value={pnlSummary?.today_trades ?? 0}
+          suffix={pnlSummary?.today_trades ? ` (${pnlSummary.today_wins}W/${pnlSummary.today_losses}L)` : ''}
+          accent={C.primary}
+          icon={<SpeedIcon />}
+        />
+        <SysStatBlock
+          label="OPEN POS"
+          value={pnlSummary?.open_positions ?? 0}
+          suffix={pnlSummary ? `/${pnlSummary.running_strategies}` : ''}
+          accent={(pnlSummary?.open_positions || 0) > 0 ? C.accent : C.textDim}
+          icon={<MemoryIcon />}
+        />
+        <SysStatBlock
+          label={cfg?.halted ? '🛑 HALTED' : '✅ OK'}
+          value={cfg?.halted ? '阻新單' : '正常'}
+          accent={cfg?.halted ? C.error : C.success}
+          icon={<BoltIcon />}
+        />
       </Box>
 
       {/* === Tactical Header === */}

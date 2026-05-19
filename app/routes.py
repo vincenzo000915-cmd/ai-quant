@@ -194,6 +194,14 @@ def pnl_summary():
         if dd > max_dd:
             max_dd = dd
 
+    # 今日（UTC）統計
+    from datetime import datetime as _dt, timezone as _tz
+    today_start = _dt.now(_tz.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+    today_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_trades = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_wins = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl > 0).scalar() or 0
+    today_losses = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl < 0).scalar() or 0
+
     return jsonify({
         'total_pnl': round(total_pnl, 2),
         'unrealized_pnl': round(unrealized, 2),
@@ -204,6 +212,10 @@ def pnl_summary():
         'open_positions': open_positions,
         'running_strategies': running_strategies,
         'max_drawdown': round(max_dd, 2),
+        'today_pnl': round(float(today_pnl), 2),
+        'today_trades': int(today_trades),
+        'today_wins': int(today_wins),
+        'today_losses': int(today_losses),
     })
 
 
