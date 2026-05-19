@@ -512,6 +512,39 @@ def btc_price():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/symbols', methods=['GET'])
+def list_supported_symbols():
+    """Phase 9.1: 系統支援的 OKX SWAP 交易對清單"""
+    from app.services.symbols import supported_list
+    return jsonify(supported_list())
+
+
+@api_bp.route('/market/<path:symbol>/price', methods=['GET'])
+def market_price(symbol):
+    """通用版 ticker — symbol 可帶 / (e.g. ETH/USDT)"""
+    from app.services.exchange_service import get_ticker
+    try:
+        t = get_ticker(symbol)
+        return jsonify(t)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/market/<path:symbol>/chart', methods=['GET'])
+def market_chart(symbol):
+    """通用版 K 線 — symbol 可帶 / (e.g. ETH/USDT)"""
+    from app.services.exchange_service import get_historical_prices
+    tf = request.args.get('timeframe', '1h')
+    if tf not in ('15m', '30m', '1h', '4h', '1d', '1w'):
+        return jsonify({'error': f'invalid timeframe: {tf}'}), 400
+    limit_arg = request.args.get('limit', type=int)
+    try:
+        data = get_historical_prices(symbol, timeframe=tf, limit=limit_arg)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @api_bp.route('/market/btc-chart', methods=['GET'])
 def btc_chart():
     """BTC/USDT 歷史價格走勢。

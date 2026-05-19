@@ -68,6 +68,7 @@ const TIMEFRAMES = ['15m', '1h', '4h', '1d'];
 export default function Strategies() {
   const [strategies, setStrategies] = useState([]);
   const [config, setConfig] = useState(null);
+  const [supportedSymbols, setSupportedSymbols] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState(null);
@@ -157,6 +158,7 @@ export default function Strategies() {
   useEffect(() => {
     fetchStrategies();
     fetch(`${API}/api/config`).then(r => r.json()).then(setConfig).catch(() => {});
+    fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
   }, [fetchStrategies]);
 
   const handleOpenDialog = (strategy = null) => {
@@ -479,7 +481,19 @@ export default function Strategies() {
                 {TIMEFRAMES.map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
               </Select>
             </FormControl>
-            <TextField label="交易對" value={form.symbol} onChange={(e) => setForm(f => ({...f, symbol: e.target.value}))} fullWidth size="small" placeholder="BTC/USDT" />
+            <FormControl fullWidth size="small">
+              <InputLabel>交易對</InputLabel>
+              <Select value={form.symbol} onChange={(e) => setForm(f => ({...f, symbol: e.target.value}))} label="交易對">
+                {(supportedSymbols.length ? supportedSymbols : [{ symbol: 'BTC/USDT' }]).map(s => (
+                  <MenuItem key={s.symbol} value={s.symbol}>
+                    {s.symbol}
+                    {s.contract_size && <Typography component="span" variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                      (合約 {s.contract_size} {s.symbol.split('/')[0]}/張)
+                    </Typography>}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <TextField label="策略參數 (JSON)" value={form.params} onChange={(e) => setForm(f => ({...f, params: e.target.value}))} fullWidth size="small" multiline rows={3} />
             <FormControlLabel control={<Switch checked={form.active} onChange={(e) => setForm(f => ({...f, active: e.target.checked}))} />} label="建立後立即啟動" />
           </Box>

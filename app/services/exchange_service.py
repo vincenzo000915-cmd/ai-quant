@@ -316,7 +316,9 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
     if not (api_key and secret and passphrase):
         raise RuntimeError('OKX API credentials missing in env')
 
-    inst_id = symbol.replace('/', '-') + '-SWAP'   # 'BTC/USDT' -> 'BTC-USDT-SWAP'
+    from app.services.symbols import get_inst_id, get_contract_size
+    inst_id = get_inst_id(symbol)
+    contract_size = get_contract_size(symbol)
     cl_ord_id = client_order_id or _gen_client_order_id()
 
     # 先設 leverage（OKX 原生 idempotent — 重設同值不 raise）
@@ -329,12 +331,12 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
         if 'leverage' not in str(e).lower():
             raise
 
-    # 計算合約張數：每張 0.01 BTC (BTC-USDT-SWAP)
+    # 計算合約張數：依該幣 contract_size 動態算
     notional = size_usdt * leverage
     ticker = get_ticker(symbol)
     price = float(ticker['price'])
-    btc_amount = notional / price
-    contracts = round(btc_amount / 0.01, 0)
+    base_amount = notional / price            # 換成 base currency 量
+    contracts = round(base_amount / contract_size, 0)
     if contracts < 1:
         contracts = 1
 

@@ -188,6 +188,8 @@ export default function Dashboard() {
   const [cfg, setCfg] = useState(null);
   const [trades, setTrades] = useState([]);
   const [tfBtc, setTfBtc] = useState('1h');
+  const [chartSymbol, setChartSymbol] = useState('BTC/USDT');
+  const [supportedSymbols, setSupportedSymbols] = useState([]);
   const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, signals: true });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -247,12 +249,17 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // BTC chart — 跟著 tfBtc 切換 + 每 60s 後台刷新
+  // 載入支援的交易對清單一次
+  useEffect(() => {
+    fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
+  }, []);
+
+  // K 線 — 跟著 chartSymbol / tfBtc 切換 + 每 60s 後台刷新
   useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
       try {
-        const r = await fetch(`${API}/api/market/btc-chart?timeframe=${tfBtc}`);
+        const r = await fetch(`${API}/api/market/${chartSymbol}/chart?timeframe=${tfBtc}`);
         if (!r.ok || cancelled) return;
         const j = await r.json();
         if (!cancelled) setBtcChart(Array.isArray(j) ? j : []);
@@ -261,7 +268,7 @@ export default function Dashboard() {
     loadChart();
     const id = setInterval(loadChart, 60000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [tfBtc]);
+  }, [tfBtc, chartSymbol]);
 
   // 計算 SMA / EMA / Bollinger Bands + 信號標記合併進 chart data
   const btcChartEnriched = useMemo(() => {
@@ -319,20 +326,21 @@ export default function Dashboard() {
     }));
   }, [btcChart, trades, tfBtc]);
 
-  // 每秒拉一次 BTC ticker（輕量，只更新數字）
+  // 2 秒拉一次 ticker（輕量，跟 chartSymbol 切）
   useEffect(() => {
     let cancelled = false;
     const tick = async () => {
       try {
-        const r = await fetch(`${API}/api/market/btc-price`);
+        const r = await fetch(`${API}/api/market/${chartSymbol}/price`);
         if (!r.ok || cancelled) return;
         const json = await r.json();
         if (!cancelled) setBtcPrice(json);
       } catch { /* */ }
     };
-    const id = setInterval(tick, 2000);   // 2s 已經足夠流暢，又不會壓垮 backend
+    tick();
+    const id = setInterval(tick, 2000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [chartSymbol]);
 
   const sortedPerf = useMemo(() => {
     return [...perfList].sort((a, b) => {
@@ -694,14 +702,39 @@ export default function Dashboard() {
           <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
               <Box>
-                <Typography variant="overline" sx={{ color: 'text.secondary' }}>BTC · LIVE (ticker 2s)</Typography>
-                <Typography
-                  className="num-mono"
-                  variant="h5"
-                  sx={{ fontWeight: 700, color: C.gold, fontSize: '1.6rem' }}
-                >
-                  ${(btcPrice?.price || 0).toLocaleString()}
-                </Typography>
+                <Typography variant="overline" sx={{ color: 'text.secondary' }}>{chartSymbol} · LIVE (ticker 2s)</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, flexWrap: 'wrap' }}>
+                  <Typography
+                    className="num-mono"
+                    variant="h5"
+                    sx={{ fontWeight: 700, color: C.gold, fontSize: '1.6rem' }}
+                  >
+                    ${(btcPrice?.price || 0).toLocaleString()}
+                  </Typography>
+                  {/* 币种切换 */}
+                  <Box sx={{ display: 'flex', gap: 0.4, flexWrap: 'wrap' }}>
+                    {(supportedSymbols.length ? supportedSymbols : [{ symbol: 'BTC/USDT' }]).map(s => (
+                      <Box
+                        key={s.symbol}
+                        component="button"
+                        onClick={() => setChartSymbol(s.symbol)}
+                        sx={{
+                          cursor: 'pointer',
+                          px: 0.7, py: 0.15,
+                          border: '1px solid',
+                          borderColor: chartSymbol === s.symbol ? C.gold : 'rgba(255,255,255,0.08)',
+                          color: chartSymbol === s.symbol ? C.gold : 'rgba(148,163,184,0.7)',
+                          bgcolor: chartSymbol === s.symbol ? 'rgba(251,191,36,0.08)' : 'transparent',
+                          fontFamily: 'JetBrains Mono, monospace',
+                          fontSize: '0.58rem', fontWeight: 700, letterSpacing: 0.5,
+                          borderRadius: 0.4,
+                        }}
+                      >
+                        {s.symbol.split('/')[0]}
+                      </Box>
+                    ))}
+                  </Box>
+                </Box>
               </Box>
               {btcPrice && (
                 <Box sx={{ textAlign: 'right' }}>
