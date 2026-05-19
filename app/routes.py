@@ -252,6 +252,50 @@ def fan_out_strategy(id):
     }), 201
 
 
+@api_bp.route('/regime', methods=['GET'])
+def get_regime():
+    """Phase 10.3: market regime (ADX + Hurst) for a single symbol+timeframe."""
+    from app.services.regime_detector import detect_regime
+    symbol = request.args.get('symbol', 'BTC/USDT')
+    timeframe = request.args.get('timeframe', '4h')
+    return jsonify(detect_regime(symbol, timeframe))
+
+
+@api_bp.route('/regime/running', methods=['GET'])
+def regime_for_running():
+    """Phase 10.3: regime per distinct (symbol,timeframe) used by running strategies,
+    plus per-strategy affinity fit."""
+    from app.services.regime_detector import detect_regime, affinity_for, fit_label
+
+    running = Strategy.query.filter(Strategy.status == 'running').all()
+
+    # 唯一 (symbol, tf) 對 -> 只算一次
+    unique = sorted({(s.symbol, s.timeframe) for s in running})
+    regimes = {}
+    for sym, tf in unique:
+        r = detect_regime(sym, tf)
+        regimes[f'{sym}@{tf}'] = r
+
+    per_strategy = []
+    for s in running:
+        r = regimes.get(f'{s.symbol}@{s.timeframe}', {})
+        per_strategy.append({
+            'strategy_id': s.id,
+            'name': s.name,
+            'type': s.type,
+            'symbol': s.symbol,
+            'timeframe': s.timeframe,
+            'affinity': affinity_for(s.type),
+            'regime': r.get('regime'),
+            'fit': fit_label(s.type, r.get('regime', 'unknown')),
+        })
+
+    return jsonify({
+        'regimes': regimes,
+        'per_strategy': per_strategy,
+    })
+
+
 @api_bp.route('/strategies/correlation', methods=['GET'])
 def strategies_correlation():
     """Phase 10.1: pairwise daily-PnL correlation matrix for running strategies.

@@ -19,6 +19,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import BTCChart from '../components/BTCChart';
+import RegimePanel from '../components/RegimePanel';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -957,6 +958,9 @@ export default function Dashboard() {
           </Box>
         </Grid>
       </Grid>
+
+      {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
+      <RegimePanel />
 
       {/* === Phase 7.2: STRATEGY LIVE STATE — 每策略指標卡 === */}
       <StrategyLiveStateGrid C={C} />
