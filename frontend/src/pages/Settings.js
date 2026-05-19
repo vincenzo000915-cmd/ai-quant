@@ -75,7 +75,7 @@ export default function Settings() {
             <Grid container spacing={3}>
               {riskParams.map(({ key, label, unit }) => (
                 <Grid item xs={12} md={6} key={key}>
-                  <Typography variant="body2" gutterBottom>{label}: <strong style={{ color: '#00e5ff' }}>{risk[key]}{unit}</strong></Typography>
+                  <Typography variant="body2" gutterBottom>{label}: <strong style={{ color: '#3b82f6' }}>{risk[key]}{unit}</strong></Typography>
                   <Slider value={risk[key]} min={1} max={50} step={1}
                     onChange={(_, v) => setRisk({ ...risk, [key]: v })}
                     sx={{ color: 'primary.main' }} />

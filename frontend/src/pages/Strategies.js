@@ -11,6 +11,7 @@ import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
+import ScienceIcon from '@mui/icons-material/Science';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
@@ -233,6 +234,13 @@ export default function Strategies() {
                             {strategy.active ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
                           </IconButton>
                         </Tooltip>
+                        <Tooltip title="回測（Phase 3 開發中）">
+                          <span>
+                            <IconButton size="small" disabled>
+                              <ScienceIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
                         <Tooltip title="編輯">
                           <IconButton size="small" color="primary" onClick={() => handleOpenDialog(strategy)}>
                             <EditIcon fontSize="small" />
@@ -277,7 +285,7 @@ export default function Strategies() {
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
       {/* 模擬盤摘要 */}
-      <Card sx={{ mb: 2.5, bgcolor: '#1a0a2e', border: '1px solid rgba(0,240,255,0.2)' }}>
+      <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid #334155' }}>
         <CardContent sx={{ px: 2, py: 1.5 }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={6} sm={3}>

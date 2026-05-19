@@ -45,10 +45,9 @@ export default function Layout() {
       <Toolbar sx={{ justifyContent: open ? 'space-between' : 'center', px: 1 }}>
         {open && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ShowChartIcon sx={{ color: 'primary.main', filter: 'drop-shadow(0 0 8px #00f0ff)' }} />
-            <Typography variant="subtitle1" fontWeight={700} color="primary.main"
-              sx={{ textShadow: '0 0 10px rgba(0,240,255,0.5)', letterSpacing: 3 }} noWrap>
-              QUANT_SYS
+            <ShowChartIcon sx={{ color: 'primary.main' }} />
+            <Typography variant="subtitle1" fontWeight={700} color="text.primary" noWrap>
+              量化交易
             </Typography>
           </Box>
         )}
@@ -68,9 +67,9 @@ export default function Layout() {
                 <ListItemButton
                   onClick={() => { navigate(path); if (isMobile) setMobileOpen(false); }}
                   sx={{
-                    mx: 1, borderRadius: 2,
-                    bgcolor: active ? 'rgba(0,229,255,0.12)' : 'transparent',
-                    '&:hover': { bgcolor: 'rgba(0,229,255,0.08)' },
+                    mx: 1, borderRadius: 1.5,
+                    bgcolor: active ? 'rgba(59,130,246,0.12)' : 'transparent',
+                    '&:hover': { bgcolor: 'rgba(59,130,246,0.08)' },
                     justifyContent: open ? 'initial' : 'center',
                     px: open ? 2 : 1.5,
                   }}

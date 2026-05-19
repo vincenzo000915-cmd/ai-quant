@@ -174,6 +174,63 @@ def pnl_summary():
     })
 
 
+# ===== 策略表現（per-strategy 統計）=====
+
+@api_bp.route('/strategies/performance', methods=['GET'])
+def strategies_performance():
+    """每個策略的真實表現統計（從 trades 表 + positions 表算）"""
+    from sqlalchemy import func
+
+    strategies = Strategy.query.order_by(Strategy.id).all()
+    result = []
+
+    for s in strategies:
+        # trades 統計
+        trade_stats = db.session.query(
+            func.count(Trade.id).label('total'),
+            func.coalesce(func.sum(Trade.pnl), 0).label('total_pnl'),
+            func.coalesce(func.avg(Trade.pnl), 0).label('avg_pnl'),
+            func.coalesce(func.sum(Trade.pnl).filter(Trade.pnl > 0), 0).label('wins_pnl'),
+            func.coalesce(func.sum(Trade.pnl).filter(Trade.pnl < 0), 0).label('losses_pnl'),
+            func.count(Trade.id).filter(Trade.pnl > 0).label('wins'),
+            func.count(Trade.id).filter(Trade.pnl < 0).label('losses'),
+            func.max(Trade.exit_time).label('last_trade'),
+        ).filter(Trade.strategy_id == s.id).first()
+
+        total = trade_stats.total or 0
+        win_rate = (trade_stats.wins / total * 100) if total > 0 else 0
+        avg_win = (trade_stats.wins_pnl / trade_stats.wins) if trade_stats.wins > 0 else 0
+        avg_loss = (trade_stats.losses_pnl / trade_stats.losses) if trade_stats.losses > 0 else 0
+        profit_factor = abs(trade_stats.wins_pnl / trade_stats.losses_pnl) if trade_stats.losses_pnl < 0 else (float('inf') if trade_stats.wins_pnl > 0 else 0)
+
+        # 是否有開倉中持倉
+        open_pos = db.session.query(Position).filter_by(strategy_id=s.id, status='open').first()
+
+        result.append({
+            'id': s.id,
+            'name': s.name,
+            'type': s.type,
+            'category': s.category,
+            'symbol': s.symbol,
+            'timeframe': s.timeframe,
+            'status': s.status,
+            'total_trades': total,
+            'winning_trades': trade_stats.wins or 0,
+            'losing_trades': trade_stats.losses or 0,
+            'win_rate': round(win_rate, 1),
+            'total_pnl': round(float(trade_stats.total_pnl or 0), 2),
+            'avg_pnl': round(float(trade_stats.avg_pnl or 0), 2),
+            'avg_win': round(float(avg_win), 2),
+            'avg_loss': round(float(avg_loss), 2),
+            'profit_factor': round(profit_factor, 2) if profit_factor != float('inf') else None,
+            'has_open_position': bool(open_pos),
+            'open_position_pnl': round(float(open_pos.unrealized_pnl), 2) if open_pos else None,
+            'last_trade_at': trade_stats.last_trade.isoformat() if trade_stats.last_trade else None,
+        })
+
+    return jsonify(result)
+
+
 # ===== 訂單 =====
 
 @api_bp.route('/orders', methods=['GET'])
