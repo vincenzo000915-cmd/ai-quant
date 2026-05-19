@@ -502,6 +502,13 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/anomaly/check', methods=['POST'])
+def anomaly_check_now():
+    """Phase 6.4: 立即跑 anomaly detector"""
+    from app.services.anomaly_detector import run_all_checks
+    return jsonify(run_all_checks())
+
+
 @api_bp.route('/killswitch', methods=['POST'])
 def killswitch():
     """Phase 6.3: 緊急停 — stop 所有策略 + 強平所有持倉 + halt + 通知"""

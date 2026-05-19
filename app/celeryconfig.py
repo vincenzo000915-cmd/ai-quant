@@ -83,4 +83,11 @@ beat_schedule = {
         'schedule': crontab(minute='*/5'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 6.4: 異常檢測（flash crash / 持倉密度）每 5 分鐘 ===
+    'monitor-anomalies': {
+        'task': 'app.tasks.strategy_tasks.monitor_anomalies',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'default'},
+    },
 }

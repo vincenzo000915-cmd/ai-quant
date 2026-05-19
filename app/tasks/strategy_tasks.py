@@ -423,6 +423,18 @@ def auto_backtest_translated_candidates(max_count: int = 20):
 # ===== Phase 5.1: 自動爬蟲 + 翻譯 =====
 
 @celery_app.task
+def monitor_anomalies():
+    """Phase 6.4: flash crash + 持倉密度檢查"""
+    from app.services.anomaly_detector import run_all_checks
+    r = run_all_checks()
+    if r.get('halted'):
+        return f'🛑 anomaly halt: {r["fired"]}'
+    if r.get('skipped'):
+        return r['skipped']
+    return f'OK: {len(r.get("fired", []))} fired'
+
+
+@celery_app.task
 def monitor_daily_loss():
     """Phase 6.1: 每 5 分鐘檢查當日累積虧損是否觸發 halt"""
     from datetime import datetime, timezone
