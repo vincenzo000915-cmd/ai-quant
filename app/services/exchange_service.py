@@ -219,6 +219,59 @@ def cancel_order(order_id, symbol):
     return exchange.cancel_order(order_id, symbol)
 
 
+def fetch_ohlcv_history(symbol='BTC/USDT', timeframe='4h', total_limit=2000):
+    """為回測拉大量歷史 K 線（不寫入 Candle 表，純記憶體返回）
+
+    用 OKX history-candles + candles 雙端點分頁拉取。
+    返回 [{ timestamp(秒), open, high, low, close, volume }, ...]
+    """
+    inst_id = _okx_symbol(symbol) if '/' in symbol else symbol
+    bar = _OKX_TF_MAP.get(timeframe, timeframe.upper())
+
+    all_rows = []
+    after = ''  # 比此時間更早
+
+    # 先用 /candles 拉最近 300
+    data = _okx_get('/api/v5/market/candles', {'instId': inst_id, 'bar': bar, 'limit': 300})
+    if data:
+        all_rows.extend(data)
+
+    # 不夠的話用 history-candles 往前翻
+    if all_rows and len(all_rows) < total_limit:
+        after = all_rows[-1][0]
+        while len(all_rows) < total_limit:
+            page = _okx_get('/api/v5/market/history-candles', {
+                'instId': inst_id, 'bar': bar, 'limit': 100, 'after': after,
+            })
+            if not page:
+                break
+            all_rows.extend(page)
+            after = page[-1][0]
+            if len(page) < 100:
+                break
+
+    # 解析 + 反序（OKX 返回新→舊，我們要舊→新）
+    candles = []
+    for r in reversed(all_rows):
+        candles.append({
+            'timestamp': int(r[0]) // 1000,
+            'open': float(r[1]),
+            'high': float(r[2]),
+            'low': float(r[3]),
+            'close': float(r[4]),
+            'volume': float(r[5]),
+        })
+    # 去重（兩端點接合處可能重複）
+    seen = set()
+    deduped = []
+    for c in candles:
+        if c['timestamp'] in seen:
+            continue
+        seen.add(c['timestamp'])
+        deduped.append(c)
+    return deduped
+
+
 def get_historical_prices(symbol='BTC-USDT', days=30):
     """獲取近期價格數據（OKX 公開 API，1小時K線，近48小時）"""
     inst_id = _okx_symbol(symbol) if '/' in symbol else symbol

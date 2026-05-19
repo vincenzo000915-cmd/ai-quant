@@ -144,6 +144,96 @@ class Trade(db.Model):
         }
 
 
+class BacktestResult(db.Model):
+    """策略回測結果（真實歷史 K 線跑出來的）"""
+    __tablename__ = 'backtest_results'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=False)
+    strategy_type = db.Column(db.String(50), nullable=False)
+    params_snapshot = db.Column(db.JSON, default={})       # 跑回測時的參數快照
+    symbol = db.Column(db.String(20), default='BTC/USDT')
+    timeframe = db.Column(db.String(10), default='4h')
+
+    # 回測設定
+    leverage = db.Column(db.Float, default=15.0)
+    position_size_usdt = db.Column(db.Float, default=50.0)
+    stop_loss_pct = db.Column(db.Float, default=5.0)
+    take_profit_pct = db.Column(db.Float, default=8.0)
+    initial_capital = db.Column(db.Float, default=100.0)
+
+    # 期間
+    period_start = db.Column(db.BigInteger)                # K 線起始 timestamp
+    period_end = db.Column(db.BigInteger)
+    candle_count = db.Column(db.Integer)
+
+    # 統計
+    total_trades = db.Column(db.Integer, default=0)
+    winning_trades = db.Column(db.Integer, default=0)
+    losing_trades = db.Column(db.Integer, default=0)
+    win_rate = db.Column(db.Float, default=0)              # %
+    total_pnl = db.Column(db.Float, default=0)             # 含槓桿後的累積 PnL
+    avg_pnl = db.Column(db.Float, default=0)
+    avg_win = db.Column(db.Float, default=0)
+    avg_loss = db.Column(db.Float, default=0)
+    profit_factor = db.Column(db.Float)                    # None 表示無虧損交易
+    max_drawdown = db.Column(db.Float, default=0)          # 最大回撤金額
+    max_drawdown_pct = db.Column(db.Float, default=0)      # %
+    sharpe_ratio = db.Column(db.Float)
+    final_equity = db.Column(db.Float, default=0)
+    annual_return_pct = db.Column(db.Float, default=0)
+
+    # 詳細資料（JSON 存）
+    equity_curve = db.Column(db.JSON, default=[])          # [{ ts, equity, drawdown }]
+    trades_json = db.Column(db.JSON, default=[])           # [{ entry, exit, pnl, reason, side }]
+
+    # 元資料
+    duration_ms = db.Column(db.Integer)                    # 跑回測耗時
+    status = db.Column(db.String(20), default='completed') # completed / error / running
+    error_message = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self, include_curve=False):
+        d = {
+            'id': self.id,
+            'strategy_id': self.strategy_id,
+            'strategy_type': self.strategy_type,
+            'params_snapshot': self.params_snapshot,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'leverage': self.leverage,
+            'position_size_usdt': self.position_size_usdt,
+            'stop_loss_pct': self.stop_loss_pct,
+            'take_profit_pct': self.take_profit_pct,
+            'initial_capital': self.initial_capital,
+            'period_start': self.period_start,
+            'period_end': self.period_end,
+            'candle_count': self.candle_count,
+            'total_trades': self.total_trades,
+            'winning_trades': self.winning_trades,
+            'losing_trades': self.losing_trades,
+            'win_rate': self.win_rate,
+            'total_pnl': self.total_pnl,
+            'avg_pnl': self.avg_pnl,
+            'avg_win': self.avg_win,
+            'avg_loss': self.avg_loss,
+            'profit_factor': self.profit_factor,
+            'max_drawdown': self.max_drawdown,
+            'max_drawdown_pct': self.max_drawdown_pct,
+            'sharpe_ratio': self.sharpe_ratio,
+            'final_equity': self.final_equity,
+            'annual_return_pct': self.annual_return_pct,
+            'duration_ms': self.duration_ms,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+        if include_curve:
+            d['equity_curve'] = self.equity_curve or []
+            d['trades_json'] = self.trades_json or []
+        return d
+
+
 class Candle(db.Model):
     """K線數據（本地緩存）"""
     __tablename__ = 'candles'

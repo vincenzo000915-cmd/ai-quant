@@ -263,9 +263,14 @@ export default function Dashboard() {
 
   const sortedPerf = useMemo(() => {
     return [...perfList].sort((a, b) => {
+      // 1. 持倉中 > 沒持倉
       if (a.has_open_position !== b.has_open_position) return a.has_open_position ? -1 : 1;
-      if (b.total_pnl !== a.total_pnl) return b.total_pnl - a.total_pnl;
-      return b.total_trades - a.total_trades;
+      // 2. 運行中 > 停止
+      if ((a.status === 'running') !== (b.status === 'running')) return a.status === 'running' ? -1 : 1;
+      // 3. Backtest Sharpe 高 > 低
+      const sa = a.backtest?.sharpe_ratio ?? -999;
+      const sb = b.backtest?.sharpe_ratio ?? -999;
+      return sb - sa;
     });
   }, [perfList]);
 
@@ -396,7 +401,6 @@ export default function Dashboard() {
           </Box>
           <Typography
             variant="h4"
-            className="glitch"
             sx={{
               fontWeight: 800,
               background: `linear-gradient(135deg, ${C.primary} 0%, ${C.accent} 50%, ${C.purple} 100%)`,
@@ -682,20 +686,25 @@ export default function Dashboard() {
                 <TableCell>類型</TableCell>
                 <TableCell>TF</TableCell>
                 <TableCell>狀態</TableCell>
+                <TableCell>評級</TableCell>
+                <TableCell align="right">BT Sharpe</TableCell>
+                <TableCell align="right">BT 年化</TableCell>
+                <TableCell align="right">BT MaxDD</TableCell>
                 <TableCell align="right">交易</TableCell>
-                <TableCell align="right">W/L</TableCell>
-                <TableCell align="right">勝率</TableCell>
                 <TableCell align="right">PnL</TableCell>
-                <TableCell align="right">平均</TableCell>
-                <TableCell align="right">P.F.</TableCell>
-                <TableCell align="center">趨勢</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {sortedPerf.map((s, i) => {
                 const cat = CATEGORY_META[s.category] || { label: s.category, color: C.textDim, bg: 'transparent' };
-                // Mock 趨勢資料 — Phase 3 改成真實 per-strategy PnL 歷史
-                const sparkMock = Array.from({ length: 8 }, () => ({ v: Math.random() * 2 - 1 }));
+                const bt = s.backtest;
+                const ratingMeta = {
+                  excellent:  { label: '⭐ EXCEL', color: '#fbbf24' },
+                  good:       { label: '✅ GOOD',  color: '#22c55e' },
+                  marginal:   { label: '⚠ MARG',  color: '#94a3b8' },
+                  negative:   { label: '❌ NEG',   color: '#ef4444' },
+                  liquidated: { label: '💀 LIQD',  color: '#f87171' },
+                }[s.rating] || null;
                 return (
                   <TableRow
                     key={s.id}
@@ -734,63 +743,69 @@ export default function Dashboard() {
                     <TableCell>
                       {s.status === 'running' ? (
                         <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
-                          <RadarPulse color={C.success} />
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: C.success, boxShadow: `0 0 6px ${C.success}` }} />
                           <Typography variant="caption" sx={{ color: C.success, fontWeight: 700, fontSize: '0.65rem' }}>ACTIVE</Typography>
                         </Box>
                       ) : (
                         <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>STOPPED</Typography>
                       )}
                     </TableCell>
-                    <TableCell align="right" className="num-mono" sx={{ color: 'text.secondary', fontSize: '0.78rem' }}>
-                      {s.total_trades}
+                    <TableCell>
+                      {ratingMeta ? (
+                        <Box sx={{
+                          display: 'inline-flex',
+                          px: 0.75, py: 0.15, borderRadius: 0.75,
+                          bgcolor: `${ratingMeta.color}22`,
+                          color: ratingMeta.color,
+                          fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
+                          border: `1px solid ${ratingMeta.color}40`,
+                          fontFamily: 'JetBrains Mono, monospace',
+                        }}>{ratingMeta.label}</Box>
+                      ) : (
+                        <Typography variant="caption" sx={{ color: C.textFaint, fontSize: '0.65rem' }}>—</Typography>
+                      )}
                     </TableCell>
-                    <TableCell align="right" className="num-mono" sx={{ fontSize: '0.75rem' }}>
-                      {s.total_trades > 0 ? (
-                        <span>
-                          <span style={{ color: C.success }}>{s.winning_trades}</span>
-                          <span style={{ color: C.textFaint, margin: '0 2px' }}>/</span>
-                          <span style={{ color: C.error }}>{s.losing_trades}</span>
-                        </span>
+                    <TableCell align="right" className="num-mono" sx={{ fontSize: '0.78rem' }}>
+                      {bt && bt.sharpe_ratio != null ? (
+                        <span style={{
+                          color: bt.sharpe_ratio >= 3 ? '#fbbf24' : bt.sharpe_ratio >= 1.5 ? C.success : bt.sharpe_ratio >= 0 ? C.textDim : C.error,
+                          fontWeight: 600,
+                        }}>{bt.sharpe_ratio.toFixed(2)}</span>
                       ) : <span style={{ color: C.textFaint }}>—</span>}
                     </TableCell>
                     <TableCell align="right" className="num-mono" sx={{ fontSize: '0.78rem' }}>
-                      {s.total_trades > 0 ? (
-                        <span style={{ color: s.win_rate >= 50 ? C.success : s.win_rate >= 40 ? C.warning : C.error }}>
-                          {s.win_rate}%
-                        </span>
+                      {bt && bt.annual_return_pct != null ? (
+                        <span style={{
+                          color: bt.annual_return_pct >= 50 ? C.success : bt.annual_return_pct >= 0 ? C.textDim : C.error,
+                        }}>{bt.annual_return_pct >= 0 ? '+' : ''}{bt.annual_return_pct.toFixed(0)}%</span>
                       ) : <span style={{ color: C.textFaint }}>—</span>}
+                    </TableCell>
+                    <TableCell align="right" className="num-mono" sx={{ fontSize: '0.78rem' }}>
+                      {bt && bt.max_drawdown_pct != null ? (
+                        <span style={{
+                          color: bt.max_drawdown_pct < 30 ? C.success : bt.max_drawdown_pct < 60 ? C.warning : C.error,
+                        }}>-{bt.max_drawdown_pct.toFixed(0)}%</span>
+                      ) : <span style={{ color: C.textFaint }}>—</span>}
+                    </TableCell>
+                    <TableCell align="right" className="num-mono" sx={{ color: 'text.secondary', fontSize: '0.78rem' }}>
+                      {s.total_trades || <span style={{ color: C.textFaint }}>—</span>}
                     </TableCell>
                     <TableCell align="right" className="num-mono">
                       {s.total_pnl !== 0 ? (
                         <span style={{
                           color: s.total_pnl > 0 ? C.success : C.error,
-                          fontWeight: 600,
-                          fontSize: '0.78rem',
-                          textShadow: Math.abs(s.total_pnl) > 10 ? `0 0 12px ${s.total_pnl > 0 ? C.success : C.error}66` : 'none',
+                          fontWeight: 600, fontSize: '0.78rem',
                         }}>
                           {s.total_pnl > 0 ? '+' : ''}${s.total_pnl.toFixed(2)}
                         </span>
                       ) : <span style={{ color: C.textFaint }}>—</span>}
-                    </TableCell>
-                    <TableCell align="right" className="num-mono" sx={{ fontSize: '0.75rem' }}>
-                      {s.total_trades > 0 ? (
-                        <span style={{ color: s.avg_pnl >= 0 ? C.success : C.error }}>
-                          {s.avg_pnl >= 0 ? '+' : ''}${s.avg_pnl}
-                        </span>
-                      ) : <span style={{ color: C.textFaint }}>—</span>}
-                    </TableCell>
-                    <TableCell align="right" className="num-mono" sx={{ fontSize: '0.75rem' }}>
-                      {s.profit_factor != null && s.total_trades > 0 ? s.profit_factor : <span style={{ color: C.textFaint }}>—</span>}
-                    </TableCell>
-                    <TableCell align="center">
-                      <Sparkline data={sparkMock} color={s.total_pnl >= 0 ? C.success : C.primary} width={50} height={18} />
                     </TableCell>
                   </TableRow>
                 );
               })}
               {sortedPerf.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={12} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  <TableCell colSpan={11} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                     尚無策略
                   </TableCell>
                 </TableRow>

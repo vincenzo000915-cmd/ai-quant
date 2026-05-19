@@ -56,39 +56,28 @@ globalStyle.textContent = `
     position: relative;
   }
 
-  /* === 全螢幕 CRT 掃描線（極淡）=== */
+  /* === 網格背景（純 CSS、低成本）=== */
   body::before {
     content: '';
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
     background-image:
-      linear-gradient(rgba(99, 102, 241, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(99, 102, 241, 0.04) 1px, transparent 1px);
+      linear-gradient(rgba(99, 102, 241, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 102, 241, 0.035) 1px, transparent 1px);
     background-size: 56px 56px;
     pointer-events: none;
     z-index: 0;
     mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
   }
 
-  body::after {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent 0px,
-      transparent 2px,
-      rgba(255, 255, 255, 0.012) 3px,
-      transparent 3px
-    );
-    pointer-events: none;
-    z-index: 9998;
-  }
+  /* CRT 條紋已移除 - GPU 開銷大 */
 
-  /* === 慢速 scan line 從上往下掃 === */
-  @keyframes scanline {
-    0% { transform: translateY(0); }
-    100% { transform: translateY(100vh); }
+  /* === Scan line：只在進站時掃一次，避免持續 GPU 渲染 === */
+  @keyframes scanline-once {
+    0% { transform: translate3d(0, 0, 0); opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { transform: translate3d(0, 100vh, 0); opacity: 0; }
   }
   .global-scanline {
     position: fixed;
@@ -97,14 +86,13 @@ globalStyle.textContent = `
     background: linear-gradient(
       to bottom,
       transparent 0%,
-      rgba(99, 102, 241, 0.04) 40%,
       rgba(6, 182, 212, 0.08) 50%,
-      rgba(99, 102, 241, 0.04) 60%,
       transparent 100%
     );
     pointer-events: none;
     z-index: 9997;
-    animation: scanline 8s linear infinite;
+    animation: scanline-once 2.5s ease-out 1;
+    will-change: transform, opacity;
   }
 
   /* === 數字 mono === */
@@ -115,28 +103,21 @@ globalStyle.textContent = `
     letter-spacing: -0.02em;
   }
 
-  /* === 玻璃卡（多層次 Vision Pro 風）=== */
+  /* === 玻璃卡（性能優化版）=== */
   .glass-card {
     background: var(--bg-surface);
-    backdrop-filter: blur(24px) saturate(160%);
-    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--border);
     border-radius: 14px;
     box-shadow:
       0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
-      0 0 0 1px rgba(99, 102, 241, 0.04) inset,
-      0 12px 32px -12px rgba(0, 0, 0, 0.6),
-      0 0 60px -20px rgba(99, 102, 241, 0.15);
-    transition: all 280ms cubic-bezier(0.4, 0, 0.2, 1);
+      0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    transition: border-color 200ms, transform 200ms;
     position: relative;
   }
   .glass-card:hover {
     border-color: var(--border-hot);
-    transform: translateY(-1px);
-    box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
-      0 16px 40px -10px rgba(0, 0, 0, 0.6),
-      0 0 80px -16px rgba(99, 102, 241, 0.3);
   }
 
   /* === 深層玻璃（卡中卡）=== */
@@ -154,10 +135,10 @@ globalStyle.textContent = `
   }
   .pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
 
-  /* === 雷達脈衝環 === */
+  /* === 雷達脈衝環（單環版，輕量）=== */
   @keyframes radar-pulse {
-    0% { transform: scale(0.5); opacity: 0.8; }
-    100% { transform: scale(3); opacity: 0; }
+    0% { transform: scale3d(0.5, 0.5, 1); opacity: 0.8; }
+    100% { transform: scale3d(2.5, 2.5, 1); opacity: 0; }
   }
   .radar-pulse-container {
     position: relative;
@@ -170,7 +151,7 @@ globalStyle.textContent = `
     top: 2px; left: 2px;
     border-radius: 50%;
     background: var(--success);
-    box-shadow: 0 0 8px var(--success);
+    box-shadow: 0 0 6px var(--success);
     z-index: 2;
   }
   .radar-pulse-ring {
@@ -180,8 +161,8 @@ globalStyle.textContent = `
     border-radius: 50%;
     border: 2px solid var(--success);
     animation: radar-pulse 2s ease-out infinite;
+    will-change: transform, opacity;
   }
-  .radar-pulse-ring:nth-child(2) { animation-delay: 0.7s; }
 
   /* === 流光邊框 === */
   @keyframes shimmer {
@@ -214,14 +195,7 @@ globalStyle.textContent = `
     pointer-events: none;
   }
 
-  /* === Glitch 標題效果 === */
-  @keyframes glitch-shift {
-    0%, 95%, 100% { transform: translate(0); filter: none; }
-    96% { transform: translate(-1px, 1px); filter: hue-rotate(15deg); }
-    97% { transform: translate(1px, -1px); filter: hue-rotate(-15deg); }
-    98% { transform: translate(-1px, -1px); }
-  }
-  .glitch { animation: glitch-shift 6s ease-in-out infinite; }
+  /* Glitch 已移除 — filter:hue-rotate 開銷大 */
 
   /* === 終端打字效果（caret 閃爍）=== */
   @keyframes caret-blink {
@@ -257,15 +231,16 @@ globalStyle.textContent = `
   .glow-text-error   { text-shadow: 0 0 24px rgba(239, 68, 68, 0.6), 0 0 48px rgba(239, 68, 68, 0.2); }
   .glow-text-gold    { text-shadow: 0 0 24px rgba(251, 191, 36, 0.5), 0 0 48px rgba(251, 191, 36, 0.2); }
 
-  /* === Ticker 跑馬燈 === */
+  /* === Ticker 跑馬燈（GPU 加速）=== */
   @keyframes ticker-scroll {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(-50%); }
+    0% { transform: translate3d(0, 0, 0); }
+    100% { transform: translate3d(-50%, 0, 0); }
   }
   .ticker-content {
     display: inline-block;
     white-space: nowrap;
-    animation: ticker-scroll 60s linear infinite;
+    animation: ticker-scroll 80s linear infinite;
+    will-change: transform;
   }
 
   /* === 數據更新閃爍 === */
@@ -318,6 +293,22 @@ globalStyle.textContent = `
   }
 
   ::selection { background: rgba(99, 102, 241, 0.45); color: #fff; }
+
+  /* === Reduced motion 對殘障 / 低端裝置友善 === */
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-dot, .radar-pulse-ring, .ticker-content,
+    .glow-border::after, .global-scanline, .caret {
+      animation: none !important;
+    }
+  }
+
+  /* === 低端裝置 fallback：縮小 blur === */
+  @media (max-width: 768px) {
+    .glass-card, .MuiCard-root, .MuiPaper-root {
+      backdrop-filter: blur(8px) !important;
+      -webkit-backdrop-filter: blur(8px) !important;
+    }
+  }
 `;
 document.head.appendChild(globalStyle);
 

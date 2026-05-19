@@ -17,10 +17,28 @@ import WhatshotIcon from '@mui/icons-material/Whatshot';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import BoltIcon from '@mui/icons-material/Bolt';
+import {
+  AreaChart, Area, XAxis, YAxis,
+  CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer,
+} from 'recharts';
 
 const API = process.env.REACT_APP_API_URL || '';
 
 const STRATEGY_TYPES = [
+  // ---- Wave 1 新策略 ----
+  { value: 'ichimoku', label: '⭐ Ichimoku 雲帶 (4h)' },
+  { value: 'vwap_reversion', label: '⭐ VWAP 回歸 (15m)' },
+  { value: 'stochastic', label: '✅ Stochastic 反轉 (15m)' },
+  { value: 'weekly_pivot', label: '✅ 週樞軸點突破 (4h)' },
+  { value: 'psar', label: '✅ Parabolic SAR (4h)' },
+  { value: 'tema', label: 'TEMA 三重 EMA (4h)' },
+  { value: 'keltner_channel', label: 'Keltner 通道 (15m)' },
+  { value: 'cci_reversal', label: 'CCI 反轉 (1h)' },
+  { value: 'atr_breakout', label: 'ATR 通道突破 (1h)' },
+  { value: 'heikin_ashi', label: 'Heikin Ashi 趨勢 (1h)' },
+  { value: 'golden_cross', label: '黃金交叉 50/200 (4h/1d)' },
+  { value: 'macd_trend_filter', label: 'MACD + 200MA 趨勢' },
+  // ---- 原始 ----
   { value: 'trend_following', label: '🏆 趨勢跟蹤 (ADX+EMA)' },
   { value: 'volatility_breakout', label: '📈 波動率突破 (Donchian)' },
   { value: 'supertrend', label: '🔽 SuperTrend' },
@@ -59,6 +77,50 @@ export default function Strategies() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [estimateDialog, setEstimateDialog] = useState(false);
   const [estimateData, setEstimateData] = useState(null);
+  const [backtestDialog, setBacktestDialog] = useState(false);
+  const [backtestData, setBacktestData] = useState(null);
+  const [backtestRunning, setBacktestRunning] = useState(null); // strategy_id running
+
+  const handleRunBacktest = async (strategy) => {
+    setBacktestRunning(strategy.id);
+    setSnackbar({ open: true, message: `正在回測 ${strategy.name}...`, severity: 'info' });
+    try {
+      const res = await fetch(`${API}/api/strategies/${strategy.id}/backtest`, { method: 'POST' });
+      if (res.ok) {
+        // 取詳細版本（含 equity curve）
+        const detailRes = await fetch(`${API}/api/strategies/${strategy.id}/backtest?detailed=1`);
+        if (detailRes.ok) {
+          const data = await detailRes.json();
+          setBacktestData({ strategy, result: data });
+          setBacktestDialog(true);
+          setSnackbar({ open: true, message: '✅ 回測完成', severity: 'success' });
+        }
+      } else {
+        const err = await res.text();
+        setSnackbar({ open: true, message: `回測失敗: ${err}`, severity: 'error' });
+      }
+    } catch (e) {
+      setSnackbar({ open: true, message: `回測錯誤: ${e.message}`, severity: 'error' });
+    }
+    setBacktestRunning(null);
+  };
+
+  // 打開回測 dialog：先試讀最新結果，沒有的話自動觸發新回測
+  const handleOpenBacktest = async (strategy) => {
+    try {
+      const res = await fetch(`${API}/api/strategies/${strategy.id}/backtest?detailed=1`);
+      if (res.ok) {
+        const data = await res.json();
+        setBacktestData({ strategy, result: data });
+        setBacktestDialog(true);
+      } else {
+        // 尚無結果，直接跑一次
+        await handleRunBacktest(strategy);
+      }
+    } catch (e) {
+      setSnackbar({ open: true, message: `讀取失敗`, severity: 'error' });
+    }
+  };
 
   const fetchStrategies = useCallback(async () => {
     setLoading(true);
@@ -234,9 +296,14 @@ export default function Strategies() {
                             {strategy.active ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="回測（Phase 3 開發中）">
+                        <Tooltip title="查看 / 跑回測">
                           <span>
-                            <IconButton size="small" disabled>
+                            <IconButton
+                              size="small"
+                              color="info"
+                              disabled={backtestRunning === strategy.id}
+                              onClick={() => handleOpenBacktest(strategy)}
+                            >
                               <ScienceIcon fontSize="small" />
                             </IconButton>
                           </span>
@@ -409,6 +476,104 @@ export default function Strategies() {
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button onClick={() => setEstimateDialog(false)} variant="contained">關閉</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* === Backtest Dialog === */}
+      <Dialog open={backtestDialog} onClose={() => setBacktestDialog(false)} maxWidth="lg" fullWidth
+        PaperProps={{ sx: { bgcolor: 'background.paper' } }}>
+        <DialogTitle sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1 }}>
+          🧪 BACKTEST · {backtestData?.strategy?.name}
+        </DialogTitle>
+        <DialogContent>
+          {backtestData?.result && backtestData.result.status === 'completed' && (() => {
+            const r = backtestData.result;
+            const profitable = r.total_pnl > 0;
+            const liquidated = r.max_drawdown_pct >= 100;
+            const ratingColor = liquidated ? '#ef4444' : profitable && r.sharpe_ratio >= 1.5 ? '#22c55e' : profitable ? '#fbbf24' : '#ef4444';
+            const ratingLabel = liquidated ? '💀 LIQUIDATED' : r.sharpe_ratio >= 3 ? '⭐ EXCELLENT' : r.sharpe_ratio >= 1.5 ? '✅ GOOD' : r.sharpe_ratio >= 0 ? '⚠️ MARGINAL' : '❌ NEGATIVE';
+
+            return (
+              <Box sx={{ mt: 1 }}>
+                {/* 評級 + 關鍵 4 指標 */}
+                <Box sx={{
+                  display: 'inline-flex', mb: 2, px: 2, py: 1, borderRadius: 1,
+                  bgcolor: `${ratingColor}22`, color: ratingColor,
+                  fontWeight: 700, letterSpacing: 1, fontFamily: 'JetBrains Mono, monospace',
+                  border: `1px solid ${ratingColor}66`,
+                }}>{ratingLabel}</Box>
+
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  {[
+                    { label: '累積 PnL', value: `${profitable ? '+' : ''}$${(r.total_pnl||0).toFixed(2)}`, color: profitable ? '#22c55e' : '#ef4444' },
+                    { label: '年化收益', value: `${(r.annual_return_pct||0).toFixed(1)}%`, color: r.annual_return_pct >= 0 ? '#22c55e' : '#ef4444' },
+                    { label: 'Sharpe', value: r.sharpe_ratio == null ? '—' : r.sharpe_ratio.toFixed(2), color: r.sharpe_ratio >= 1.5 ? '#22c55e' : r.sharpe_ratio >= 0 ? '#fbbf24' : '#ef4444' },
+                    { label: '最大回撤', value: `-${(r.max_drawdown_pct||0).toFixed(1)}%`, color: r.max_drawdown_pct < 30 ? '#22c55e' : r.max_drawdown_pct < 60 ? '#fbbf24' : '#ef4444' },
+                  ].map((k, i) => (
+                    <Grid item xs={6} md={3} key={i}>
+                      <Box sx={{ p: 1.5, border: '1px solid rgba(99,102,241,0.2)', borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)' }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.label}</Typography>
+                        <Typography className="num-mono" sx={{ fontSize: '1.3rem', fontWeight: 700, color: k.color }}>{k.value}</Typography>
+                      </Box>
+                    </Grid>
+                  ))}
+                </Grid>
+
+                {/* 次要指標 */}
+                <Box sx={{
+                  display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 1.5, mb: 2,
+                  p: 1.5, border: '1px solid rgba(99,102,241,0.15)', borderRadius: 1, bgcolor: 'rgba(8,10,24,0.3)',
+                  fontFamily: 'JetBrains Mono, monospace',
+                }}>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>總交易</Typography><Typography sx={{ fontWeight: 600 }}>{r.total_trades}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝率</Typography><Typography sx={{ fontWeight: 600 }}>{r.win_rate}%</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝/敗</Typography><Typography sx={{ fontWeight: 600 }}><span style={{color:'#22c55e'}}>{r.winning_trades}</span> / <span style={{color:'#ef4444'}}>{r.losing_trades}</span></Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均盈</Typography><Typography sx={{ fontWeight: 600, color: '#22c55e' }}>+${r.avg_win}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均虧</Typography><Typography sx={{ fontWeight: 600, color: '#ef4444' }}>${r.avg_loss}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>Profit Factor</Typography><Typography sx={{ fontWeight: 600 }}>{r.profit_factor ?? '—'}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>K 線數</Typography><Typography sx={{ fontWeight: 600 }}>{r.candle_count}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>耗時</Typography><Typography sx={{ fontWeight: 600 }}>{r.duration_ms}ms</Typography></Box>
+                </Box>
+
+                {/* Equity curve */}
+                {r.equity_curve && r.equity_curve.length > 0 && (
+                  <Box>
+                    <Typography variant="overline" sx={{ color: 'text.secondary' }}>EQUITY CURVE</Typography>
+                    <Box sx={{ height: 280 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={r.equity_curve.map(p => ({ ts: new Date(p.ts*1000).toISOString().slice(0,10), equity: p.equity }))}>
+                          <defs>
+                            <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor={profitable ? '#22c55e' : '#ef4444'} stopOpacity={0.4} />
+                              <stop offset="100%" stopColor={profitable ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="2 6" stroke="rgba(99,102,241,0.1)" />
+                          <XAxis dataKey="ts" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                          <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                          <ReTooltip />
+                          <Area type="monotone" dataKey="equity" stroke={profitable ? '#22c55e' : '#ef4444'} fill="url(#eqGrad)" strokeWidth={2} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </Box>
+                )}
+
+                <Typography variant="caption" sx={{ color: 'text.secondary', mt: 2, display: 'block' }}>
+                  回測時間：{r.created_at} · 槓桿 {r.leverage}× · 倉位 ${r.position_size_usdt} · 止損 {r.stop_loss_pct}% · 止盈 {r.take_profit_pct}%
+                </Typography>
+              </Box>
+            );
+          })()}
+          {backtestData?.result && backtestData.result.status === 'error' && (
+            <Alert severity="error">{backtestData.result.error_message}</Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => backtestData && handleRunBacktest(backtestData.strategy)} variant="outlined" disabled={!!backtestRunning}>
+            {backtestRunning ? '回測中⋯' : '重新跑回測'}
+          </Button>
+          <Button onClick={() => setBacktestDialog(false)} variant="contained">關閉</Button>
         </DialogActions>
       </Dialog>
 

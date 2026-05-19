@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from app.extensions import db
-from app.models import Strategy, Order, Position, Trade, Candle
+from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
@@ -174,14 +174,152 @@ def pnl_summary():
     })
 
 
+# ===== 回測（Phase 3）=====
+
+def _run_strategy_backtest(strategy, candle_limit=2000):
+    """執行單一策略回測並寫入 DB（同步）"""
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.backtest_engine import run_backtest
+
+    candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=candle_limit)
+    result = run_backtest(
+        strategy.type, strategy.params or {}, candles,
+        timeframe=strategy.timeframe,
+    )
+
+    if result.get('status') == 'error':
+        bt = BacktestResult(
+            strategy_id=strategy.id,
+            strategy_type=strategy.type,
+            params_snapshot=strategy.params or {},
+            symbol=strategy.symbol,
+            timeframe=strategy.timeframe,
+            status='error',
+            error_message=result.get('error_message', 'unknown'),
+        )
+        db.session.add(bt)
+        db.session.commit()
+        return bt.to_dict()
+
+    bt = BacktestResult(
+        strategy_id=strategy.id,
+        strategy_type=strategy.type,
+        params_snapshot=strategy.params or {},
+        symbol=strategy.symbol,
+        timeframe=strategy.timeframe,
+        leverage=15.0,
+        position_size_usdt=50.0,
+        stop_loss_pct=5.0,
+        take_profit_pct=8.0,
+        initial_capital=100.0,
+        period_start=result['period_start'],
+        period_end=result['period_end'],
+        candle_count=result['candle_count'],
+        total_trades=result['total_trades'],
+        winning_trades=result['winning_trades'],
+        losing_trades=result['losing_trades'],
+        win_rate=result['win_rate'],
+        total_pnl=result['total_pnl'],
+        avg_pnl=result['avg_pnl'],
+        avg_win=result['avg_win'],
+        avg_loss=result['avg_loss'],
+        profit_factor=result['profit_factor'],
+        max_drawdown=result['max_drawdown'],
+        max_drawdown_pct=result['max_drawdown_pct'],
+        sharpe_ratio=result['sharpe_ratio'],
+        final_equity=result['final_equity'],
+        annual_return_pct=result['annual_return_pct'],
+        equity_curve=result['equity_curve'],
+        trades_json=result['trades'],
+        duration_ms=result['duration_ms'],
+        status='completed',
+    )
+    db.session.add(bt)
+    db.session.commit()
+    return bt.to_dict()
+
+
+@api_bp.route('/strategies/<int:id>/backtest', methods=['POST'])
+def trigger_backtest(id):
+    """觸發單一策略回測（同步，目前不走 Celery）"""
+    strategy = Strategy.query.get_or_404(id)
+    try:
+        d = _run_strategy_backtest(strategy)
+        return jsonify(d), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/strategies/<int:id>/backtest', methods=['GET'])
+def latest_backtest(id):
+    """取得策略的最新回測結果（含 equity curve + trades）"""
+    bt = BacktestResult.query.filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).first()
+    if not bt:
+        return jsonify({'error': 'no backtest yet'}), 404
+    include_curve = request.args.get('detailed', '0') == '1'
+    return jsonify(bt.to_dict(include_curve=include_curve))
+
+
+@api_bp.route('/strategies/<int:id>/backtest/all', methods=['GET'])
+def all_backtests(id):
+    """所有歷史回測（不含 curve）"""
+    bts = BacktestResult.query.filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).limit(20).all()
+    return jsonify([bt.to_dict() for bt in bts])
+
+
+@api_bp.route('/backtests/latest', methods=['GET'])
+def all_latest_backtests():
+    """所有策略各自最新一次回測（給 dashboard 用）"""
+    from sqlalchemy import func
+    sub = db.session.query(
+        BacktestResult.strategy_id,
+        func.max(BacktestResult.created_at).label('latest'),
+    ).group_by(BacktestResult.strategy_id).subquery()
+    rows = db.session.query(BacktestResult).join(
+        sub,
+        (BacktestResult.strategy_id == sub.c.strategy_id) &
+        (BacktestResult.created_at == sub.c.latest)
+    ).all()
+    return jsonify([r.to_dict() for r in rows])
+
+
+@api_bp.route('/backtests/run-all', methods=['POST'])
+def run_all_backtests():
+    """批次跑所有 strategies 的回測（一次性，慢）"""
+    results = []
+    strategies = Strategy.query.all()
+    for s in strategies:
+        try:
+            r = _run_strategy_backtest(s)
+            results.append({'strategy_id': s.id, 'name': s.name, 'ok': True, 'total_trades': r.get('total_trades'), 'total_pnl': r.get('total_pnl')})
+        except Exception as e:
+            results.append({'strategy_id': s.id, 'name': s.name, 'ok': False, 'error': str(e)})
+    return jsonify({'count': len(results), 'results': results})
+
+
 # ===== 策略表現（per-strategy 統計）=====
 
 @api_bp.route('/strategies/performance', methods=['GET'])
 def strategies_performance():
-    """每個策略的真實表現統計（從 trades 表 + positions 表算）"""
+    """每個策略的真實表現統計（trades 表 + positions 表 + 最新 backtest）"""
     from sqlalchemy import func
 
     strategies = Strategy.query.order_by(Strategy.id).all()
+
+    # 預載每個 strategy 最新 backtest
+    bt_map = {}
+    sub = db.session.query(
+        BacktestResult.strategy_id,
+        func.max(BacktestResult.created_at).label('latest'),
+    ).filter(BacktestResult.status == 'completed').group_by(BacktestResult.strategy_id).subquery()
+    latest_bts = db.session.query(BacktestResult).join(
+        sub,
+        (BacktestResult.strategy_id == sub.c.strategy_id) &
+        (BacktestResult.created_at == sub.c.latest)
+    ).all()
+    for bt in latest_bts:
+        bt_map[bt.strategy_id] = bt
+
     result = []
 
     for s in strategies:
@@ -206,6 +344,36 @@ def strategies_performance():
         # 是否有開倉中持倉
         open_pos = db.session.query(Position).filter_by(strategy_id=s.id, status='open').first()
 
+        bt = bt_map.get(s.id)
+        bt_data = None
+        if bt:
+            bt_data = {
+                'total_trades': bt.total_trades,
+                'win_rate': bt.win_rate,
+                'total_pnl': bt.total_pnl,
+                'avg_pnl': bt.avg_pnl,
+                'max_drawdown_pct': bt.max_drawdown_pct,
+                'sharpe_ratio': bt.sharpe_ratio,
+                'annual_return_pct': bt.annual_return_pct,
+                'profit_factor': bt.profit_factor,
+                'created_at': bt.created_at.isoformat() if bt.created_at else None,
+            }
+
+        # 評級（基於 backtest sharpe + drawdown）
+        rating = None
+        if bt:
+            if bt.sharpe_ratio is not None:
+                if bt.sharpe_ratio >= 3.0:
+                    rating = 'excellent'
+                elif bt.sharpe_ratio >= 1.5:
+                    rating = 'good'
+                elif bt.sharpe_ratio >= 0:
+                    rating = 'marginal'
+                else:
+                    rating = 'negative'
+            if bt.max_drawdown_pct and bt.max_drawdown_pct >= 100:
+                rating = 'liquidated'  # 模擬下早就爆倉
+
         result.append({
             'id': s.id,
             'name': s.name,
@@ -226,6 +394,8 @@ def strategies_performance():
             'has_open_position': bool(open_pos),
             'open_position_pnl': round(float(open_pos.unrealized_pnl), 2) if open_pos else None,
             'last_trade_at': trade_stats.last_trade.isoformat() if trade_stats.last_trade else None,
+            'backtest': bt_data,
+            'rating': rating,
         })
 
     return jsonify(result)
@@ -308,43 +478,47 @@ def btc_chart():
 
 @api_bp.route('/simulation/estimate', methods=['GET'])
 def estimate_returns():
-    """模擬盤預期收益估算"""
+    """模擬盤預期收益估算 — 改用真實 backtest 數據（Phase 3 後）"""
     capital = float(request.args.get('capital', 100))
     leverage = float(request.args.get('leverage', 15))
 
-    # 基於回測數據的收益率範圍
-    strategy_estimates = {
-        '趨勢跟蹤(ADX+EMA)': {'annual_return': 28, 'max_drawdown': 16, 'win_rate': 48, 'avg_trade': 1.2},
-        '波動率突破(Donchian)': {'annual_return': 32, 'max_drawdown': 14, 'win_rate': 42, 'avg_trade': 0.8},
-        'SuperTrend': {'annual_return': 25, 'max_drawdown': 18, 'win_rate': 45, 'avg_trade': 1.5},
-        '均線交叉': {'annual_return': 15, 'max_drawdown': 12, 'win_rate': 40, 'avg_trade': 0.5},
-        'MACD': {'annual_return': 18, 'max_drawdown': 13, 'win_rate': 41, 'avg_trade': 0.6},
-        '布林帶突破': {'annual_return': 20, 'max_drawdown': 15, 'win_rate': 38, 'avg_trade': 0.7},
-        'RSI反轉': {'annual_return': 22, 'max_drawdown': 11, 'win_rate': 52, 'avg_trade': 0.6},
-        '均值回歸(布林+RSI)': {'annual_return': 20, 'max_drawdown': 10, 'win_rate': 55, 'avg_trade': 0.4},
-    }
+    # 從每個策略的最新 backtest 合計
+    from sqlalchemy import func as _f
+    sub = db.session.query(
+        BacktestResult.strategy_id,
+        _f.max(BacktestResult.created_at).label('latest'),
+    ).group_by(BacktestResult.strategy_id).subquery()
+    rows = db.session.query(BacktestResult, Strategy).join(
+        sub,
+        (BacktestResult.strategy_id == sub.c.strategy_id) &
+        (BacktestResult.created_at == sub.c.latest)
+    ).join(Strategy, Strategy.id == BacktestResult.strategy_id).all()
 
     results = []
-    for name, est in strategy_estimates.items():
-        est_capital = capital * (1 + est['annual_return'] / 100 * leverage / 10) ** 1
-        monthly = capital * (est['annual_return'] / 100 * leverage / 10 / 12)
+    for bt, s in rows:
+        if bt.status != 'completed':
+            continue
         results.append({
-            'name': name,
-            'annual_return_pct': est['annual_return'],
-            'max_drawdown_pct': est['max_drawdown'],
-            'win_rate_pct': est['win_rate'],
-            'avg_trade_pct': est['avg_trade'],
-            'estimated_1y': round(est_capital, 2),
-            'estimated_monthly': round(monthly, 2),
-            'estimated_daily': round(monthly / 22, 2),
+            'strategy_id': s.id,
+            'name': s.name,
+            'category': s.category,
+            'timeframe': s.timeframe,
+            'annual_return_pct': bt.annual_return_pct,
+            'max_drawdown_pct': bt.max_drawdown_pct,
+            'win_rate_pct': bt.win_rate,
+            'sharpe_ratio': bt.sharpe_ratio,
+            'profit_factor': bt.profit_factor,
+            'total_trades': bt.total_trades,
+            'backtest_pnl': bt.total_pnl,
         })
 
+    results.sort(key=lambda r: (r.get('sharpe_ratio') or -999), reverse=True)
     return jsonify({
         'capital': capital,
         'leverage': leverage,
-        'effective_capital': capital * leverage,
         'strategies': results,
-        'note': '基於歷史回測數據，實際收益取決於市場波動。槓桿放大收益也放大風險。',
+        'source': 'real_backtest',
+        'note': '數據來自真實歷史回測，非估算',
     })
 
 
