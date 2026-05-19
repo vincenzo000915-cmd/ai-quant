@@ -28,13 +28,40 @@ def _simulated_order(symbol, side, amount_usdt, price):
         'symbol': symbol,
         'side': side,
         'type': 'market',
-        'amount': amount_usdt / price,  # 換算為BTC數量
+        'amount': amount_usdt / price,
         'price': price,
         'cost': amount_usdt,
-        'fee': {'cost': amount_usdt * 0.001, 'currency': 'USDT'},  # 0.1% 手續費
+        'fee': {'cost': amount_usdt * 0.001, 'currency': 'USDT'},
         'status': 'closed',
         'simulated': True,
     }
+
+
+def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0):
+    """Phase 6.5: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
+    失敗時 fallback 寫 telegram，return None。
+    """
+    if mode == 'live':
+        try:
+            from app.services.exchange_service import place_order_live
+            res = place_order_live(symbol, side, amount_usdt, leverage=leverage)
+            return {
+                'id': res['okx'].get('ordId', 'live_unknown'),
+                'symbol': symbol, 'side': side, 'type': 'market',
+                'amount': res['contracts'] * 0.01,   # contract size
+                'price': res['entry_price_est'],
+                'cost': amount_usdt,
+                'inst_id': res['inst_id'],
+                'simulated': False,
+                'okx_raw': res['okx'],
+            }
+        except Exception as e:
+            from app.services.telegram_service import send
+            send(f'🔴 <b>LIVE order FAILED</b>\n{symbol} {side} ${amount_usdt}\n{type(e).__name__}: {e}',
+                 event_key='live_order_error')
+            print(f'[live_order] {type(e).__name__}: {e}')
+            return None
+    return _simulated_order(symbol, side, amount_usdt, price)
 
 
 @celery_app.task
@@ -91,6 +118,7 @@ def _run_signals(strategy_id=None, category_filter=None):
     sl_pct = cfg['stop_loss_pct']
     tp_pct = cfg['take_profit_pct']
     halted = cfg.get('halted', False)
+    mode = cfg.get('trading_mode', 'paper')
 
     results = []
     for s in strategies:
@@ -141,7 +169,10 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # 名義倉位價值
                 notional = amount_btc * price * lev
 
-                order = _simulated_order(s.symbol, 'buy', trade_size, price)
+                order = _place_order(s.symbol, 'buy', trade_size, price, mode, leverage=lev)
+                if order is None:
+                    results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
+                    continue
 
                 pos = Position(
                     strategy_id=s.id,
@@ -168,7 +199,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pnl_leveraged = pnl_raw * lev
                 pnl_pct = ((price - position.entry_price) / position.entry_price) * 100 * lev
 
-                order = _simulated_order(s.symbol, 'sell', position.size * price, price)
+                order = _place_order(s.symbol, 'sell', position.size * price, price, mode, leverage=lev)
                 
                 trade = Trade(
                     position_id=position.id,
@@ -238,7 +269,7 @@ def check_stop_loss():
             pnl_pct = raw_pnl_pct * lev
 
             if pnl_pct <= -sl_pct:
-                order = _simulated_order(pos.symbol, 'sell', pos.size * current, current)
+                order = _place_order(pos.symbol, 'sell', pos.size * current, current, _cfg().get('trading_mode', 'paper'), leverage=lev)
                 pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
@@ -264,7 +295,7 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif pnl_pct >= tp_pct:
-                order = _simulated_order(pos.symbol, 'sell', pos.size * current, current)
+                order = _place_order(pos.symbol, 'sell', pos.size * current, current, _cfg().get('trading_mode', 'paper'), leverage=lev)
                 pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,

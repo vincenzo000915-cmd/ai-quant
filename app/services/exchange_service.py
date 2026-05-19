@@ -28,6 +28,29 @@ def _okx_get(path, params=None):
     return data.get('data', [])
 
 
+def _okx_post_signed(path, body_dict, api_key, secret, passphrase):
+    """OKX 私有 API POST 請求（簽名包含 body）"""
+    import json as _json
+    ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    method = 'POST'
+    body = _json.dumps(body_dict, separators=(',', ':')) if body_dict else ''
+    msg = f'{ts}{method}{path}{body}'
+    mac = hmac.new(secret.encode('utf-8'), msg.encode('utf-8'), 'sha256')
+    sign = base64.b64encode(mac.digest()).decode('utf-8')
+    headers = {
+        'OK-ACCESS-KEY': api_key,
+        'OK-ACCESS-SIGN': sign,
+        'OK-ACCESS-TIMESTAMP': ts,
+        'OK-ACCESS-PASSPHRASE': passphrase,
+        'Content-Type': 'application/json',
+    }
+    resp = requests.post(f'{OKX_REST}{path}', headers=headers, data=body, timeout=10)
+    data = resp.json()
+    if data.get('code') != '0':
+        raise Exception(f'OKX POST {path} error: code={data.get("code")} msg={data.get("msg")} sCode={(data.get("data") or [{}])[0].get("sCode") if data.get("data") else None}')
+    return data.get('data', [])
+
+
 def _okx_get_signed(path, api_key, secret, passphrase):
     """OKX 私有 API GET 請求（帶簽名）"""
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
@@ -211,6 +234,62 @@ def fetch_balance():
         return result
     except Exception as e:
         raise Exception(f'獲取餘額失敗: {str(e)}')
+
+
+def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0) -> dict:
+    """Phase 6.5: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
+
+    回傳 OKX 原始 order data。失敗 raise。
+    需要 API key 有 'Trade' 權限。
+    """
+    import os
+    api_key = os.environ.get('EXCHANGE_API_KEY')
+    secret = os.environ.get('EXCHANGE_SECRET')
+    passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
+    if not (api_key and secret and passphrase):
+        raise RuntimeError('OKX API credentials missing in env')
+
+    inst_id = symbol.replace('/', '-') + '-SWAP'   # 'BTC/USDT' -> 'BTC-USDT-SWAP'
+
+    # 先設 leverage（idempotent，每次設不會出錯）
+    try:
+        _okx_post_signed('/api/v5/account/set-leverage',
+                         {'instId': inst_id, 'lever': str(int(leverage)), 'mgnMode': 'cross'},
+                         api_key, secret, passphrase)
+    except Exception as e:
+        # leverage 已經是這個值的話可能 silent OK；其他錯就 raise
+        if 'leverage' not in str(e).lower():
+            raise
+
+    # 計算合約張數：每張 0.01 BTC (BTC-USDT-SWAP)；用 OKX 規格表會比較準，先用粗估
+    # 我們的 size_usdt 是 margin（本金），名義 = margin × lev
+    notional = size_usdt * leverage
+    # 拿當前價計算 BTC 數量
+    ticker = get_ticker(symbol)
+    price = float(ticker['price'])
+    btc_amount = notional / price
+    # OKX BTC-USDT-SWAP contract size 0.01 BTC；sz 是張數
+    contracts = round(btc_amount / 0.01, 0)
+    if contracts < 1:
+        contracts = 1
+
+    body = {
+        'instId': inst_id,
+        'tdMode': 'cross',
+        'side': side,            # 'buy' open long; 'sell' close long (or open short — careful)
+        'ordType': 'market',
+        'sz': str(int(contracts)),
+        # posSide 不設讓 OKX 用 net mode（雙向 'long'/'short' 用 net 模式）
+    }
+
+    data = _okx_post_signed('/api/v5/trade/order', body, api_key, secret, passphrase)
+    return {
+        'okx': data[0] if data else {},
+        'inst_id': inst_id,
+        'contracts': contracts,
+        'notional_usdt': notional,
+        'entry_price_est': price,
+    }
 
 
 def cancel_order(order_id, symbol):
