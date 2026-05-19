@@ -98,6 +98,9 @@ class Position(db.Model):
     unrealized_pnl = db.Column(db.Float, default=0)
     realized_pnl = db.Column(db.Float, default=0)
     status = db.Column(db.String(20), default='open')  # open / closed
+    # Phase 9.4: 開倉時計算好的絕對止損 / 止盈價（ATR mode 用）；NULL 表示走 flat % rule
+    sl_price = db.Column(db.Float, nullable=True)
+    tp_price = db.Column(db.Float, nullable=True)
     opened_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     closed_at = db.Column(db.DateTime)
 
@@ -289,6 +292,11 @@ class SystemConfig(db.Model):
     target_vol_pct = db.Column(db.Float, default=1.5)        # 目標日波動率 % (vol_target 用)
     sizing_min_mult = db.Column(db.Float, default=0.3)
     sizing_max_mult = db.Column(db.Float, default=3.0)
+    # Phase 9.4: 止損模式
+    sl_mode = db.Column(db.String(20), default='flat_pct')   # 'flat_pct' | 'atr'
+    atr_period = db.Column(db.Integer, default=14)
+    atr_sl_mult = db.Column(db.Float, default=2.0)           # SL 距離 = k × ATR
+    atr_tp_mult = db.Column(db.Float, default=3.0)           # TP 距離 = k × ATR
 
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -308,6 +316,10 @@ class SystemConfig(db.Model):
             'target_vol_pct': self.target_vol_pct,
             'sizing_min_mult': self.sizing_min_mult,
             'sizing_max_mult': self.sizing_max_mult,
+            'sl_mode': self.sl_mode,
+            'atr_period': self.atr_period,
+            'atr_sl_mult': self.atr_sl_mult,
+            'atr_tp_mult': self.atr_tp_mult,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

@@ -195,6 +195,13 @@ def _run_signals(strategy_id=None, category_filter=None):
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
 
+                # Phase 9.4: 開倉時計算絕對 SL/TP（ATR mode）
+                from app.services.risk_levels import compute_sl_tp
+                sl_price, tp_price, sl_dbg = compute_sl_tp(
+                    symbol=s.symbol, timeframe=s.timeframe, side=side,
+                    entry_price=price, cfg=cfg,
+                )
+
                 pos = Position(
                     strategy_id=s.id,
                     symbol=s.symbol,
@@ -203,6 +210,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     entry_price=price,
                     current_price=price,
                     status='open',
+                    sl_price=sl_price,
+                    tp_price=tp_price,
                 )
                 db.session.add(pos)
                 db.session.commit()
@@ -292,7 +301,7 @@ def update_positions():
 
 @celery_app.task
 def check_stop_loss():
-    """檢查止損止盈（含槓桿）— long/short 都觸發"""
+    """檢查止損止盈（含槓桿）— long/short + flat_pct/atr 都觸發"""
     cfg = _cfg()
     lev = cfg['leverage']
     sl_pct = cfg['stop_loss_pct']
@@ -308,7 +317,22 @@ def check_stop_loss():
             pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
             close_side = 'buy' if pos.side == 'short' else 'sell'
 
-            if pnl_pct <= -sl_pct:
+            # Phase 9.4: 優先用 position 自帶的絕對 SL/TP（ATR mode）
+            sl_hit = False
+            tp_hit = False
+            if pos.sl_price and pos.tp_price:
+                if pos.side == 'long':
+                    sl_hit = current <= pos.sl_price
+                    tp_hit = current >= pos.tp_price
+                else:   # short
+                    sl_hit = current >= pos.sl_price
+                    tp_hit = current <= pos.tp_price
+            else:
+                # flat % rule（原本邏輯）
+                sl_hit = pnl_pct <= -sl_pct
+                tp_hit = pnl_pct >= tp_pct
+
+            if sl_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
                 pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
@@ -334,7 +358,7 @@ def check_stop_loss():
                 from app.services.telegram_service import notify_close
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
-            elif pnl_pct >= tp_pct:
+            elif tp_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
                 pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(

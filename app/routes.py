@@ -726,6 +726,14 @@ def update_system_config():
         return jsonify({'error': 'sizing_mode must be flat / vol_target / sharpe_weighted'}), 400
     if 'target_vol_pct' in patch and not (0.1 <= patch['target_vol_pct'] <= 20):
         return jsonify({'error': 'target_vol_pct out of range [0.1, 20]'}), 400
+    if 'sl_mode' in patch and patch['sl_mode'] not in ('flat_pct', 'atr'):
+        return jsonify({'error': 'sl_mode must be flat_pct or atr'}), 400
+    if 'atr_period' in patch and not (5 <= patch['atr_period'] <= 200):
+        return jsonify({'error': 'atr_period out of range [5, 200]'}), 400
+    if 'atr_sl_mult' in patch and not (0.5 <= patch['atr_sl_mult'] <= 10):
+        return jsonify({'error': 'atr_sl_mult out of range [0.5, 10]'}), 400
+    if 'atr_tp_mult' in patch and not (0.5 <= patch['atr_tp_mult'] <= 20):
+        return jsonify({'error': 'atr_tp_mult out of range [0.5, 20]'}), 400
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)

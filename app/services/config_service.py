@@ -26,6 +26,10 @@ DEFAULTS = {
     'target_vol_pct': 1.5,
     'sizing_min_mult': 0.3,
     'sizing_max_mult': 3.0,
+    'sl_mode': 'flat_pct',
+    'atr_period': 14,
+    'atr_sl_mult': 2.0,
+    'atr_tp_mult': 3.0,
 }
 
 

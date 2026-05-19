@@ -43,7 +43,7 @@ export default function Settings() {
 
   useEffect(() => { load(); }, [load]);
 
-  const SIZING_KEYS = ['sizing_mode', 'target_vol_pct', 'sizing_min_mult', 'sizing_max_mult'];
+  const SIZING_KEYS = ['sizing_mode', 'target_vol_pct', 'sizing_min_mult', 'sizing_max_mult', 'sl_mode', 'atr_period', 'atr_sl_mult', 'atr_tp_mult'];
   const dirty = cfg && original && (
     FIELDS.some(f => cfg[f.key] !== original[f.key]) ||
     cfg.trading_mode !== original?.trading_mode ||
@@ -67,7 +67,7 @@ export default function Settings() {
       if (cfg.trading_mode !== original.trading_mode) patch.trading_mode = cfg.trading_mode;
       for (const k of SIZING_KEYS) {
         if (cfg[k] !== original[k] && cfg[k] !== '' && cfg[k] !== undefined) {
-          patch[k] = k === 'sizing_mode' ? cfg[k] : Number(cfg[k]);
+          patch[k] = (k === 'sizing_mode' || k === 'sl_mode') ? cfg[k] : Number(cfg[k]);
         }
       }
 
@@ -219,6 +219,53 @@ export default function Settings() {
                 inputProps={{ step: 0.1, min: 1, max: 10 }}
                 helperText="夾在這之下"
                 disabled={cfg.sizing_mode === 'flat'}
+              />
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      {/* === Phase 9.4: 止損模式 === */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>止損 / 止盈模式</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            flat_pct = 用上方寫死的 SL/TP %（不管波動）。atr = 開倉時取 ATR(N)，SL = entry ± k×ATR，TP 同理。高 vol 時停損更遠，低 vol 時更近。
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={4}>
+              <TextField select fullWidth size="small" SelectProps={{ native: true }}
+                label="止損模式"
+                value={cfg.sl_mode || 'flat_pct'}
+                onChange={(e) => setCfg(c => ({ ...c, sl_mode: e.target.value }))}>
+                <option value="flat_pct">flat_pct (寫死 %)</option>
+                <option value="atr">atr (依波動)</option>
+              </TextField>
+            </Grid>
+            <Grid item xs={4} sm={2.5}>
+              <TextField fullWidth size="small" type="number" label="ATR 週期"
+                value={cfg.atr_period ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, atr_period: Number(e.target.value) }))}
+                inputProps={{ step: 1, min: 5, max: 200 }}
+                disabled={cfg.sl_mode !== 'atr'}
+              />
+            </Grid>
+            <Grid item xs={4} sm={2.5}>
+              <TextField fullWidth size="small" type="number" label="SL × ATR"
+                value={cfg.atr_sl_mult ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, atr_sl_mult: Number(e.target.value) }))}
+                inputProps={{ step: 0.1, min: 0.5, max: 10 }}
+                helperText="停損距離 / ATR"
+                disabled={cfg.sl_mode !== 'atr'}
+              />
+            </Grid>
+            <Grid item xs={4} sm={2.5}>
+              <TextField fullWidth size="small" type="number" label="TP × ATR"
+                value={cfg.atr_tp_mult ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, atr_tp_mult: Number(e.target.value) }))}
+                inputProps={{ step: 0.1, min: 0.5, max: 20 }}
+                helperText="止盈距離 / ATR"
+                disabled={cfg.sl_mode !== 'atr'}
               />
             </Grid>
           </Grid>
