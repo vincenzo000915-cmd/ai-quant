@@ -6,9 +6,13 @@
 from __future__ import annotations
 
 from app.extensions import db
-from app.models import StrategyCandidate
-from app.services.candidate_sandbox import verify_signal_fn
+from app.models import StrategyCandidate, BacktestResult
+from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
 from app.services.llm_translator import translate, LLMTranslatorError
+
+
+# 候選策略回測通過門檻 — Sharpe ≥ 此值才標 'qualified'
+QUALIFIED_SHARPE = 1.5
 
 
 def translate_and_verify(candidate_id: int) -> dict:
@@ -89,3 +93,142 @@ def translate_and_verify(candidate_id: int) -> dict:
         'verify': verify,
         'usage': parsed.get('usage'),
     }
+
+
+def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: str = 'BTC/USDT') -> dict:
+    """跑單一候選策略的回測。要求 status 為 'translated' 或 'qualified'（再跑一次）/ 'error'（重試）。
+
+    流程：load_signal_fn → fetch K 線 → run_backtest(signal_fn=...) → 寫 BacktestResult
+       → 依 Sharpe 標 qualified / translated。
+
+    狀態流轉：(translated|qualified|error) → backtesting → qualified（Sharpe ≥ 1.5）/ translated（不夠）/ error
+    """
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.backtest_engine import run_backtest
+
+    c = StrategyCandidate.query.get(candidate_id)
+    if c is None:
+        return {'ok': False, 'error': f'candidate {candidate_id} not found'}
+
+    if c.status not in ('translated', 'qualified', 'error'):
+        return {'ok': False, 'error': f'candidate status must be translated/qualified/error, got {c.status}'}
+
+    if not c.parsed_signal or not c.signal_fn_name:
+        return {'ok': False, 'error': 'candidate has no parsed_signal / signal_fn_name (run translate first)'}
+
+    c.status = 'backtesting'
+    c.error_log = None
+    db.session.commit()
+
+    # 載入沙箱中的 callable
+    try:
+        signal_fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+    except Exception as e:
+        c.status = 'error'
+        c.error_log = f'load_signal_fn: {type(e).__name__}: {e}'
+        db.session.commit()
+        return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
+
+    timeframe = c.timeframe or '4h'
+    candles = fetch_ohlcv_history(symbol, timeframe, total_limit=candle_limit)
+    if not candles:
+        c.status = 'error'
+        c.error_log = 'no candles fetched'
+        db.session.commit()
+        return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
+
+    try:
+        result = run_backtest(
+            c.candidate_type or 'candidate',
+            c.default_params or {},
+            candles,
+            timeframe=timeframe,
+            signal_fn=signal_fn,
+        )
+    except Exception as e:
+        c.status = 'error'
+        c.error_log = f'run_backtest: {type(e).__name__}: {e}'
+        db.session.commit()
+        return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
+
+    if result.get('status') == 'error':
+        c.status = 'error'
+        c.error_log = f'backtest: {result.get("error_message", "unknown")}'
+        db.session.commit()
+        return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
+
+    # 寫 BacktestResult — strategy_id=NULL 表示候選回測（未 promote），
+    # 由 strategy_candidates.backtest_result_id 反向關聯。
+    bt = BacktestResult(
+        strategy_id=None,
+        strategy_type=c.candidate_type or 'candidate',
+        params_snapshot=c.default_params or {},
+        symbol=symbol,
+        timeframe=timeframe,
+        leverage=15.0,
+        position_size_usdt=50.0,
+        stop_loss_pct=5.0,
+        take_profit_pct=8.0,
+        initial_capital=100.0,
+        period_start=result['period_start'],
+        period_end=result['period_end'],
+        candle_count=result['candle_count'],
+        total_trades=result['total_trades'],
+        winning_trades=result['winning_trades'],
+        losing_trades=result['losing_trades'],
+        win_rate=result['win_rate'],
+        total_pnl=result['total_pnl'],
+        avg_pnl=result['avg_pnl'],
+        avg_win=result['avg_win'],
+        avg_loss=result['avg_loss'],
+        profit_factor=result['profit_factor'],
+        max_drawdown=result['max_drawdown'],
+        max_drawdown_pct=result['max_drawdown_pct'],
+        sharpe_ratio=result['sharpe_ratio'],
+        final_equity=result['final_equity'],
+        annual_return_pct=result['annual_return_pct'],
+        equity_curve=result['equity_curve'],
+        trades_json=result['trades'],
+        duration_ms=result['duration_ms'],
+        status='completed',
+    )
+    db.session.add(bt)
+    db.session.flush()   # 取 id
+
+    c.backtest_result_id = bt.id
+    sharpe = result.get('sharpe_ratio')
+    if sharpe is not None and sharpe >= QUALIFIED_SHARPE:
+        c.status = 'qualified'
+    else:
+        c.status = 'translated'   # 維持可再 backtest / 手動 promote
+    c.error_log = None
+    db.session.commit()
+
+    return {
+        'ok': True,
+        'candidate': c.to_dict(include_code=False),
+        'backtest': bt.to_dict(include_curve=False),
+        'qualified': c.status == 'qualified',
+    }
+
+
+def backtest_all_translated(max_count: int | None = None) -> dict:
+    """批次跑所有 status='translated' 的候選回測。"""
+    q = StrategyCandidate.query.filter_by(status='translated')
+    if max_count:
+        q = q.limit(max_count)
+    items = q.all()
+    results = []
+    for c in items:
+        try:
+            r = backtest_candidate(c.id)
+            results.append({
+                'id': c.id, 'name': c.source_name, 'ok': r['ok'],
+                'qualified': r.get('qualified', False),
+                'sharpe': r.get('backtest', {}).get('sharpe_ratio') if r.get('ok') else None,
+                'error': r.get('error') if not r.get('ok') else None,
+            })
+        except Exception as e:
+            results.append({'id': c.id, 'name': c.source_name, 'ok': False, 'error': f'{type(e).__name__}: {e}'})
+    qualified = sum(1 for r in results if r.get('qualified'))
+    return {'count': len(results), 'qualified': qualified, 'results': results}

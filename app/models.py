@@ -149,7 +149,8 @@ class BacktestResult(db.Model):
     __tablename__ = 'backtest_results'
 
     id = db.Column(db.Integer, primary_key=True)
-    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=False)
+    # nullable: NULL 表示這是候選策略的回測（strategy 還沒 promote 進 strategies 表）
+    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=True)
     strategy_type = db.Column(db.String(50), nullable=False)
     params_snapshot = db.Column(db.JSON, default={})       # 跑回測時的參數快照
     symbol = db.Column(db.String(20), default='BTC/USDT')

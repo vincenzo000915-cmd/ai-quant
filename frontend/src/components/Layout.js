@@ -10,6 +10,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SettingsIcon from '@mui/icons-material/Settings';
+import HubIcon from '@mui/icons-material/Hub';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
@@ -21,6 +22,7 @@ const DRAWER_COLLAPSED = 64;
 const NAV_ITEMS = [
   { label: '儀表板', icon: <DashboardIcon />, path: '/dashboard' },
   { label: '策略管理', icon: <AutoGraphIcon />, path: '/strategies' },
+  { label: '候選池', icon: <HubIcon />, path: '/candidates' },
   { label: '交易紀錄', icon: <ReceiptLongIcon />, path: '/trades' },
   { label: '系統設定', icon: <SettingsIcon />, path: '/settings' },
 ];
@@ -28,6 +30,7 @@ const NAV_ITEMS = [
 const navIconMap = {
   '/dashboard': <DashboardIcon />,
   '/strategies': <AutoGraphIcon />,
+  '/candidates': <HubIcon />,
   '/trades': <ReceiptLongIcon />,
   '/settings': <SettingsIcon />,
 };

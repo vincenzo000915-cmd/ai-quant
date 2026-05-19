@@ -650,6 +650,26 @@ def crawl_github():
         return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
 
 
+@api_bp.route('/candidates/<int:cid>/backtest', methods=['POST'])
+def backtest_candidate_route(cid):
+    """跑單一候選策略的回測。候選必須已 translated。"""
+    from app.services.candidate_pipeline import backtest_candidate
+    result = backtest_candidate(cid)
+    if result['ok']:
+        return jsonify(result), 200
+    err = result.get('error', '')
+    code = 400 if ('not found' in err or 'status must be' in err or 'no parsed_signal' in err) else 500
+    return jsonify(result), code
+
+
+@api_bp.route('/candidates/backtest-pending', methods=['POST'])
+def backtest_pending_candidates():
+    """批次跑所有 status='translated' 的候選回測（同步、慢）。可選 ?max=N 限制數量。"""
+    from app.services.candidate_pipeline import backtest_all_translated
+    max_count = request.args.get('max', type=int)
+    return jsonify(backtest_all_translated(max_count=max_count))
+
+
 @api_bp.route('/candidates/<int:cid>/translate', methods=['POST'])
 def translate_candidate(cid):
     """跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-15s/candidate）。"""

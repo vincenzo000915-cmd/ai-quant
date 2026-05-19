@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';
+import Candidates from './pages/Candidates';
 import Trades from './pages/Trades';
 import Settings from './pages/Settings';
 
@@ -452,6 +453,7 @@ export default function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="strategies" element={<Strategies />} />
+            <Route path="candidates" element={<Candidates />} />
             <Route path="trades" element={<Trades />} />
             <Route path="settings" element={<Settings />} />
           </Route>
