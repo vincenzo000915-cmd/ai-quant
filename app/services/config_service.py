@@ -22,6 +22,10 @@ DEFAULTS = {
     'max_daily_loss_usdt': 10.0,
     'halted': False,
     'halt_reason': None,
+    'sizing_mode': 'flat',
+    'target_vol_pct': 1.5,
+    'sizing_min_mult': 0.3,
+    'sizing_max_mult': 3.0,
 }
 
 

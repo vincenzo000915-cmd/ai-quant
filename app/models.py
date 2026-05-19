@@ -284,6 +284,12 @@ class SystemConfig(db.Model):
     halt_reason = db.Column(db.Text, nullable=True)
     halted_at = db.Column(db.DateTime, nullable=True)
 
+    # Phase 9.3: 動態倉位設定
+    sizing_mode = db.Column(db.String(20), default='flat')   # 'flat' | 'vol_target' | 'sharpe_weighted'
+    target_vol_pct = db.Column(db.Float, default=1.5)        # 目標日波動率 % (vol_target 用)
+    sizing_min_mult = db.Column(db.Float, default=0.3)
+    sizing_max_mult = db.Column(db.Float, default=3.0)
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -298,6 +304,10 @@ class SystemConfig(db.Model):
             'halted': self.halted,
             'halt_reason': self.halt_reason,
             'halted_at': self.halted_at.isoformat() if self.halted_at else None,
+            'sizing_mode': self.sizing_mode,
+            'target_vol_pct': self.target_vol_pct,
+            'sizing_min_mult': self.sizing_min_mult,
+            'sizing_max_mult': self.sizing_max_mult,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

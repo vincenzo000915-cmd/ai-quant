@@ -43,7 +43,12 @@ export default function Settings() {
 
   useEffect(() => { load(); }, [load]);
 
-  const dirty = cfg && original && FIELDS.some(f => cfg[f.key] !== original[f.key]) || (cfg && cfg.trading_mode !== original?.trading_mode);
+  const SIZING_KEYS = ['sizing_mode', 'target_vol_pct', 'sizing_min_mult', 'sizing_max_mult'];
+  const dirty = cfg && original && (
+    FIELDS.some(f => cfg[f.key] !== original[f.key]) ||
+    cfg.trading_mode !== original?.trading_mode ||
+    SIZING_KEYS.some(k => cfg[k] !== original?.[k])
+  );
 
   const set = (key, raw) => {
     const v = raw === '' ? '' : Number(raw);
@@ -60,6 +65,11 @@ export default function Settings() {
         if (cfg[f.key] !== original[f.key] && cfg[f.key] !== '') patch[f.key] = Number(cfg[f.key]);
       }
       if (cfg.trading_mode !== original.trading_mode) patch.trading_mode = cfg.trading_mode;
+      for (const k of SIZING_KEYS) {
+        if (cfg[k] !== original[k] && cfg[k] !== '' && cfg[k] !== undefined) {
+          patch[k] = k === 'sizing_mode' ? cfg[k] : Number(cfg[k]);
+        }
+      }
 
       const r = await fetch(`${API}/api/config`, {
         method: 'PUT',
@@ -159,6 +169,58 @@ export default function Settings() {
                 />
               </Grid>
             ))}
+          </Grid>
+        </CardContent>
+      </Card>
+
+      {/* === Phase 9.3: 動態倉位設定 === */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>動態倉位（Position Sizing）</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            flat = 寫死每筆。vol_target = 高波動時減倉、低波動時加倉，控制日 PnL 波動目標。sharpe_weighted = Sharpe 高的策略加大倉。
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={4}>
+              <TextField
+                select fullWidth size="small"
+                SelectProps={{ native: true }}
+                label="模式"
+                value={cfg.sizing_mode || 'flat'}
+                onChange={(e) => setCfg(c => ({ ...c, sizing_mode: e.target.value }))}
+              >
+                <option value="flat">flat (寫死每筆)</option>
+                <option value="vol_target">vol_target (波動目標)</option>
+                <option value="sharpe_weighted">sharpe_weighted (Sharpe 加權)</option>
+              </TextField>
+            </Grid>
+            <Grid item xs={6} sm={3}>
+              <TextField fullWidth size="small" type="number" label="目標日波動 %"
+                value={cfg.target_vol_pct ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, target_vol_pct: Number(e.target.value) }))}
+                inputProps={{ step: 0.1, min: 0.1, max: 20 }}
+                helperText="vol_target 用"
+                disabled={cfg.sizing_mode !== 'vol_target'}
+              />
+            </Grid>
+            <Grid item xs={6} sm={2.5}>
+              <TextField fullWidth size="small" type="number" label="min × base"
+                value={cfg.sizing_min_mult ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, sizing_min_mult: Number(e.target.value) }))}
+                inputProps={{ step: 0.1, min: 0.1, max: 1 }}
+                helperText="夾在這之上"
+                disabled={cfg.sizing_mode === 'flat'}
+              />
+            </Grid>
+            <Grid item xs={6} sm={2.5}>
+              <TextField fullWidth size="small" type="number" label="max × base"
+                value={cfg.sizing_max_mult ?? ''}
+                onChange={(e) => setCfg(c => ({ ...c, sizing_max_mult: Number(e.target.value) }))}
+                inputProps={{ step: 0.1, min: 1, max: 10 }}
+                helperText="夾在這之下"
+                disabled={cfg.sizing_mode === 'flat'}
+              />
+            </Grid>
           </Grid>
         </CardContent>
       </Card>

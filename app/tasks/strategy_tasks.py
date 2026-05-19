@@ -183,10 +183,14 @@ def _run_signals(strategy_id=None, category_filter=None):
             if action in ('open_long', 'open_short'):
                 side = 'long' if action == 'open_long' else 'short'
                 okx_side = 'buy' if side == 'long' else 'sell'
-                amount_base = round(trade_size / price, 6)
+
+                # Phase 9.3: 動態倉位（依 sizing_mode）
+                from app.services.position_sizing import compute_size
+                effective_size, sizing_debug = compute_size(s, cfg, trade_size)
+                amount_base = round(effective_size / price, 6)
                 notional = amount_base * price * lev
 
-                order = _place_order(s.symbol, okx_side, trade_size, price, mode, leverage=lev)
+                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -203,9 +207,12 @@ def _run_signals(strategy_id=None, category_filter=None):
                 db.session.add(pos)
                 db.session.commit()
                 emoji = '🟢' if side == 'long' else '🔴'
+                size_note = ''
+                if sizing_debug.get('mode') != 'flat':
+                    size_note = f' [size×{sizing_debug.get("multiplier", 1):.2f}]'
                 results.append(
                     f'{emoji} {s.name}: 開{("多" if side=="long" else "空")} {amount_base} @ ${price:.1f} '
-                    f'(本金${trade_size:.0f}, 槓桿{lev}x, 名義${notional:.0f})'
+                    f'(本金${effective_size:.1f}{size_note}, 槓桿{lev}x, 名義${notional:.0f})'
                 )
                 from app.services.telegram_service import notify_open
                 notify_open(s.name, s.symbol, side, amount_base, price, notional)

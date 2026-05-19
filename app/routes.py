@@ -722,6 +722,10 @@ def update_system_config():
         return jsonify({'error': 'stop_loss_pct out of range (0,50]'}), 400
     if 'take_profit_pct' in patch and not (0 < patch['take_profit_pct'] <= 200):
         return jsonify({'error': 'take_profit_pct out of range (0,200]'}), 400
+    if 'sizing_mode' in patch and patch['sizing_mode'] not in ('flat', 'vol_target', 'sharpe_weighted'):
+        return jsonify({'error': 'sizing_mode must be flat / vol_target / sharpe_weighted'}), 400
+    if 'target_vol_pct' in patch and not (0.1 <= patch['target_vol_pct'] <= 20):
+        return jsonify({'error': 'target_vol_pct out of range [0.1, 20]'}), 400
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)
