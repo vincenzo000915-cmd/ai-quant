@@ -16,6 +16,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import {
   AreaChart, Area, LineChart, Line, ComposedChart, XAxis, YAxis,
   CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, ReferenceDot,
+  ReferenceLine,
 } from 'recharts';
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -769,55 +770,109 @@ export default function Dashboard() {
               ))}
             </Box>
 
-            <Box sx={{ height: 300 }}>
+            <Box sx={{ height: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={btcChartEnriched}>
+                <ComposedChart data={btcChartEnriched} margin={{ top: 10, right: 12, bottom: 4, left: 0 }}>
                   <defs>
                     <linearGradient id="btcGradient2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.35} />
+                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.30} />
+                      <stop offset="55%" stopColor={C.gold} stopOpacity={0.10} />
                       <stop offset="100%" stopColor={C.gold} stopOpacity={0} />
                     </linearGradient>
+                    <linearGradient id="bbFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.purple} stopOpacity={0.10} />
+                      <stop offset="100%" stopColor={C.purple} stopOpacity={0.02} />
+                    </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(99,102,241,0.08)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} minTickGap={20} />
-                  <YAxis
-                    domain={['dataMin - 200', 'dataMax + 200']}
-                    tick={{ fontSize: 10, fill: C.textDim }}
+                  <CartesianGrid strokeDasharray="0" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 10, fill: 'rgba(148,163,184,0.65)' }}
                     axisLine={false} tickLine={false}
-                    tickFormatter={v => `${(v / 1000).toFixed(1)}k`}
+                    minTickGap={36}
+                    interval="preserveStartEnd"
                   />
-                  <ReTooltip formatter={(v, name) => v == null ? null : [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, name]} />
-                  <Area
-                    type="monotone" dataKey="price" name="BTC"
-                    stroke={C.gold} fill="url(#btcGradient2)"
-                    strokeWidth={2} dot={false} isAnimationActive={false}
+                  <YAxis
+                    orientation="right"
+                    domain={['dataMin - 120', 'dataMax + 120']}
+                    tick={{ fontSize: 10, fill: 'rgba(148,163,184,0.65)' }}
+                    axisLine={false} tickLine={false}
+                    width={56}
+                    tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(2)}k` : v.toFixed(0)}
                   />
+                  <ReTooltip
+                    cursor={{ stroke: 'rgba(251,191,36,0.4)', strokeWidth: 1, strokeDasharray: '3 3' }}
+                    content={<CustomChartTooltip C={C} />}
+                  />
+
+                  {/* BB 帶填色（先畫，當底） */}
                   {indicators.bb && (
-                    <Line type="monotone" dataKey="bbU" name="BB upper"
-                      stroke={C.purple} strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} />
+                    <Area type="monotone" dataKey="bbU" stroke="none" fill="url(#bbFill)" isAnimationActive={false} />
                   )}
                   {indicators.bb && (
-                    <Line type="monotone" dataKey="bbL" name="BB lower"
-                      stroke={C.purple} strokeWidth={1} strokeDasharray="3 3" dot={false} isAnimationActive={false} />
+                    <Area type="monotone" dataKey="bbL" stroke="none" fill={C.bgDeep || '#05060f'} isAnimationActive={false} />
                   )}
+                  {indicators.bb && (
+                    <Line type="monotone" dataKey="bbU" name="BB↑"
+                      stroke={C.purple} strokeOpacity={0.55} strokeWidth={1} strokeDasharray="2 4"
+                      dot={false} isAnimationActive={false} />
+                  )}
+                  {indicators.bb && (
+                    <Line type="monotone" dataKey="bbL" name="BB↓"
+                      stroke={C.purple} strokeOpacity={0.55} strokeWidth={1} strokeDasharray="2 4"
+                      dot={false} isAnimationActive={false} />
+                  )}
+
+                  {/* 指標線 (放主價之前，視覺層次：背景 → 指標 → 主價 → 信號點) */}
                   {indicators.sma20 && (
                     <Line type="monotone" dataKey="sma20" name="SMA20"
-                      stroke={C.primary} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                      stroke={C.primary} strokeOpacity={0.75} strokeWidth={1.25}
+                      dot={false} isAnimationActive={false} />
                   )}
                   {indicators.ema50 && (
                     <Line type="monotone" dataKey="ema50" name="EMA50"
-                      stroke={C.accent} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                      stroke={C.accent} strokeOpacity={0.75} strokeWidth={1.25}
+                      dot={false} isAnimationActive={false} />
                   )}
+
+                  {/* 主價 */}
+                  <Area
+                    type="monotone" dataKey="price" name="BTC"
+                    stroke={C.gold} strokeWidth={2}
+                    fill="url(#btcGradient2)"
+                    dot={false} isAnimationActive={false}
+                  />
+
+                  {/* 當前價水平參考線 */}
+                  {btcPrice?.price && (
+                    <ReferenceLine
+                      y={btcPrice.price}
+                      stroke={C.gold}
+                      strokeOpacity={0.35}
+                      strokeDasharray="2 4"
+                      label={{
+                        value: ` $${btcPrice.price.toLocaleString()}`,
+                        position: 'right',
+                        fill: C.gold,
+                        fontSize: 10,
+                        fontFamily: 'JetBrains Mono, monospace',
+                      }}
+                    />
+                  )}
+
+                  {/* 信號點（最上層）*/}
                   {indicators.signals && (
                     <Line type="monotone" dataKey="buy" name="開倉"
                       stroke="transparent"
-                      dot={{ r: 5, fill: C.success, stroke: '#fff', strokeWidth: 1.5 }}
+                      dot={{ r: 4.5, fill: C.success, stroke: '#0a0d1e', strokeWidth: 1.5 }}
+                      activeDot={{ r: 6 }}
                       isAnimationActive={false} />
                   )}
                   {indicators.signals && (
                     <Line type="monotone" dataKey="sell" name="平倉"
                       stroke="transparent"
-                      dot={{ r: 5, fill: C.error, stroke: '#fff', strokeWidth: 1.5 }}
+                      dot={{ r: 4.5, fill: C.error, stroke: '#0a0d1e', strokeWidth: 1.5 }}
+                      activeDot={{ r: 6 }}
                       isAnimationActive={false} />
                   )}
                 </ComposedChart>
@@ -1222,6 +1277,52 @@ export default function Dashboard() {
           </Table>
         </TableContainer>
       </Box>
+    </Box>
+  );
+}
+
+
+function CustomChartTooltip({ active, payload, label, C }) {
+  if (!active || !payload?.length) return null;
+  // 過濾掉 null / undefined，去重（同 key 重複時取第一個）
+  const seen = new Set();
+  const rows = payload.filter(p => {
+    if (p.value == null) return false;
+    if (seen.has(p.dataKey)) return false;
+    seen.add(p.dataKey);
+    return true;
+  });
+  if (!rows.length) return null;
+  const labelFor = (k) => ({
+    price: 'BTC',
+    sma20: 'SMA20',
+    ema50: 'EMA50',
+    bbU: 'BB↑',
+    bbL: 'BB↓',
+    buy: '🟢 開倉',
+    sell: '🔴 平倉',
+  }[k] || k);
+  return (
+    <Box sx={{
+      bgcolor: 'rgba(8,10,24,0.94)',
+      border: '1px solid rgba(99,102,241,0.35)',
+      borderRadius: 1,
+      px: 1.25, py: 1,
+      fontFamily: 'JetBrains Mono, monospace',
+      minWidth: 130,
+    }}>
+      <Box sx={{ fontSize: '0.65rem', color: 'rgba(148,163,184,0.8)', mb: 0.5 }}>{label}</Box>
+      {rows.map(r => (
+        <Box key={r.dataKey} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, fontSize: '0.7rem' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: r.color || r.stroke }} />
+            <span style={{ color: 'rgba(203,213,225,0.85)' }}>{labelFor(r.dataKey)}</span>
+          </Box>
+          <span style={{ color: '#fff', fontWeight: 700 }}>
+            ${Number(r.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </span>
+        </Box>
+      ))}
     </Box>
   );
 }
