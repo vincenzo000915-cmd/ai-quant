@@ -190,6 +190,8 @@ class BacktestResult(db.Model):
     # 詳細資料（JSON 存）
     equity_curve = db.Column(db.JSON, default=[])          # [{ ts, equity, drawdown }]
     trades_json = db.Column(db.JSON, default=[])           # [{ entry, exit, pnl, reason, side }]
+    # Phase 5.4: walk-forward 驗證結果 — {full, in_sample, out_sample, is_ratio, split_ts, decay_pct}
+    walkforward_json = db.Column(db.JSON, default={})
 
     # 元資料
     duration_ms = db.Column(db.Integer)                    # 跑回測耗時
@@ -232,9 +234,27 @@ class BacktestResult(db.Model):
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+        # walkforward 摘要永遠回傳（小，但有 IS/OOS sharpe）；明細只在 include_curve 時回
+        wf = self.walkforward_json or {}
+        if wf:
+            d['walkforward'] = {
+                'is_ratio': wf.get('is_ratio'),
+                'split_ts': wf.get('split_ts'),
+                'decay_pct': wf.get('decay_pct'),
+                'is_sharpe': (wf.get('in_sample') or {}).get('sharpe_ratio'),
+                'oos_sharpe': (wf.get('out_sample') or {}).get('sharpe_ratio'),
+                'is_trades': (wf.get('in_sample') or {}).get('total_trades'),
+                'oos_trades': (wf.get('out_sample') or {}).get('total_trades'),
+                'is_ar': (wf.get('in_sample') or {}).get('annual_return_pct'),
+                'oos_ar': (wf.get('out_sample') or {}).get('annual_return_pct'),
+                'is_maxdd': (wf.get('in_sample') or {}).get('max_drawdown_pct'),
+                'oos_maxdd': (wf.get('out_sample') or {}).get('max_drawdown_pct'),
+            }
         if include_curve:
             d['equity_curve'] = self.equity_curve or []
             d['trades_json'] = self.trades_json or []
+            if wf:
+                d['walkforward_full'] = wf
         return d
 
 

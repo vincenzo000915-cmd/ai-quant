@@ -11,8 +11,11 @@ from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
 from app.services.llm_translator import translate, LLMTranslatorError
 
 
-# 候選策略回測通過門檻 — Sharpe ≥ 此值才標 'qualified'
-QUALIFIED_SHARPE = 1.5
+# 候選策略 qualified 門檻（Phase 5.4 嚴格化）
+QUALIFIED_SHARPE_IS = 1.5        # in-sample Sharpe
+QUALIFIED_SHARPE_OOS = 0.8       # out-of-sample 較寬鬆，但必須是正的且合理
+QUALIFIED_MAX_DECAY_PCT = 70     # OOS sharpe 相對 IS 衰減超過 70% → 過擬合 reject
+QUALIFIED_MIN_TRADES_PER_SIDE = 5  # IS / OOS 各自至少這麼多筆，否則 Sharpe 估不準
 
 
 def translate_and_verify(candidate_id: int) -> dict:
@@ -104,7 +107,7 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     狀態流轉：(translated|qualified|error) → backtesting → qualified（Sharpe ≥ 1.5）/ translated（不夠）/ error
     """
     from app.services.exchange_service import fetch_ohlcv_history
-    from app.services.backtest_engine import run_backtest
+    from app.services.backtest_engine import run_walkforward_backtest
 
     c = StrategyCandidate.query.get(candidate_id)
     if c is None:
@@ -137,8 +140,9 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         db.session.commit()
         return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
 
+    # Phase 5.4: walk-forward 取代單段回測
     try:
-        result = run_backtest(
+        wf = run_walkforward_backtest(
             c.candidate_type or 'candidate',
             c.default_params or {},
             candles,
@@ -147,13 +151,20 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         )
     except Exception as e:
         c.status = 'error'
-        c.error_log = f'run_backtest: {type(e).__name__}: {e}'
+        c.error_log = f'walkforward: {type(e).__name__}: {e}'
         db.session.commit()
         return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
 
+    if wf.get('status') == 'error':
+        c.status = 'error'
+        c.error_log = f'walkforward: {wf.get("error_message", "unknown")}'
+        db.session.commit()
+        return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
+
+    result = wf['full']
     if result.get('status') == 'error':
         c.status = 'error'
-        c.error_log = f'backtest: {result.get("error_message", "unknown")}'
+        c.error_log = f'backtest full: {result.get("error_message", "unknown")}'
         db.session.commit()
         return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
 
@@ -189,6 +200,7 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         annual_return_pct=result['annual_return_pct'],
         equity_curve=result['equity_curve'],
         trades_json=result['trades'],
+        walkforward_json=wf,
         duration_ms=result['duration_ms'],
         status='completed',
     )
@@ -196,12 +208,34 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     db.session.flush()   # 取 id
 
     c.backtest_result_id = bt.id
-    sharpe = result.get('sharpe_ratio')
-    if sharpe is not None and sharpe >= QUALIFIED_SHARPE:
+
+    # Phase 5.4: qualified 門檻 = IS sharpe ≥ 1.5 AND OOS sharpe ≥ 0.8 AND decay ≤ 70%
+    is_res = wf.get('in_sample') or {}
+    oos_res = wf.get('out_sample') or {}
+    is_sh = is_res.get('sharpe_ratio')
+    oos_sh = oos_res.get('sharpe_ratio')
+    decay = wf.get('decay_pct')
+
+    qualified_reasons = []
+    is_trades = is_res.get('total_trades') or 0
+    oos_trades = oos_res.get('total_trades') or 0
+    if is_trades < QUALIFIED_MIN_TRADES_PER_SIDE:
+        qualified_reasons.append(f'IS trades={is_trades} < {QUALIFIED_MIN_TRADES_PER_SIDE} (Sharpe 樣本不足)')
+    if oos_trades < QUALIFIED_MIN_TRADES_PER_SIDE:
+        qualified_reasons.append(f'OOS trades={oos_trades} < {QUALIFIED_MIN_TRADES_PER_SIDE} (Sharpe 樣本不足)')
+    if is_sh is None or is_sh < QUALIFIED_SHARPE_IS:
+        qualified_reasons.append(f'IS sharpe={is_sh} < {QUALIFIED_SHARPE_IS}')
+    if oos_sh is None or oos_sh < QUALIFIED_SHARPE_OOS:
+        qualified_reasons.append(f'OOS sharpe={oos_sh} < {QUALIFIED_SHARPE_OOS}')
+    if decay is not None and decay > QUALIFIED_MAX_DECAY_PCT:
+        qualified_reasons.append(f'OOS decay={decay}% > {QUALIFIED_MAX_DECAY_PCT}% (suspected overfit)')
+
+    if not qualified_reasons:
         c.status = 'qualified'
+        c.error_log = None
     else:
-        c.status = 'translated'   # 維持可再 backtest / 手動 promote
-    c.error_log = None
+        c.status = 'translated'
+        c.error_log = 'not qualified: ' + '; '.join(qualified_reasons)
     db.session.commit()
 
     return {
@@ -209,6 +243,11 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         'candidate': c.to_dict(include_code=False),
         'backtest': bt.to_dict(include_curve=False),
         'qualified': c.status == 'qualified',
+        'walkforward': {
+            'is_sharpe': is_sh, 'oos_sharpe': oos_sh, 'decay_pct': decay,
+            'is_trades': is_res.get('total_trades'), 'oos_trades': oos_res.get('total_trades'),
+        },
+        'qualified_reasons': qualified_reasons,
     }
 
 

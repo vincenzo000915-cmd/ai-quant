@@ -462,6 +462,9 @@ export default function Candidates() {
 
               {tabIdx === 3 && detail.backtest && (
                 <Box>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                    全段（{detail.backtest.candle_count} 根 K 線）
+                  </Typography>
                   <Grid container spacing={2}>
                     <KPICard label="Sharpe" value={fmtNum(detail.backtest.sharpe_ratio, 2)} />
                     <KPICard label="年化報酬" value={fmtNum(detail.backtest.annual_return_pct, 1, '%')} />
@@ -472,6 +475,26 @@ export default function Candidates() {
                     <KPICard label="總 PnL" value={fmtNum(detail.backtest.total_pnl, 2)} />
                     <KPICard label="最終淨值" value={fmtNum(detail.backtest.final_equity, 2)} />
                   </Grid>
+                  {detail.backtest.walkforward && (
+                    <Box sx={{ mt: 3 }}>
+                      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                        Walk-Forward 驗證（防過擬合）
+                        {detail.backtest.walkforward.decay_pct !== null && detail.backtest.walkforward.decay_pct > 70 && (
+                          <Chip label={`衰減 ${detail.backtest.walkforward.decay_pct}% — 疑似過擬合`} color="error" size="small" sx={{ ml: 1 }} />
+                        )}
+                      </Typography>
+                      <Grid container spacing={2}>
+                        <KPICard label="IS Sharpe (70%)" value={fmtNum(detail.backtest.walkforward.is_sharpe, 2)} />
+                        <KPICard label="OOS Sharpe (30%)" value={fmtNum(detail.backtest.walkforward.oos_sharpe, 2)} />
+                        <KPICard label="IS 年化" value={fmtNum(detail.backtest.walkforward.is_ar, 1, '%')} />
+                        <KPICard label="OOS 年化" value={fmtNum(detail.backtest.walkforward.oos_ar, 1, '%')} />
+                        <KPICard label="IS 交易" value={detail.backtest.walkforward.is_trades} />
+                        <KPICard label="OOS 交易" value={detail.backtest.walkforward.oos_trades} />
+                        <KPICard label="IS MaxDD" value={fmtNum(detail.backtest.walkforward.is_maxdd, 1, '%')} />
+                        <KPICard label="OOS MaxDD" value={fmtNum(detail.backtest.walkforward.oos_maxdd, 1, '%')} />
+                      </Grid>
+                    </Box>
+                  )}
                 </Box>
               )}
             </DialogContent>

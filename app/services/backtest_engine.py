@@ -44,6 +44,61 @@ def _periods_per_year(timeframe):
     return int(365 * 24 * 60 / minutes)
 
 
+def run_walkforward_backtest(
+    strategy_type: str,
+    params: dict,
+    candles: list,
+    *,
+    is_ratio: float = 0.7,
+    timeframe: str = '4h',
+    signal_fn=None,
+    **kwargs,
+):
+    """Walk-forward 驗證 — 切 IS(70%)/OOS(30%)，兩段獨立回測。
+
+    Phase 5.4 防過擬合：用 IS 回測選參數、用 OOS 驗證真實 alpha。
+    若 OOS Sharpe 顯著低於 IS（>50% 衰減）→ 過擬合警訊；qualify 應拒。
+
+    回傳：
+    {
+      'full': {...全段結果，跟 run_backtest 一樣},
+      'in_sample': {...},
+      'out_sample': {...},
+      'is_ratio': 0.7,
+      'split_ts': <分界 timestamp>,
+      'decay_pct': <OOS sharpe 相對 IS 的衰減 %，越高越像過擬合>,
+    }
+    """
+    if not candles or len(candles) < 200:
+        return {'status': 'error', 'error_message': f'walkforward 至少要 200 根，給了 {len(candles) if candles else 0}'}
+
+    candles = sorted(candles, key=lambda c: c['timestamp'])
+    split_idx = int(len(candles) * is_ratio)
+    is_candles = candles[:split_idx]
+    oos_candles = candles[split_idx:]
+
+    full = run_backtest(strategy_type, params, candles, timeframe=timeframe, signal_fn=signal_fn, **kwargs)
+    is_res = run_backtest(strategy_type, params, is_candles, timeframe=timeframe, signal_fn=signal_fn, **kwargs)
+    # OOS 用較短 warmup（因為已有指標暖機歷史）— 但簡化起見用預設值
+    oos_res = run_backtest(strategy_type, params, oos_candles, timeframe=timeframe, signal_fn=signal_fn, **kwargs)
+
+    is_sh = is_res.get('sharpe_ratio')
+    oos_sh = oos_res.get('sharpe_ratio')
+    decay = None
+    if is_sh is not None and oos_sh is not None and is_sh != 0:
+        decay = round((1 - oos_sh / is_sh) * 100, 2) if is_sh > 0 else None
+
+    return {
+        'status': full.get('status', 'completed'),
+        'full': full,
+        'in_sample': is_res,
+        'out_sample': oos_res,
+        'is_ratio': is_ratio,
+        'split_ts': candles[split_idx]['timestamp'] if split_idx < len(candles) else None,
+        'decay_pct': decay,
+    }
+
+
 def run_backtest(
     strategy_type: str,
     params: dict,
