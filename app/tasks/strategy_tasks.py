@@ -370,3 +370,15 @@ def monitor_strategy_health():
             actions.append(f'{s.name}: EXCEPTION {type(e).__name__}: {e}')
 
     return ' | '.join(actions)
+
+
+# ===== Phase 5.2: 候選池自動回測 =====
+
+@celery_app.task
+def auto_backtest_translated_candidates(max_count: int = 20):
+    """每小時跑 — 把 status='translated' 的候選自動拉去 walk-forward 回測。
+    通過門檻變 qualified，沒通過繼續 translated 等下次（如果 user 修了 params）。
+    """
+    from app.services.candidate_pipeline import backtest_all_translated
+    result = backtest_all_translated(max_count=max_count)
+    return f'auto-backtest: {result["count"]} 個跑完，{result["qualified"]} 個合格'

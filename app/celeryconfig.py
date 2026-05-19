@@ -55,4 +55,11 @@ beat_schedule = {
         'schedule': crontab(hour='3', minute='0'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 5.2: 候選池自動回測（每小時 30 分，跑所有 translated 走 walk-forward）===
+    'auto-backtest-candidates': {
+        'task': 'app.tasks.strategy_tasks.auto_backtest_translated_candidates',
+        'schedule': crontab(minute='30'),
+        'options': {'queue': 'default'},
+    },
 }
