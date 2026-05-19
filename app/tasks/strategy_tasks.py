@@ -770,9 +770,11 @@ def auto_optimize_running_strategies(max_combos: int = 24):
         if not grid:
             skipped += 1
             continue
+        # 只把「7 天內 completed」當作已優化 — error/pending 不算，下次會重試
         recent = (
             ParamOptimization.query
             .filter(ParamOptimization.strategy_id == s.id)
+            .filter(ParamOptimization.status == 'completed')
             .filter(ParamOptimization.started_at >= cutoff)
             .first()
         )
