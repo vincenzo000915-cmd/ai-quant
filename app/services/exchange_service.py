@@ -378,7 +378,11 @@ def get_historical_prices(symbol='BTC-USDT', timeframe='1h', limit=None):
         now_utc = datetime.utcnow()
         for row in reversed(data):  # OKX 返回按時間倒序
             ts = int(row[0])
+            open_ = float(row[1])
+            high = float(row[2])
+            low = float(row[3])
             close = float(row[4])
+            volume = float(row[5]) if len(row) > 5 else 0.0
             dt = datetime.utcfromtimestamp(ts / 1000)
             # 短週期顯示 HH:MM；長週期顯示 MM-DD；非常長 (>=1d) 顯示 YYYY-MM-DD
             if timeframe in ('15m', '30m', '1h'):
@@ -392,7 +396,12 @@ def get_historical_prices(symbol='BTC-USDT', timeframe='1h', limit=None):
             result.append({
                 'timestamp': ts,
                 'date': label,
-                'price': close,
+                'price': close,    # 保留兼容舊前端
+                'open': open_,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume,
             })
         return result
     except Exception as e:
