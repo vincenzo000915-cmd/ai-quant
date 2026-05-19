@@ -693,3 +693,170 @@ def auto_apply_advisor():
     if r.get('skipped'):
         return f'auto-apply skipped: {r.get("reason")}'
     return f'auto-apply: 套用 {r["applied_count"]} 項（今日累計 {r["today_count_after"]}/{r["daily_cap"]}）'
+
+
+# ===== Phase 10.9: 補洞任務 =====
+
+@celery_app.task
+def backtest_and_maybe_start(strategy_id: int):
+    """Phase 10.9: 給 fan_out 新建的兄弟跑 walk-forward，過門檻 + auto_start 開就啟動，
+    否則保持 stopped 並推 Telegram。
+    """
+    from app.models import Strategy
+    from app.services.config_service import get_config
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.backtest_engine import run_walkforward_backtest
+    from app.services.telegram_service import send as _tg
+
+    strategy = Strategy.query.get(strategy_id)
+    if not strategy:
+        return f'strategy {strategy_id} 不存在'
+
+    cfg = get_config()
+    auto_start = bool(cfg.get('fan_out_auto_start'))
+    min_sharpe = float(cfg.get('fan_out_min_oos_sharpe', 1.0))
+
+    try:
+        candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=2000)
+    except Exception as e:
+        try:
+            _tg(f'🟡 兄弟回測失敗 #{strategy.id} {strategy.name}：拉 K 線錯誤 {e}')
+        except Exception:
+            pass
+        return f'fetch failed: {e}'
+
+    wf = run_walkforward_backtest(
+        strategy.type, strategy.params or {}, candles,
+        timeframe=strategy.timeframe,
+        slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
+        fee_pct=cfg.get('backtest_fee_pct', 0.05),
+    )
+    oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
+    is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
+
+    msg_head = f'兄弟回測 #{strategy.id} {strategy.name} ({strategy.symbol} {strategy.timeframe})'
+    if oos is None:
+        _tg(f'🟡 {msg_head}：OOS Sharpe 無法計算（樣本太少），保持 stopped')
+        return 'oos None, kept stopped'
+
+    if oos >= min_sharpe:
+        if auto_start:
+            strategy.status = 'running'
+            db.session.commit()
+            _tg(f'🟢 {msg_head}：OOS Sharpe={oos:.2f} (IS={is_sh}) ≥ {min_sharpe} → 已自動啟動')
+            return f'started, oos={oos:.2f}'
+        _tg(f'🟢 {msg_head}：OOS Sharpe={oos:.2f} 通過，但 fan_out_auto_start=off，請手動啟動')
+        return f'passed but auto_start off, oos={oos:.2f}'
+    _tg(f'🔴 {msg_head}：OOS Sharpe={oos:.2f} < {min_sharpe} → 未啟動（行情不適合）')
+    return f'rejected, oos={oos:.2f}'
+
+
+@celery_app.task
+def auto_optimize_running_strategies(max_combos: int = 24):
+    """Phase 10.9: 每週給所有 running 策略排 walk-forward 網格搜尋，
+    讓 apply_params 永遠有新弹药。跳過 7 天內已優化過的。
+    """
+    import datetime
+    from app.models import Strategy, ParamOptimization
+    from app.services.param_optimizer import get_grid, grid_size
+
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    running = Strategy.query.filter(Strategy.status == 'running').all()
+    queued = 0
+    skipped = 0
+
+    for s in running:
+        grid = get_grid(s.type)
+        if not grid:
+            skipped += 1
+            continue
+        recent = (
+            ParamOptimization.query
+            .filter(ParamOptimization.strategy_id == s.id)
+            .filter(ParamOptimization.started_at >= cutoff)
+            .first()
+        )
+        if recent:
+            skipped += 1
+            continue
+        # 防止重複進行中
+        in_flight = ParamOptimization.query.filter(
+            ParamOptimization.strategy_id == s.id,
+            ParamOptimization.status.in_(['pending', 'running']),
+        ).first()
+        if in_flight:
+            skipped += 1
+            continue
+
+        opt = ParamOptimization(
+            strategy_id=s.id,
+            status='pending',
+            grid=grid,
+            baseline_params=dict(s.params or {}),
+            combos_total=min(grid_size(grid) + 1, max_combos + 1),
+        )
+        db.session.add(opt)
+        db.session.commit()
+        # 錯峰 — 每個策略間隔 120s，避免 OKX 429
+        optimize_strategy_params.apply_async(args=[opt.id, max_combos], countdown=queued * 120)
+        queued += 1
+
+    return f'auto-optimize: 排了 {queued} 個（每 120s 間隔），跳過 {skipped} 個'
+
+
+@celery_app.task
+def daily_advisor_summary():
+    """Phase 10.9: 每天 23:00 UTC 一條 Telegram 摘要 — 今日托管動了什麼、PnL、open positions"""
+    import datetime
+    from sqlalchemy import func
+    from app.models import AuditLog, Trade, Position, Strategy
+    from app.services.telegram_service import send as _tg
+
+    today = datetime.datetime.utcnow().date()
+    start = datetime.datetime.combine(today, datetime.time.min)
+
+    auto_count = (
+        AuditLog.query
+        .filter(AuditLog.event_type == 'advisor_auto_apply')
+        .filter(AuditLog.created_at >= start)
+        .count()
+    )
+    auto_rows = (
+        AuditLog.query
+        .filter(AuditLog.event_type == 'advisor_auto_apply')
+        .filter(AuditLog.created_at >= start)
+        .order_by(AuditLog.id.desc())
+        .limit(5)
+        .all()
+    )
+
+    today_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= start).scalar() or 0
+    today_trades = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= start).scalar() or 0
+    open_pos = db.session.query(func.count(Position.id)).filter(Position.status == 'open').scalar() or 0
+    unrealized = db.session.query(func.coalesce(func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0
+    running = db.session.query(func.count(Strategy.id)).filter(Strategy.status == 'running').scalar() or 0
+
+    halts_today = (
+        AuditLog.query
+        .filter(AuditLog.event_type.in_(['halt', 'kill_switch']))
+        .filter(AuditLog.created_at >= start)
+        .count()
+    )
+
+    lines = [
+        f'📊 <b>日報 {today.isoformat()}</b>',
+        f'• 運行策略: {running} 個 / 持倉: {open_pos}',
+        f'• 今日 PnL: <b>{today_pnl:+.2f}</b> USDT ({today_trades} 筆)',
+        f'• 未實現: {unrealized:+.2f} USDT',
+        f'• 智能托管執行: {auto_count} 次',
+    ]
+    if halts_today:
+        lines.append(f'⚠️ 今日有 {halts_today} 次 halt / kill 事件')
+    if auto_rows:
+        lines.append('\n<b>今日托管動作：</b>')
+        for r in auto_rows:
+            ctx = r.context or {}
+            lines.append(f"• {ctx.get('action')} #{ctx.get('strategy_id')}: {ctx.get('message', '')[:60]}")
+
+    _tg('\n'.join(lines), force=True)
+    return f'daily-summary sent: pnl={today_pnl:+.2f} auto={auto_count}'

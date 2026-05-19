@@ -81,7 +81,13 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         # 安全網：LIVE 模式絕不自動 retire（pause 已足夠）
         cfg = get_config()
         if cfg.get('trading_mode') == 'live':
-            return False, 'LIVE 模式禁止自動 retire — 請手動執行'
+            # Phase 10.9: 不再靜默 — 推 Telegram 告訴 user「該退役但跳過」
+            _telegram_safe(
+                f'⚠️ <b>智能托管建議退役但跳過（LIVE 模式安全網）</b>\n'
+                f'#{sid} {strategy.name}\n原因：{item.get("reason", "")[:200]}\n'
+                f'若同意，請手動到策略表 🪦 退役。'
+            )
+            return False, 'LIVE 模式禁止自動 retire — 已推 Telegram 提醒手動處理'
         if strategy.status == 'retired':
             return False, '已 retired'
         reason = f"auto: {item.get('reason', '')[:200]}"
@@ -100,7 +106,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         group = strategy.template_group
         existing = {s.symbol for s in Strategy.query.filter(Strategy.template_group == group).all()}
         base_name = re.sub(r'\s*\([A-Z]{2,6}\)\s*$', '', strategy.name).strip()
-        created = []
+        created_objs = []
         for sym in FAN_OUT_DEFAULTS:
             if sym not in SUPPORTED_SYMBOLS or sym == strategy.symbol or sym in existing:
                 continue
@@ -111,18 +117,29 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                 params=dict(strategy.params or {}),
                 symbol=sym,
                 timeframe=strategy.timeframe,
-                status='stopped',
+                status='stopped',   # 永遠 stopped 等回測決定
                 max_positions=strategy.max_positions,
                 max_daily_loss=strategy.max_daily_loss,
                 template_group=group,
             )
             db.session.add(clone)
+            db.session.flush()  # 拿 id
             existing.add(sym)
-            created.append(sym)
+            created_objs.append(clone)
         db.session.commit()
-        if not created:
+        if not created_objs:
             return False, '沒有可新增的兄弟（都已存在）'
-        return True, f'已建立 {len(created)} 個兄弟：{", ".join(created)}'
+
+        # Phase 10.9: 立刻排 Celery 回測 — 過門檻 + auto_start 才會啟動
+        # 兄弟間 60s 錯峰，避免同時打 OKX 觸發 429
+        from app.tasks.strategy_tasks import backtest_and_maybe_start
+        for i, c in enumerate(created_objs):
+            try:
+                backtest_and_maybe_start.apply_async(args=[c.id], countdown=i * 60)
+            except Exception:
+                pass
+        symbols_str = ', '.join(c.symbol for c in created_objs)
+        return True, f'已建立 {len(created_objs)} 個兄弟（{symbols_str}），已排回測 — 過門檻才會自動啟動'
 
     return False, f'未知 action: {action}'
 

@@ -409,6 +409,43 @@ export default function AdvisorPanel() {
               helperText="每天最多執行幾次自動 action（保險絲）。0 = 完全不執行（等效關閉）。"
               inputProps={{ min: 0, max: 100 }}
             />
+
+            <Divider sx={{ my: 2 }} />
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>📡 fan_out 兄弟自動啟動策略</Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={!!config?.fan_out_auto_start}
+                  onChange={(e) => saveAutoConfig({ fan_out_auto_start: e.target.checked })}
+                />
+              }
+              label={
+                <Typography variant="body2" fontWeight={600}>
+                  允許 fan_out 兄弟回測過門檻後自動 start
+                </Typography>
+              }
+            />
+            <Typography variant="caption" sx={{ display: 'block', ml: 4, color: 'text.secondary', mb: 1.5 }}>
+              關閉時：fan_out 兄弟永遠 stopped，要手動 ▶ 啟動<br />
+              開啟時：每個新兄弟立刻排 walk-forward 回測，OOS Sharpe ≥ 下方阈值才自動啟動，失敗推 Telegram
+            </Typography>
+            <TextField
+              label="兄弟啟動門檻（OOS Sharpe ≥）"
+              type="number"
+              size="small"
+              fullWidth
+              value={config?.fan_out_min_oos_sharpe ?? 1.0}
+              disabled={!config?.fan_out_auto_start}
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                if (!Number.isNaN(n) && n >= -5 && n <= 10) {
+                  saveAutoConfig({ fan_out_min_oos_sharpe: n });
+                }
+              }}
+              helperText="保守建議 1.0（不錯）；積極可降到 0.5；嚴格可拉到 1.5"
+              inputProps={{ min: -5, max: 10, step: 0.1 }}
+            />
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setAutoSettingsOpen(false)}>關閉</Button>

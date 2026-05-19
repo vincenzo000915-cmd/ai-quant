@@ -104,4 +104,18 @@ beat_schedule = {
         'schedule': crontab(minute='10', hour='*/4'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 10.9: 每週日 04:00 UTC 給所有 running 策略跑參數網格 ===
+    'weekly-auto-optimize': {
+        'task': 'app.tasks.strategy_tasks.auto_optimize_running_strategies',
+        'schedule': crontab(hour='4', minute='0', day_of_week='sun'),
+        'options': {'queue': 'default'},
+    },
+
+    # === Phase 10.9: 每天 23:00 UTC 推日報 Telegram ===
+    'daily-advisor-summary': {
+        'task': 'app.tasks.strategy_tasks.daily_advisor_summary',
+        'schedule': crontab(hour='23', minute='0'),
+        'options': {'queue': 'default'},
+    },
 }

@@ -36,6 +36,8 @@ DEFAULTS = {
     'auto_apply_enabled': False,
     'auto_apply_actions': [],
     'auto_apply_max_per_day': 5,
+    'fan_out_auto_start': False,
+    'fan_out_min_oos_sharpe': 1.0,
 }
 
 

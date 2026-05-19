@@ -1062,6 +1062,8 @@ def update_system_config():
             return jsonify({'error': f'auto_apply_actions 必須是 list，元素限：{sorted(allowed)}'}), 400
     if 'auto_apply_max_per_day' in patch and not (0 <= patch['auto_apply_max_per_day'] <= 100):
         return jsonify({'error': 'auto_apply_max_per_day 必須 [0, 100]'}), 400
+    if 'fan_out_min_oos_sharpe' in patch and not (-5 <= patch['fan_out_min_oos_sharpe'] <= 10):
+        return jsonify({'error': 'fan_out_min_oos_sharpe 必須 [-5, 10]'}), 400
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)
