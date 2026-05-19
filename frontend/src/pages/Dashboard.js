@@ -266,6 +266,21 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // 每秒拉一次 BTC ticker（輕量，只更新數字）
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(`${API}/api/market/btc-price`);
+        if (!r.ok || cancelled) return;
+        const json = await r.json();
+        if (!cancelled) setBtcPrice(json);
+      } catch { /* */ }
+    };
+    const id = setInterval(tick, 2000);   // 2s 已經足夠流暢，又不會壓垮 backend
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   const sortedPerf = useMemo(() => {
     return [...perfList].sort((a, b) => {
       // 1. 持倉中 > 沒持倉
@@ -586,13 +601,154 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* === Charts Row === */}
+      {/* === Top Row: BTC chart + 持倉概覽（用戶要求 BTC 在上、持倉同行）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
         <Grid item xs={12} md={8}>
-          <Box className="glass-card glow-border" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
-            <CornerDecor position="tl" color={C.primary} />
-            <CornerDecor position="tr" color={C.accent} />
+          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
+              <Box>
+                <Typography variant="overline" sx={{ color: 'text.secondary' }}>BTC · LIVE (1s refresh)</Typography>
+                <Typography
+                  className="num-mono"
+                  variant="h5"
+                  sx={{ fontWeight: 700, color: C.gold, fontSize: '1.6rem' }}
+                >
+                  ${(btcPrice?.price || 0).toLocaleString()}
+                </Typography>
+              </Box>
+              {btcPrice && (
+                <Box sx={{ textAlign: 'right' }}>
+                  <Typography variant="overline" sx={{ color: 'text.secondary' }}>24H</Typography>
+                  <Typography
+                    className="num-mono"
+                    sx={{
+                      fontSize: '1rem', fontWeight: 700,
+                      color: btcPrice.change_24h >= 0 ? C.success : C.error,
+                    }}
+                  >
+                    {btcPrice.change_24h >= 0 ? '+' : ''}{(btcPrice.change_24h || 0).toFixed(2)}%
+                  </Typography>
+                </Box>
+              )}
+            </Box>
 
+            <Box sx={{ height: 280 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={btcChart}>
+                  <defs>
+                    <linearGradient id="btcGradient2" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.4} />
+                      <stop offset="100%" stopColor={C.gold} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(99,102,241,0.08)" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    domain={['dataMin - 500', 'dataMax + 500']}
+                    tick={{ fontSize: 10, fill: C.textDim }}
+                    axisLine={false} tickLine={false}
+                    tickFormatter={v => `${(v / 1000).toFixed(1)}k`}
+                  />
+                  <ReTooltip formatter={(value) => [`$${value.toLocaleString()}`, 'BTC']} />
+                  <Area
+                    type="monotone" dataKey="price"
+                    stroke={C.gold}
+                    fill="url(#btcGradient2)"
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </Box>
+
+            {btcPrice && (
+              <Box sx={{
+                mt: 1.5, pt: 1.5, borderTop: `1px solid ${C.border}`,
+                display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1,
+              }}>
+                <Box>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>24H HIGH</Typography>
+                  <Typography className="num-mono" sx={{ fontSize: '0.85rem', fontWeight: 600, color: C.success }}>
+                    ${btcPrice.high_24h?.toLocaleString()}
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>24H LOW</Typography>
+                  <Typography className="num-mono" sx={{ fontSize: '0.85rem', fontWeight: 600, color: C.error }}>
+                    ${btcPrice.low_24h?.toLocaleString()}
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+          </Box>
+        </Grid>
+
+        <Grid item xs={12} md={4}>
+          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+              <Box>
+                <Typography variant="overline" sx={{ color: 'text.secondary' }}>OPEN POSITIONS</Typography>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
+                  [{positions.length}] LIVE
+                </Typography>
+              </Box>
+              <Typography className="num-mono" sx={{
+                fontSize: '0.95rem', fontWeight: 700,
+                color: positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0) >= 0 ? C.success : C.error,
+              }}>
+                {positions.length > 0 ? `${positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0) >= 0 ? '+' : ''}$${positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0).toFixed(2)}` : '—'}
+              </Typography>
+            </Box>
+            {positions.length === 0 ? (
+              <Box sx={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: 'text.secondary' }}>
+                <Typography variant="body2">無持倉</Typography>
+                <Typography variant="caption" sx={{ fontFamily: 'JetBrains Mono', fontSize: '0.7rem', mt: 0.5 }}>AWAITING SIGNAL</Typography>
+              </Box>
+            ) : (
+              <Box sx={{ maxHeight: 360, overflowY: 'auto' }}>
+                {positions.map((pos) => {
+                  const stratName = sortedPerf.find((p) => p.id === pos.strategy_id)?.name || `#${pos.strategy_id}`;
+                  const upnl = pos.unrealized_pnl || 0;
+                  const spread = pos.current_price && pos.entry_price
+                    ? ((pos.current_price - pos.entry_price) / pos.entry_price * 100)
+                    : 0;
+                  return (
+                    <Box key={pos.id} sx={{
+                      mb: 1, p: 1, borderRadius: 1,
+                      bgcolor: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.05)',
+                    }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem' }}>{stratName}</Typography>
+                        <Typography className="num-mono" sx={{
+                          fontSize: '0.85rem', fontWeight: 700,
+                          color: upnl >= 0 ? C.success : C.error,
+                        }}>
+                          {upnl >= 0 ? '+' : ''}${upnl.toFixed(2)}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.3 }}>
+                        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', fontFamily: 'JetBrains Mono' }}>
+                          {pos.side === 'long' ? '◤ L' : '◣ S'} {pos.size} @ ${pos.entry_price?.toFixed(0)}
+                        </Typography>
+                        <Typography className="num-mono" sx={{ fontSize: '0.65rem', color: spread >= 0 ? C.success : C.error }}>
+                          {spread >= 0 ? '+' : ''}{spread.toFixed(2)}%
+                        </Typography>
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
+          </Box>
+        </Grid>
+      </Grid>
+
+      {/* === PnL Row（從 Charts Row 移下來） === */}
+      <Grid container spacing={2} sx={{ mb: 2.5 }}>
+        <Grid item xs={12}>
+          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
               <Box>
                 <Typography variant="overline" sx={{ color: 'text.secondary' }}>累積 PNL · TIMESERIES 30D</Typography>
@@ -646,89 +802,6 @@ export default function Dashboard() {
                 </AreaChart>
               </ResponsiveContainer>
             </Box>
-          </Box>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
-            <CornerDecor position="tl" color={C.gold} />
-            <CornerDecor position="tr" color={C.gold} />
-
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
-              <Box>
-                <Typography variant="overline" sx={{ color: 'text.secondary' }}>BTC · LIVE</Typography>
-                <Typography
-                  className="num-mono glow-text-gold"
-                  variant="h5"
-                  sx={{ fontWeight: 700, color: C.gold, fontSize: '1.6rem' }}
-                >
-                  ${(btcPrice?.price || 0).toLocaleString()}
-                </Typography>
-              </Box>
-              {btcPrice && (
-                <Box sx={{ textAlign: 'right' }}>
-                  <Typography variant="overline" sx={{ color: 'text.secondary' }}>24H</Typography>
-                  <Typography
-                    className="num-mono"
-                    sx={{
-                      fontSize: '1rem', fontWeight: 700,
-                      color: btcPrice.change_24h >= 0 ? C.success : C.error,
-                    }}
-                  >
-                    {btcPrice.change_24h >= 0 ? '+' : ''}{(btcPrice.change_24h || 0).toFixed(2)}%
-                  </Typography>
-                </Box>
-              )}
-            </Box>
-
-            <Box sx={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={btcChart}>
-                  <defs>
-                    <linearGradient id="btcGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.gold} stopOpacity={0.4} />
-                      <stop offset="100%" stopColor={C.gold} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(99,102,241,0.08)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: C.textDim }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    domain={['dataMin - 500', 'dataMax + 500']}
-                    tick={{ fontSize: 9, fill: C.textDim }}
-                    axisLine={false} tickLine={false}
-                    tickFormatter={v => `${(v / 1000).toFixed(0)}k`}
-                  />
-                  <ReTooltip formatter={(value) => [`$${value.toLocaleString()}`, 'BTC']} />
-                  <Area
-                    type="monotone" dataKey="price"
-                    stroke={C.gold}
-                    fill="url(#btcGradient)"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </Box>
-
-            {btcPrice && (
-              <Box sx={{
-                mt: 1.5, pt: 1.5, borderTop: `1px solid ${C.border}`,
-                display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1,
-              }}>
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>24H HIGH</Typography>
-                  <Typography className="num-mono" sx={{ fontSize: '0.85rem', fontWeight: 600, color: C.success }}>
-                    ${btcPrice.high_24h?.toLocaleString()}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>24H LOW</Typography>
-                  <Typography className="num-mono" sx={{ fontSize: '0.85rem', fontWeight: 600, color: C.error }}>
-                    ${btcPrice.low_24h?.toLocaleString()}
-                  </Typography>
-                </Box>
-              </Box>
-            )}
           </Box>
         </Grid>
       </Grid>

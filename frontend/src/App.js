@@ -156,6 +156,8 @@ globalStyle.textContent = `
     z-index: 2;
   }
   .radar-pulse-ring {
+    /* 動畫已關閉以減少持續 repaint；保留靜態樣式 */
+    animation: none !important;
     position: absolute;
     width: 12px; height: 12px;
     top: 0; left: 0;
@@ -174,25 +176,14 @@ globalStyle.textContent = `
     position: relative;
   }
   .glow-border::after {
+    /* Phase 5.5+ — 移除了 shimmer 動畫（持續 repaint 影響整站效能）。
+       保留 class 兼容既有 markup，但只給靜態微邊框。 */
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      rgba(99, 102, 241, 0.5) 25%,
-      rgba(6, 182, 212, 0.6) 50%,
-      rgba(168, 85, 247, 0.5) 75%,
-      transparent 100%
-    );
-    background-size: 200% 100%;
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    animation: shimmer 4s linear infinite;
+    border: 1px solid rgba(99, 102, 241, 0.25);
     pointer-events: none;
   }
 
@@ -226,11 +217,12 @@ globalStyle.textContent = `
   }
 
   /* === 文字光暈 === */
-  .glow-text-primary { text-shadow: 0 0 24px rgba(99, 102, 241, 0.6), 0 0 48px rgba(99, 102, 241, 0.2); }
-  .glow-text-accent  { text-shadow: 0 0 24px rgba(6, 182, 212, 0.6), 0 0 48px rgba(6, 182, 212, 0.2); }
-  .glow-text-success { text-shadow: 0 0 24px rgba(34, 197, 94, 0.6), 0 0 48px rgba(34, 197, 94, 0.2); }
-  .glow-text-error   { text-shadow: 0 0 24px rgba(239, 68, 68, 0.6), 0 0 48px rgba(239, 68, 68, 0.2); }
-  .glow-text-gold    { text-shadow: 0 0 24px rgba(251, 191, 36, 0.5), 0 0 48px rgba(251, 191, 36, 0.2); }
+  /* 文字光暈降低 — 從雙層 24/48px 收成單層 12px 0.4 (效能 + 清晰兼顧) */
+  .glow-text-primary { text-shadow: 0 0 12px rgba(99, 102, 241, 0.4); }
+  .glow-text-accent  { text-shadow: 0 0 12px rgba(6, 182, 212, 0.4); }
+  .glow-text-success { text-shadow: 0 0 12px rgba(34, 197, 94, 0.4); }
+  .glow-text-error   { text-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+  .glow-text-gold    { text-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
 
   /* === Ticker 跑馬燈（GPU 加速）=== */
   @keyframes ticker-scroll {
@@ -240,8 +232,8 @@ globalStyle.textContent = `
   .ticker-content {
     display: inline-block;
     white-space: nowrap;
-    animation: ticker-scroll 80s linear infinite;
-    will-change: transform;
+    /* ticker-scroll 動畫已關閉 — 持續 transform 重繪影響整站效能 */
+    will-change: auto;
   }
 
   /* === 數據更新閃爍 === */
