@@ -18,6 +18,9 @@ class Strategy(db.Model):
     max_daily_loss = db.Column(db.Float, default=10.0)
     # Phase 4.6: 從候選池 promote 來的策略，連回 candidate 方便溯源
     candidate_id = db.Column(db.Integer, db.ForeignKey('strategy_candidates.id'), nullable=True)
+    # Phase 5.3: 自動退役紀錄 — status='retired' 時填入
+    retired_at = db.Column(db.DateTime, nullable=True)
+    retire_reason = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     updated_at = db.Column(db.DateTime, onupdate=datetime.datetime.utcnow)
 
@@ -40,6 +43,8 @@ class Strategy(db.Model):
             'max_positions': self.max_positions,
             'max_daily_loss': self.max_daily_loss,
             'candidate_id': self.candidate_id,
+            'retired_at': self.retired_at.isoformat() if self.retired_at else None,
+            'retire_reason': self.retire_reason,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

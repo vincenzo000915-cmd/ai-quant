@@ -48,4 +48,11 @@ beat_schedule = {
         'schedule': crontab(minute='*/5'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 5.3: 策略健康監控（每天 03:00 UTC，自動退役 Sharpe 衰退者）===
+    'monitor-strategy-health': {
+        'task': 'app.tasks.strategy_tasks.monitor_strategy_health',
+        'schedule': crontab(hour='3', minute='0'),
+        'options': {'queue': 'default'},
+    },
 }

@@ -260,3 +260,113 @@ def check_stop_loss():
             print(f'[sl] 檢查失敗: {e}')
 
     return f'觸發 {len(triggered)} 個' if triggered else '無觸發'
+
+
+# ===== Phase 5.3: 策略健康監控 / 自動退役 =====
+
+# 退役門檻（從 candidate_pipeline 借同一套）
+RETIRE_SHARPE_FULL = 0.3       # 全段 Sharpe 跌破這個 → 退役
+RETIRE_SHARPE_OOS = 0.0        # OOS Sharpe 跌破 0 → 真的不行了
+RETIRE_MIN_TRADES = 8          # 樣本不足就不退役（避免短期噪音誤判）
+
+
+@celery_app.task
+def monitor_strategy_health():
+    """每日跑 — 對每個 running 策略做新 walkforward 回測，跌穿門檻就自動退役。
+
+    退役 = status='retired' + retired_at + retire_reason，
+    跟 user 手動 'stopped' 區分。Position 不動（讓 SL/TP 自然觸發）。
+    """
+    from datetime import datetime
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.backtest_engine import run_walkforward_backtest
+    from app.services.strategy_engine import get_signal
+    from app.services.candidate_sandbox import load_signal_fn
+    from app.models import StrategyCandidate, BacktestResult
+
+    running = Strategy.query.filter_by(status='running').all()
+    if not running:
+        return 'no running strategies'
+
+    actions = []
+    for s in running:
+        try:
+            candles = fetch_ohlcv_history(s.symbol, s.timeframe, total_limit=2000)
+            if len(candles) < 200:
+                actions.append(f'{s.name}: 跳過 (K線不足 {len(candles)})')
+                continue
+
+            # candidate-backed 策略要動態載入 signal_fn
+            signal_fn = None
+            if s.candidate_id:
+                c = StrategyCandidate.query.get(s.candidate_id)
+                if c and c.parsed_signal and c.signal_fn_name:
+                    try:
+                        signal_fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+                    except Exception as e:
+                        actions.append(f'{s.name}: 跳過 (signal_fn 載入失敗: {e})')
+                        continue
+
+            wf = run_walkforward_backtest(
+                s.type, s.params or {}, candles,
+                timeframe=s.timeframe, signal_fn=signal_fn,
+            )
+
+            if wf.get('status') == 'error':
+                actions.append(f'{s.name}: 回測錯誤 {wf.get("error_message")}')
+                continue
+
+            full = wf['full']
+            oos = wf.get('out_sample') or {}
+            full_sh = full.get('sharpe_ratio')
+            oos_sh = oos.get('sharpe_ratio')
+            total_trades = full.get('total_trades', 0)
+
+            # 寫 BacktestResult 留檔（不論退不退）
+            bt = BacktestResult(
+                strategy_id=s.id, strategy_type=s.type,
+                params_snapshot=s.params or {}, symbol=s.symbol, timeframe=s.timeframe,
+                leverage=15.0, position_size_usdt=10.0,
+                stop_loss_pct=5.0, take_profit_pct=8.0, initial_capital=100.0,
+                period_start=full['period_start'], period_end=full['period_end'],
+                candle_count=full['candle_count'],
+                total_trades=full['total_trades'], winning_trades=full['winning_trades'],
+                losing_trades=full['losing_trades'], win_rate=full['win_rate'],
+                total_pnl=full['total_pnl'], avg_pnl=full['avg_pnl'],
+                avg_win=full['avg_win'], avg_loss=full['avg_loss'],
+                profit_factor=full['profit_factor'],
+                max_drawdown=full['max_drawdown'], max_drawdown_pct=full['max_drawdown_pct'],
+                sharpe_ratio=full_sh, final_equity=full['final_equity'],
+                annual_return_pct=full['annual_return_pct'],
+                equity_curve=full['equity_curve'], trades_json=full['trades'],
+                walkforward_json=wf, duration_ms=full['duration_ms'],
+                status='completed',
+            )
+            db.session.add(bt)
+
+            # 退役判斷
+            retire_reasons = []
+            if total_trades < RETIRE_MIN_TRADES:
+                # 樣本太少，不主動退役但記錄一下
+                pass
+            else:
+                if full_sh is not None and full_sh < RETIRE_SHARPE_FULL:
+                    retire_reasons.append(f'full Sharpe {full_sh:.2f} < {RETIRE_SHARPE_FULL}')
+                if oos_sh is not None and oos_sh < RETIRE_SHARPE_OOS:
+                    retire_reasons.append(f'OOS Sharpe {oos_sh:.2f} < {RETIRE_SHARPE_OOS}')
+
+            if retire_reasons:
+                s.status = 'retired'
+                s.retired_at = datetime.utcnow()
+                s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + '; '.join(retire_reasons)
+                actions.append(f'🔴 {s.name} retired: {", ".join(retire_reasons)}')
+            else:
+                actions.append(f'✅ {s.name} OK (full Sharpe={full_sh}, OOS={oos_sh}, trades={total_trades})')
+
+            db.session.commit()
+
+        except Exception as e:
+            db.session.rollback()
+            actions.append(f'{s.name}: EXCEPTION {type(e).__name__}: {e}')
+
+    return ' | '.join(actions)

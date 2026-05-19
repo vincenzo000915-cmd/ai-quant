@@ -282,20 +282,52 @@ export default function Strategies() {
                       <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>{strategy.symbol}</Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip
-                        label={strategy.active ? '運行中' : '已停止'}
-                        size="small"
-                        color={strategy.active ? 'success' : 'default'}
-                        sx={{ fontWeight: 600, fontSize: 10 }}
-                      />
+                      {strategy.status === 'retired' ? (
+                        <Tooltip title={strategy.retire_reason || '已自動退役'}>
+                          <Chip
+                            label="🪦 已退役"
+                            size="small"
+                            color="warning"
+                            sx={{ fontWeight: 600, fontSize: 10 }}
+                          />
+                        </Tooltip>
+                      ) : (
+                        <Chip
+                          label={strategy.active ? '運行中' : '已停止'}
+                          size="small"
+                          color={strategy.active ? 'success' : 'default'}
+                          sx={{ fontWeight: 600, fontSize: 10 }}
+                        />
+                      )}
                     </TableCell>
                     <TableCell align="right">
                       <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5 }}>
-                        <Tooltip title={strategy.active ? '停止' : '啟動'}>
-                          <IconButton size="small" color={strategy.active ? 'error' : 'success'} onClick={() => handleToggleActive(strategy)}>
-                            {strategy.active ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
-                          </IconButton>
-                        </Tooltip>
+                        {strategy.status === 'retired' ? (
+                          <Tooltip title="從退役狀態救回（變回已停止，需再次啟動）">
+                            <IconButton
+                              size="small"
+                              color="warning"
+                              onClick={async () => {
+                                if (!window.confirm(`救回「${strategy.name}」？\n退役原因：${strategy.retire_reason || '無'}`)) return;
+                                try {
+                                  await fetch(`${API}/api/strategies/${strategy.id}/revive`, { method: 'POST' });
+                                  setSnackbar({ open: true, message: '已救回為「已停止」', severity: 'success' });
+                                  loadStrategies();
+                                } catch (e) {
+                                  setSnackbar({ open: true, message: `失敗：${e.message}`, severity: 'error' });
+                                }
+                              }}
+                            >
+                              <RefreshIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip title={strategy.active ? '停止' : '啟動'}>
+                            <IconButton size="small" color={strategy.active ? 'error' : 'success'} onClick={() => handleToggleActive(strategy)}>
+                              {strategy.active ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         <Tooltip title="查看 / 跑回測">
                           <span>
                             <IconButton
@@ -335,9 +367,30 @@ export default function Strategies() {
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5 }}>
         <Typography variant="h5" fontWeight={700}>策略管理</Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Button variant="outlined" color="warning" size="small" onClick={fetchEstimate}>
             📊 收益估算
+          </Button>
+          <Button
+            variant="outlined"
+            color="info"
+            size="small"
+            onClick={async () => {
+              if (!window.confirm('立即跑健康檢查？對每個運行中的策略做新 walk-forward 回測（~5s/策略，可能 30-60s）。')) return;
+              try {
+                setLoading(true);
+                const r = await fetch(`${API}/api/strategies/health/check`, { method: 'POST' });
+                const body = await r.json();
+                setSnackbar({ open: true, message: body.result?.slice(0, 200) || '完成', severity: 'success' });
+                await fetchStrategies();
+              } catch (e) {
+                setSnackbar({ open: true, message: `失敗：${e.message}`, severity: 'error' });
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            🩺 健康檢查
           </Button>
           <Tooltip title="重新整理">
             <IconButton onClick={fetchStrategies} color="primary"><RefreshIcon /></IconButton>

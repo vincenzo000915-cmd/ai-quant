@@ -70,6 +70,32 @@ def stop_strategy(id):
     return jsonify(strategy.to_dict())
 
 
+@api_bp.route('/strategies/health/check', methods=['POST'])
+def strategies_health_check():
+    """Phase 5.3: 觸發一次健康檢查（async，丟給 Celery worker）。
+    完成後可在 Strategies 表看 status='retired' 的策略 + retire_reason。
+    """
+    from app.tasks.strategy_tasks import monitor_strategy_health
+    task = monitor_strategy_health.delay()
+    return jsonify({
+        'task_id': task.id,
+        'note': '已排入 Celery worker 跑（每策略 ~14s，9 個約 2 分鐘）。完成後重新整理頁面看結果。',
+    }), 202
+
+
+@api_bp.route('/strategies/<int:id>/revive', methods=['POST'])
+def revive_strategy(id):
+    """手動把 retired 策略救回 stopped 狀態（不直接 running，user 還要再啟）"""
+    strategy = Strategy.query.get_or_404(id)
+    if strategy.status != 'retired':
+        return jsonify({'error': f'status={strategy.status}, not retired'}), 400
+    strategy.status = 'stopped'
+    strategy.retired_at = None
+    strategy.retire_reason = None
+    db.session.commit()
+    return jsonify(strategy.to_dict())
+
+
 # ===== 持倉 =====
 
 @api_bp.route('/positions', methods=['GET'])
