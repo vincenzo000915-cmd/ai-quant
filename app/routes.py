@@ -596,6 +596,18 @@ def get_system_config():
     return jsonify(get_config())
 
 
+@api_bp.route('/auth/check', methods=['GET', 'POST'])
+def auth_check():
+    """Phase 8.1: 驗 Bearer token 有效性。GET 給未鉴权頁面用、POST 給登入頁用"""
+    from app.services.auth import check_token, _expected_token
+    if not _expected_token():
+        return jsonify({'enabled': False, 'note': '未設定 API_AUTH_TOKEN'})
+    ok, reason = check_token()
+    if ok:
+        return jsonify({'enabled': True, 'ok': True})
+    return jsonify({'enabled': True, 'ok': False, 'detail': reason}), 401
+
+
 @api_bp.route('/preflight', methods=['GET'])
 def preflight_check():
     """Phase 6.6: 切到 LIVE 前的檢查清單。慢（含 OKX/Telegram 實際呼叫），同步。"""

@@ -17,6 +17,10 @@ def create_app(config_class=Config):
         result_backend=config_class.CELERY_RESULT_BACKEND,
     )
 
+    # Phase 8.1: 鉴权 — 所有 mutating 請求要 Bearer token
+    from .services.auth import auth_guard
+    app.before_request(auth_guard)
+
     # 註冊路由
     from .routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')

@@ -2,11 +2,13 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import Layout from './components/Layout';
+import AuthGate from './components/AuthGate';
 import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';
 import Candidates from './pages/Candidates';
 import Trades from './pages/Trades';
 import Settings from './pages/Settings';
+import './auth';   // 全局 fetch wrap 副作用
 
 const globalStyle = document.createElement('style');
 globalStyle.textContent = `
@@ -440,16 +442,18 @@ export default function App() {
       <CssBaseline />
       <div className="global-scanline" />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="strategies" element={<Strategies />} />
-            <Route path="candidates" element={<Candidates />} />
-            <Route path="trades" element={<Trades />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-        </Routes>
+        <AuthGate>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<Dashboard />} />
+              <Route path="strategies" element={<Strategies />} />
+              <Route path="candidates" element={<Candidates />} />
+              <Route path="trades" element={<Trades />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+          </Routes>
+        </AuthGate>
       </BrowserRouter>
     </ThemeProvider>
   );
