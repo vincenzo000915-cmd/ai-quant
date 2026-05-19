@@ -497,6 +497,52 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
+      {/* === Phase 6.3 Kill Switch === */}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+        <Box
+          component="button"
+          onClick={async () => {
+            const yes1 = window.confirm('🆘 KILL SWITCH 會：\n• 停所有 running 策略\n• 強平所有 open positions（市價）\n• 設 halt 阻止新開倉\n\n確定？');
+            if (!yes1) return;
+            const txt = window.prompt('再次確認：請輸入大寫 KILL 才會執行');
+            if (txt !== 'KILL') {
+              alert('未輸入 KILL，已取消');
+              return;
+            }
+            const r = await fetch(`${API}/api/killswitch`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ confirm: 'KILL', reason: 'dashboard manual' }),
+            });
+            const body = await r.json();
+            alert(r.ok
+              ? `已執行：stop ${body.stopped_strategies?.length} 策略，平 ${body.closed_positions?.length} 持倉`
+              : `失敗：${body.error}`);
+            fetchData();
+          }}
+          sx={{
+            cursor: 'pointer',
+            border: '1.5px solid rgba(220, 38, 38, 0.7)',
+            background: 'linear-gradient(180deg, rgba(220,38,38,0.18) 0%, rgba(220,38,38,0.08) 100%)',
+            color: '#fecaca',
+            px: 1.5, py: 0.6,
+            borderRadius: 1,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: '0.7rem',
+            fontWeight: 800,
+            letterSpacing: 1.5,
+            '&:hover': {
+              background: 'rgba(220,38,38,0.3)',
+              borderColor: 'rgba(220,38,38,1)',
+              color: '#fff',
+              boxShadow: '0 0 12px rgba(220,38,38,0.6)',
+            },
+          }}
+        >
+          🆘 KILL SWITCH
+        </Box>
+      </Box>
+
       {/* === 警告斜紋條 === */}
       <Box className="warning-stripes" sx={{
         py: 0.75, px: 2, mb: 2.5,

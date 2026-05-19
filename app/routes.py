@@ -502,6 +502,21 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/killswitch', methods=['POST'])
+def killswitch():
+    """Phase 6.3: 緊急停 — stop 所有策略 + 強平所有持倉 + halt + 通知"""
+    from app.services.kill_switch import execute_kill_switch
+    data = request.get_json() or {}
+    reason = data.get('reason', 'manual')
+    if data.get('confirm') != 'KILL':
+        return jsonify({
+            'error': 'must POST {"confirm": "KILL", "reason": "..."}',
+            'note': '兩段確認防誤觸',
+        }), 400
+    result = execute_kill_switch(reason)
+    return jsonify(result), 200
+
+
 @api_bp.route('/telegram/test', methods=['POST'])
 def telegram_test():
     """Phase 6.2: 試送一則 Telegram 驗證 BOT_TOKEN / CHAT_ID 設定"""
