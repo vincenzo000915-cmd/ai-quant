@@ -20,6 +20,7 @@ import {
 } from 'recharts';
 import BTCChart from '../components/BTCChart';
 import RegimePanel from '../components/RegimePanel';
+import MTFConsensusPanel from '../components/MTFConsensusPanel';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -961,6 +962,9 @@ export default function Dashboard() {
 
       {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
       <RegimePanel />
+
+      {/* === Phase 10.4: 多時框一致性檢查 === */}
+      <MTFConsensusPanel />
 
       {/* === Phase 7.2: STRATEGY LIVE STATE — 每策略指標卡 === */}
       <StrategyLiveStateGrid C={C} />

@@ -252,6 +252,28 @@ def fan_out_strategy(id):
     }), 201
 
 
+@api_bp.route('/strategies/<int:id>/mtf', methods=['GET'])
+def strategy_mtf(id):
+    """Phase 10.4: multi-timeframe consensus check for one strategy."""
+    from app.services.mtf_consensus import mtf_check
+    strategy = Strategy.query.get_or_404(id)
+    tfs_param = request.args.get('tfs')
+    tfs = None
+    if tfs_param:
+        tfs = [t.strip() for t in tfs_param.split(',') if t.strip()]
+    return jsonify(mtf_check(strategy, tfs))
+
+
+@api_bp.route('/mtf/running', methods=['GET'])
+def mtf_for_running():
+    """Phase 10.4: MTF consensus for every running strategy."""
+    from app.services.mtf_consensus import mtf_check
+    running = Strategy.query.filter(Strategy.status == 'running').all()
+    return jsonify({
+        'strategies': [mtf_check(s) for s in running],
+    })
+
+
 @api_bp.route('/regime', methods=['GET'])
 def get_regime():
     """Phase 10.3: market regime (ADX + Hurst) for a single symbol+timeframe."""
