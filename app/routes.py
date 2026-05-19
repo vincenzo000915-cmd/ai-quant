@@ -528,6 +528,13 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/reconcile', methods=['POST'])
+def reconcile_now():
+    """Phase 8.2: 立即跑一次 OKX/local 對賬"""
+    from app.services.reconciliation import reconcile
+    return jsonify(reconcile())
+
+
 @api_bp.route('/anomaly/check', methods=['POST'])
 def anomaly_check_now():
     """Phase 6.4: 立即跑 anomaly detector"""

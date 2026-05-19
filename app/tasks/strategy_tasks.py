@@ -454,6 +454,19 @@ def auto_backtest_translated_candidates(max_count: int = 20):
 # ===== Phase 5.1: 自動爬蟲 + 翻譯 =====
 
 @celery_app.task
+def reconcile_okx_positions():
+    """Phase 8.2: 每 5 min 對賬本地 vs OKX SWAP 持倉"""
+    from app.services.reconciliation import reconcile
+    r = reconcile()
+    if not r.get('ok'):
+        return f'reconcile error: {r.get("error")}'
+    actions = r.get('actions', [])
+    if not actions:
+        return f'OK: OKX={r["okx_open_count"]} local={r["local_open_count"]}'
+    return f'reconcile: {len(actions)} action(s) — {[a["type"] for a in actions]}'
+
+
+@celery_app.task
 def monitor_anomalies():
     """Phase 6.4: flash crash + 持倉密度檢查"""
     from app.services.anomaly_detector import run_all_checks

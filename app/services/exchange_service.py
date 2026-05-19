@@ -236,6 +236,38 @@ def fetch_balance():
         raise Exception(f'獲取餘額失敗: {str(e)}')
 
 
+def fetch_okx_positions() -> list[dict]:
+    """Phase 8.2: 拉 OKX 真實 SWAP 持倉。回傳 [{inst_id, pos_contracts, side, avg_px, upl, ...}]
+    pos > 0 → long；pos < 0 → short；pos == 0 → 無持倉（OKX 仍會返回該 entry）。
+    """
+    import os
+    api_key = os.environ.get('EXCHANGE_API_KEY')
+    secret = os.environ.get('EXCHANGE_SECRET')
+    passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
+    if not (api_key and secret and passphrase):
+        raise RuntimeError('OKX credentials missing')
+
+    # 用 query string 過濾只看 SWAP
+    data = _okx_get_signed('/api/v5/account/positions?instType=SWAP', api_key, secret, passphrase)
+    result = []
+    for p in data:
+        pos = float(p.get('pos') or 0)
+        if pos == 0:
+            continue  # 無實際持倉的條目跳過
+        result.append({
+            'inst_id': p.get('instId'),
+            'pos_contracts': pos,
+            'side': 'long' if pos > 0 else 'short',
+            'avg_px': float(p.get('avgPx') or 0),
+            'upl': float(p.get('upl') or 0),
+            'lever': float(p.get('lever') or 0),
+            'mgn_mode': p.get('mgnMode'),
+            'pos_id': p.get('posId'),
+            'symbol': (p.get('instId') or '').replace('-SWAP', '').replace('-', '/'),
+        })
+    return result
+
+
 def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0) -> dict:
     """Phase 6.5: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
 

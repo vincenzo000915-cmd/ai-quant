@@ -90,4 +90,11 @@ beat_schedule = {
         'schedule': crontab(minute='*/5'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 8.2: 對賬本地 vs OKX 持倉，每 5 分鐘 ===
+    'reconcile-positions': {
+        'task': 'app.tasks.strategy_tasks.reconcile_okx_positions',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'default'},
+    },
 }
