@@ -21,6 +21,7 @@ import {
 import BTCChart from '../components/BTCChart';
 import RegimePanel from '../components/RegimePanel';
 import MTFConsensusPanel from '../components/MTFConsensusPanel';
+import AdvisorPanel from '../components/AdvisorPanel';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -959,6 +960,9 @@ export default function Dashboard() {
           </Box>
         </Grid>
       </Grid>
+
+      {/* === Phase 10.7: 综合操作建议（放最显眼） === */}
+      <AdvisorPanel />
 
       {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
       <RegimePanel />

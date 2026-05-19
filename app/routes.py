@@ -255,6 +255,13 @@ def fan_out_strategy(id):
     }), 201
 
 
+@api_bp.route('/advisor/recommendations', methods=['GET'])
+def advisor_recommendations():
+    """Phase 10.7: 综合所有 phase-10 诊断（相关性 + regime + MTF + 优化）生成建议。"""
+    from app.services.strategy_advisor import build_recommendations
+    return jsonify(build_recommendations())
+
+
 @api_bp.route('/strategies/<int:id>/mtf', methods=['GET'])
 def strategy_mtf(id):
     """Phase 10.4: multi-timeframe consensus check for one strategy."""
