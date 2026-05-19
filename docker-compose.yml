@@ -1,0 +1,77 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: quant
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: quant_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build: .
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      FLASK_ENV: production
+    env_file:
+      - .env
+    ports:
+      - "5005:5000"
+    command: >
+      sh -c "sleep 3 && gunicorn -k sync -w 2 -t 30 -b 0.0.0.0:5000 run:app"
+
+  celery-worker:
+    build: .
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    command: >
+      sh -c "sleep 5 && celery -A app.celery_app worker --loglevel=info --concurrency=4"
+
+  celery-beat:
+    build: .
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    command: >
+      sh -c "sleep 5 && celery -A app.celery_app beat --loglevel=info"
+
+volumes:
+  redis_data:
+  pg_data:

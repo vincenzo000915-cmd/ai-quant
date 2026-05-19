@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(/opt/quant/frontend/public/*)",
+      "Write(/opt/quant/frontend/src/*)",
+      "Write(/opt/quant/frontend/src/components/*)",
+      "Write(/opt/quant/frontend/src/pages/*)",
+      "Bash(mkdir *)"
+    ]
+  }
+}

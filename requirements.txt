@@ -1,0 +1,14 @@
+flask==3.0.0
+flask-socketio==5.3.6
+flask-cors==4.0.0
+flask-sqlalchemy==3.1.1
+celery==5.3.6
+redis==5.0.1
+psycopg2-binary==2.9.9
+ccxt==4.2.35
+pandas==2.1.4
+numpy==1.26.2
+ta==0.11.0
+gunicorn==21.2.0
+eventlet==0.33.3
+python-dotenv==1.0.0
