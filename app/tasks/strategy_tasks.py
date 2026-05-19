@@ -7,12 +7,18 @@ from app.models import Strategy, Position, Trade, Order, Candle
 from app.services.exchange_service import get_ticker
 from app.services.strategy_engine import get_signal, get_candle_df
 
-# ===== 模擬盤設定 =====
-SIMULATED_BALANCE = 100.0       # 模擬本金 $100
-LEVERAGE = 15                   # 15x 槓桿
-TRADE_SIZE_USDT = 10.0          # 每次下單 $10（$100 本金切 10 份，15x 槓桿 = $150 名義倉位/筆）
-STOP_LOSS_PCT = 5.0             # 5% 止損
-TAKE_PROFIT_PCT = 8.0           # 8% 止盈
+# ===== 模擬盤設定（fallback 值；實際從 SystemConfig 動態讀） =====
+SIMULATED_BALANCE = 100.0       # 仍保留以兼容舊 import；運行時看 config
+LEVERAGE = 15
+TRADE_SIZE_USDT = 10.0
+STOP_LOSS_PCT = 5.0
+TAKE_PROFIT_PCT = 8.0
+
+
+def _cfg():
+    """每個 task 入口呼叫一次，30s cache 內共用同一份 config"""
+    from app.services.config_service import get_config
+    return get_config()
 
 
 def _simulated_order(symbol, side, amount_usdt, price):
@@ -78,6 +84,13 @@ def _run_signals(strategy_id=None, category_filter=None):
     if not strategies:
         return '無運行中的策略'
 
+    # 讀一次 config，循環內共用
+    cfg = _cfg()
+    trade_size = cfg['trade_size_usdt']
+    lev = cfg['leverage']
+    sl_pct = cfg['stop_loss_pct']
+    tp_pct = cfg['take_profit_pct']
+
     results = []
     for s in strategies:
         try:
@@ -115,15 +128,15 @@ def _run_signals(strategy_id=None, category_filter=None):
             price = ticker['price']
 
             if signal in ('buy', 'long'):
-                # 計算倉位：$50 USDT / price = BTC數量
-                amount_btc = TRADE_SIZE_USDT / price
+                # 計算倉位：trade_size_usdt / price = BTC數量
+                amount_btc = trade_size / price
                 amount_btc = round(amount_btc, 6)
-                
-                # 名義倉位價值
-                notional = amount_btc * price * LEVERAGE
 
-                order = _simulated_order(s.symbol, 'buy', TRADE_SIZE_USDT, price)
-                
+                # 名義倉位價值
+                notional = amount_btc * price * lev
+
+                order = _simulated_order(s.symbol, 'buy', trade_size, price)
+
                 pos = Position(
                     strategy_id=s.id,
                     symbol=s.symbol,
@@ -137,15 +150,15 @@ def _run_signals(strategy_id=None, category_filter=None):
                 db.session.commit()
                 results.append(
                     f'✅ {s.name}: 模擬買入 {amount_btc} BTC @ ${price:.1f} '
-                    f'(本金${TRADE_SIZE_USDT:.0f}, 槓桿{LEVERAGE}x, '
+                    f'(本金${trade_size:.0f}, 槓桿{lev}x, '
                     f'名義${notional:.0f})'
                 )
 
             elif signal in ('sell', 'close') and position:
                 # 計算PnL
                 pnl_raw = (price - position.entry_price) * position.size
-                pnl_leveraged = pnl_raw * LEVERAGE
-                pnl_pct = ((price - position.entry_price) / position.entry_price) * 100 * LEVERAGE
+                pnl_leveraged = pnl_raw * lev
+                pnl_pct = ((price - position.entry_price) / position.entry_price) * 100 * lev
 
                 order = _simulated_order(s.symbol, 'sell', position.size * price, price)
                 
@@ -183,13 +196,14 @@ def _run_signals(strategy_id=None, category_filter=None):
 @celery_app.task
 def update_positions():
     """更新持倉當前價格和浮動盈虧（含槓桿）"""
+    lev = _cfg()['leverage']
     positions = Position.query.filter_by(status='open').all()
     for pos in positions:
         try:
             ticker = get_ticker(pos.symbol)
             pos.current_price = ticker['price']
             raw_pnl = (ticker['price'] - pos.entry_price) * pos.size
-            pos.unrealized_pnl = raw_pnl * LEVERAGE
+            pos.unrealized_pnl = raw_pnl * lev
         except Exception as e:
             print(f'[update] 持倉 {pos.id} 更新失敗: {e}')
     db.session.commit()
@@ -199,6 +213,11 @@ def update_positions():
 @celery_app.task
 def check_stop_loss():
     """檢查止損止盈（含槓桿）"""
+    cfg = _cfg()
+    lev = cfg['leverage']
+    sl_pct = cfg['stop_loss_pct']
+    tp_pct = cfg['take_profit_pct']
+
     positions = Position.query.filter_by(status='open').all()
     triggered = []
     for pos in positions:
@@ -206,11 +225,11 @@ def check_stop_loss():
             ticker = get_ticker(pos.symbol)
             current = ticker['price']
             raw_pnl_pct = ((current - pos.entry_price) / pos.entry_price) * 100
-            pnl_pct = raw_pnl_pct * LEVERAGE
+            pnl_pct = raw_pnl_pct * lev
 
-            if pnl_pct <= -STOP_LOSS_PCT:
+            if pnl_pct <= -sl_pct:
                 order = _simulated_order(pos.symbol, 'sell', pos.size * current, current)
-                pnl = raw_pnl_pct * pos.size * pos.entry_price * LEVERAGE / 100
+                pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
@@ -232,9 +251,9 @@ def check_stop_loss():
                 db.session.commit()
                 triggered.append(f'{pos.symbol} 止損 @ ${current:.1f} ({pnl_pct:.1f}%)')
 
-            elif pnl_pct >= TAKE_PROFIT_PCT:
+            elif pnl_pct >= tp_pct:
                 order = _simulated_order(pos.symbol, 'sell', pos.size * current, current)
-                pnl = raw_pnl_pct * pos.size * pos.entry_price * LEVERAGE / 100
+                pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,

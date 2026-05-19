@@ -67,6 +67,7 @@ const TIMEFRAMES = ['15m', '1h', '4h', '1d'];
 
 export default function Strategies() {
   const [strategies, setStrategies] = useState([]);
+  const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState(null);
@@ -155,6 +156,7 @@ export default function Strategies() {
 
   useEffect(() => {
     fetchStrategies();
+    fetch(`${API}/api/config`).then(r => r.json()).then(setConfig).catch(() => {});
   }, [fetchStrategies]);
 
   const handleOpenDialog = (strategy = null) => {
@@ -410,15 +412,22 @@ export default function Strategies() {
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={6} sm={3}>
               <Typography variant="caption" color="text.secondary">模擬本金</Typography>
-              <Typography variant="h6" fontWeight={700} color="primary">$100</Typography>
+              <Typography variant="h6" fontWeight={700} color="primary">${config?.capital_usdt ?? '—'}</Typography>
             </Grid>
             <Grid item xs={6} sm={3}>
               <Typography variant="caption" color="text.secondary">槓桿倍數</Typography>
-              <Typography variant="h6" fontWeight={700} color="warning.main">15x</Typography>
+              <Typography variant="h6" fontWeight={700} color="warning.main">{config?.leverage ?? '—'}x</Typography>
             </Grid>
             <Grid item xs={6} sm={3}>
               <Typography variant="caption" color="text.secondary">每單倉位</Typography>
-              <Typography variant="h6" fontWeight={700} color="success.main">$50 (50%)</Typography>
+              <Typography variant="h6" fontWeight={700} color="success.main">
+                ${config?.trade_size_usdt ?? '—'}
+                {config && config.capital_usdt > 0 && (
+                  <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                    ({(config.trade_size_usdt / config.capital_usdt * 100).toFixed(0)}%)
+                  </Typography>
+                )}
+              </Typography>
             </Grid>
             <Grid item xs={6} sm={3}>
               <Typography variant="caption" color="text.secondary">運行策略</Typography>

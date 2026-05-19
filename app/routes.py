@@ -502,6 +502,42 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/config', methods=['GET'])
+def get_system_config():
+    """系統設定 — capital / leverage / trade_size / SL/TP / 模式 (paper|live)"""
+    from app.services.config_service import get_config
+    return jsonify(get_config())
+
+
+@api_bp.route('/config', methods=['PUT'])
+def update_system_config():
+    """部分更新 system_config。
+    寫 trading_mode='live' 會被擋 — Phase 6 風控完成前不允許實盤。
+    """
+    from app.services.config_service import update, DEFAULTS
+    data = request.get_json() or {}
+    # 過濾未知 key
+    patch = {k: v for k, v in data.items() if k in DEFAULTS}
+    # 安全鎖：實盤模式暫不開放
+    if patch.get('trading_mode') == 'live':
+        return jsonify({
+            'error': 'live trading is locked until Phase 6 (live-risk safeguards: daily loss cap, anomaly detect, kill-switch, Telegram alerts).',
+            'hint': '改用 trading_mode=paper 繼續模擬盤',
+        }), 403
+    # 範圍守衛
+    if 'leverage' in patch and not (1 <= patch['leverage'] <= 100):
+        return jsonify({'error': 'leverage out of range [1,100]'}), 400
+    if 'capital_usdt' in patch and patch['capital_usdt'] <= 0:
+        return jsonify({'error': 'capital_usdt must be > 0'}), 400
+    if 'trade_size_usdt' in patch and patch['trade_size_usdt'] <= 0:
+        return jsonify({'error': 'trade_size_usdt must be > 0'}), 400
+    if 'stop_loss_pct' in patch and not (0 < patch['stop_loss_pct'] <= 50):
+        return jsonify({'error': 'stop_loss_pct out of range (0,50]'}), 400
+    if 'take_profit_pct' in patch and not (0 < patch['take_profit_pct'] <= 200):
+        return jsonify({'error': 'take_profit_pct out of range (0,200]'}), 400
+    return jsonify(update(patch))
+
+
 @api_bp.route('/simulation/estimate', methods=['GET'])
 def estimate_returns():
     """模擬盤預期收益估算 — 改用真實 backtest 數據（Phase 3 後）"""

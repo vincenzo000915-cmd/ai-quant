@@ -208,6 +208,7 @@ export default function Dashboard() {
   const [pnlData, setPnlData] = useState([]);
   const [pnlSummary, setPnlSummary] = useState(null);
   const [perfList, setPerfList] = useState([]);
+  const [cfg, setCfg] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const sysStats = useSystemStats();
@@ -215,13 +216,14 @@ export default function Dashboard() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [acctRes, priceRes, posRes, pnlHistRes, pnlSumRes, perfRes] = await Promise.allSettled([
+      const [acctRes, priceRes, posRes, pnlHistRes, pnlSumRes, perfRes, cfgRes] = await Promise.allSettled([
         fetch(`${API}/api/account`),
         fetch(`${API}/api/market/btc-price`),
         fetch(`${API}/api/positions`),
         fetch(`${API}/api/pnl/history?days=30`),
         fetch(`${API}/api/pnl/summary`),
         fetch(`${API}/api/strategies/performance`),
+        fetch(`${API}/api/config`),
       ]);
 
       if (acctRes.status === 'fulfilled' && acctRes.value.ok) setAccount(await acctRes.value.json());
@@ -240,6 +242,9 @@ export default function Dashboard() {
       if (perfRes.status === 'fulfilled' && perfRes.value.ok) {
         const json = await perfRes.value.json();
         setPerfList(Array.isArray(json) ? json : []);
+      }
+      if (cfgRes.status === 'fulfilled' && cfgRes.value.ok) {
+        setCfg(await cfgRes.value.json());
       }
 
       try {
@@ -501,7 +506,11 @@ export default function Dashboard() {
       }}>
         <WarningAmberIcon sx={{ fontSize: 18, color: C.warnYellow, filter: `drop-shadow(0 0 6px ${C.warnYellow})` }} />
         <Typography variant="caption" sx={{ color: '#fff', fontWeight: 700, letterSpacing: 1, flexGrow: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem' }}>
-          ⚠ HIGH LEVERAGE ZONE · 15× · POSITION SIZE $10 (1/10 OF $100 EQUITY) · MAX LOSS PER TRADE 5% · MAX GAIN 8% · NOT FINANCIAL ADVICE
+          {cfg ? (
+            <>
+              {(cfg.trading_mode || 'paper').toUpperCase()} MODE · {cfg.leverage}× LEV · ${cfg.trade_size_usdt}/TRADE · {cfg.capital_usdt > 0 ? `${(cfg.trade_size_usdt / cfg.capital_usdt * 100).toFixed(0)}% EQUITY` : ''} · SL −{cfg.stop_loss_pct}% / TP +{cfg.take_profit_pct}% · NOT FINANCIAL ADVICE
+            </>
+          ) : '⚠ HIGH LEVERAGE ZONE · LOADING CONFIG…'}
         </Typography>
       </Box>
 

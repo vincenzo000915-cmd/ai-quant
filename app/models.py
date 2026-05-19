@@ -263,6 +263,36 @@ class BacktestResult(db.Model):
         return d
 
 
+class SystemConfig(db.Model):
+    """單一行設定 (id=1) — paper/live 模式、本金、倉位、槓桿、SL/TP 等。
+
+    用 row pattern 而不是 key/value，因為欄位有強型別、好查、好寫 migration。
+    """
+    __tablename__ = 'system_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    trading_mode = db.Column(db.String(10), default='paper')  # 'paper' | 'live'（live 暫鎖）
+    capital_usdt = db.Column(db.Float, default=100.0)         # 模擬本金 / 真實本金
+    leverage = db.Column(db.Float, default=15.0)
+    trade_size_usdt = db.Column(db.Float, default=10.0)       # 每筆下單金額
+    stop_loss_pct = db.Column(db.Float, default=5.0)          # 槓桿後的 PnL %
+    take_profit_pct = db.Column(db.Float, default=8.0)
+    max_daily_loss_usdt = db.Column(db.Float, default=10.0)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'trading_mode': self.trading_mode,
+            'capital_usdt': self.capital_usdt,
+            'leverage': self.leverage,
+            'trade_size_usdt': self.trade_size_usdt,
+            'stop_loss_pct': self.stop_loss_pct,
+            'take_profit_pct': self.take_profit_pct,
+            'max_daily_loss_usdt': self.max_daily_loss_usdt,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class StrategyCandidate(db.Model):
     """策略候選池 — 來自爬蟲（TradingView / GitHub）+ LLM 翻譯的策略，待回測 / 待 promote"""
     __tablename__ = 'strategy_candidates'
