@@ -570,21 +570,43 @@ def get_system_config():
     return jsonify(get_config())
 
 
+@api_bp.route('/preflight', methods=['GET'])
+def preflight_check():
+    """Phase 6.6: 切到 LIVE 前的檢查清單。慢（含 OKX/Telegram 實際呼叫），同步。"""
+    from app.services.preflight import run_preflight
+    return jsonify(run_preflight())
+
+
 @api_bp.route('/config', methods=['PUT'])
 def update_system_config():
     """部分更新 system_config。
-    寫 trading_mode='live' 會被擋 — Phase 6 風控完成前不允許實盤。
+    寫 trading_mode='live' 需要：
+      1. Body 帶 confirm_live=True（防誤觸）
+      2. Pre-flight 全過
+      3. 風控任務都註冊 + 不在 halted 狀態
     """
     from app.services.config_service import update, DEFAULTS
     data = request.get_json() or {}
     # 過濾未知 key
     patch = {k: v for k, v in data.items() if k in DEFAULTS}
-    # 安全鎖：實盤模式暫不開放
+
+    # 切 LIVE 流程
     if patch.get('trading_mode') == 'live':
-        return jsonify({
-            'error': 'live trading is locked until Phase 6 (live-risk safeguards: daily loss cap, anomaly detect, kill-switch, Telegram alerts).',
-            'hint': '改用 trading_mode=paper 繼續模擬盤',
-        }), 403
+        if not data.get('confirm_live'):
+            return jsonify({
+                'error': 'must POST {"trading_mode":"live", "confirm_live": true}',
+                'hint': '先打 GET /api/preflight 確認所有檢查通過，再帶 confirm_live=true',
+            }), 400
+        from app.services.preflight import run_preflight
+        pf = run_preflight()
+        if not pf['ok']:
+            return jsonify({
+                'error': 'pre-flight failed — 不允許切 LIVE',
+                'preflight': pf,
+            }), 403
+        # 通過，附帶記錄上鎖時間
+        from app.services.telegram_service import send as _tg
+        _tg('🟢 <b>TRADING MODE → LIVE</b>\nPre-flight 全過。實盤已啟動。\n下單會直接走 OKX。', force=True)
     # 範圍守衛
     if 'leverage' in patch and not (1 <= patch['leverage'] <= 100):
         return jsonify({'error': 'leverage out of range [1,100]'}), 400

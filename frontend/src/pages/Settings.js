@@ -3,12 +3,15 @@ import {
   Box, Typography, Card, CardContent, Button, Grid,
   Divider, Alert, Switch, FormControlLabel, Chip,
   TextField, InputAdornment, CircularProgress,
-  Tooltip, Stack,
+  Tooltip, Stack, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem, ListItemIcon, ListItemText,
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -93,7 +96,7 @@ export default function Settings() {
       {/* === Trading Mode === */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Stack direction="row" alignItems="center" spacing={2} sx={{ flexWrap: 'wrap', gap: 1 }}>
+          <Stack direction="row" alignItems="center" spacing={2} sx={{ flexWrap: 'wrap', gap: 1, mb: 2 }}>
             <Typography variant="subtitle1" fontWeight={700}>交易模式</Typography>
             <Chip
               icon={isLive ? <WarningAmberIcon /> : <ScienceIcon />}
@@ -102,27 +105,37 @@ export default function Settings() {
               variant="filled"
             />
             <Box sx={{ flexGrow: 1 }} />
-            <Tooltip title="Phase 6 風控完成前實盤鎖定 — 改 PUT /api/config 也會被 403 拒。">
-              <span>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={isLive}
-                      disabled
-                      onChange={() => {}}
-                    />
-                  }
-                  label={<Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}><LockIcon fontSize="small" /><Typography variant="caption">切實盤（Phase 6 開放）</Typography></Box>}
-                />
-              </span>
-            </Tooltip>
+            {!isLive ? (
+              <PreflightUnlock onLiveActivated={async () => { await load(); }} />
+            ) : (
+              <Button
+                variant="outlined" color="warning"
+                onClick={async () => {
+                  if (!window.confirm('切回 PAPER 模式？已開倉位繼續管理（不平倉），但新信號改走模擬。')) return;
+                  setSaving(true);
+                  try {
+                    const r = await fetch(`${API}/api/config`, {
+                      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ trading_mode: 'paper' }),
+                    });
+                    const body = await r.json();
+                    if (!r.ok) throw new Error(body.error || JSON.stringify(body));
+                    setCfg(body); setOriginal(body);
+                    setMsg({ type: 'success', text: '已切回 PAPER。' });
+                  } catch (e) {
+                    setMsg({ type: 'error', text: e.message });
+                  } finally { setSaving(false); }
+                }}
+              >
+                切回 PAPER
+              </Button>
+            )}
           </Stack>
-          {!isLive && (
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              模擬盤：用 OKX 真實價格 + 規則平倉，但不發送真實下單。所有 PnL 都進 trades 表，不過是紙上的。
-              實盤要等 Phase 6 補風控（單日虧損、緊急停、異常檢測、Telegram alert）才會開放。
-            </Typography>
-          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {isLive ?
+              '⚠️ 實盤運行中。下單會真實發送到 OKX swap (BTC-USDT-SWAP, cross margin)。Telegram 會推送每筆開平倉。' :
+              '模擬盤：用 OKX 真實價格 + 規則平倉，不發送真實下單。切 LIVE 需通過 pre-flight 檢查。'}
+          </Typography>
         </CardContent>
       </Card>
 
@@ -186,5 +199,137 @@ export default function Settings() {
         </Button>
       </Stack>
     </Box>
+  );
+}
+
+
+function PreflightUnlock({ onLiveActivated }) {
+  const [open, setOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [activating, setActivating] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const runChecks = async () => {
+    setRunning(true);
+    setErr(null);
+    try {
+      const r = await fetch(`${API}/api/preflight`);
+      const body = await r.json();
+      setResult(body);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const activate = async () => {
+    if (!result?.ok) return;
+    const final = window.prompt(
+      `⚠️ 確定切到實盤？\n下單會用真金白銀打 OKX。\n\n輸入大寫 GO LIVE 確認：`,
+    );
+    if (final !== 'GO LIVE') {
+      alert('未輸入正確 phrase，已取消');
+      return;
+    }
+    setActivating(true);
+    try {
+      const r = await fetch(`${API}/api/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_mode: 'live', confirm_live: true }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || JSON.stringify(body));
+      setOpen(false);
+      setResult(null);
+      onLiveActivated && onLiveActivated();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        variant="outlined"
+        color="error"
+        startIcon={<FlightTakeoffIcon />}
+        onClick={() => { setOpen(true); setResult(null); setErr(null); }}
+      >
+        切實盤 (pre-flight)
+      </Button>
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <FlightTakeoffIcon color="error" />
+            <Typography variant="h6">切到 LIVE — Pre-flight 檢查</Typography>
+          </Stack>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            點下方「跑檢查」會打 OKX + Telegram 真實 API，確認憑證、權限、風控任務都備好。
+            全綠才能切實盤。任何一條紅都要先修。
+          </Typography>
+          {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+
+          {!result && (
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={runChecks}
+              disabled={running}
+              startIcon={running ? <CircularProgress size={16} /> : null}
+            >
+              {running ? '檢查中…（10-30 秒）' : '跑檢查'}
+            </Button>
+          )}
+
+          {result && (
+            <Box>
+              <Alert severity={result.ok ? 'success' : 'warning'} sx={{ mb: 2 }}>
+                {result.pass_count} / {result.total} 通過
+                {result.ok ? ' — 可以切實盤' : ' — 仍有檢查未通過'}
+              </Alert>
+              <List dense>
+                {result.checks.map((c, i) => (
+                  <ListItem key={i}>
+                    <ListItemIcon sx={{ minWidth: 32 }}>
+                      {c.ok ? <CheckCircleIcon color="success" fontSize="small" /> : <CancelIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={c.name}
+                      secondary={c.message}
+                      primaryTypographyProps={{ fontWeight: c.ok ? 500 : 700, color: c.ok ? 'text.primary' : 'error.main' }}
+                      secondaryTypographyProps={{ fontSize: '0.75rem' }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>取消</Button>
+          {result && (
+            <>
+              <Button onClick={runChecks} disabled={running}>重跑檢查</Button>
+              <Button
+                variant="contained"
+                color="error"
+                disabled={!result.ok || activating}
+                onClick={activate}
+                startIcon={activating ? <CircularProgress size={16} /> : <FlightTakeoffIcon />}
+              >
+                {activating ? '切換中…' : '🚀 確定切實盤'}
+              </Button>
+            </>
+          )}
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }
