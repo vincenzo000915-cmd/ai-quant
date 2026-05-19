@@ -298,6 +298,10 @@ class SystemConfig(db.Model):
     atr_sl_mult = db.Column(db.Float, default=2.0)           # SL 距離 = k × ATR
     atr_tp_mult = db.Column(db.Float, default=3.0)           # TP 距離 = k × ATR
 
+    # Phase 9.5: 回測滑點 + 手續費（live 不用，OKX 自動扣）
+    backtest_slippage_pct = db.Column(db.Float, default=0.05)   # 每側 0.05% 估算市價單滑點
+    backtest_fee_pct = db.Column(db.Float, default=0.05)        # OKX SWAP taker = 0.05%/side
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -320,6 +324,8 @@ class SystemConfig(db.Model):
             'atr_period': self.atr_period,
             'atr_sl_mult': self.atr_sl_mult,
             'atr_tp_mult': self.atr_tp_mult,
+            'backtest_slippage_pct': self.backtest_slippage_pct,
+            'backtest_fee_pct': self.backtest_fee_pct,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

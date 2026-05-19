@@ -30,6 +30,8 @@ DEFAULTS = {
     'atr_period': 14,
     'atr_sl_mult': 2.0,
     'atr_tp_mult': 3.0,
+    'backtest_slippage_pct': 0.05,
+    'backtest_fee_pct': 0.05,
 }
 
 

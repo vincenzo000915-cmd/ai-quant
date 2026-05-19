@@ -110,9 +110,10 @@ def run_backtest(
     stop_loss_pct: float = 5.0,
     take_profit_pct: float = 8.0,
     initial_capital: float = 100.0,
-    fee_pct: float = 0.1,   # 0.1% taker fee per side
-    warmup: int = 60,       # 暖機 K 線數量（給指標累積足夠資料）
-    signal_fn=None,         # Phase 4: 傳入 callable(df, params) → 'buy'/'sell'/'hold'，覆寫 strategy_type 查表
+    fee_pct: float = 0.05,         # OKX SWAP taker per side (Phase 9.5)
+    slippage_pct: float = 0.05,    # 市價單估算滑點 per fill (Phase 9.5)
+    warmup: int = 60,
+    signal_fn=None,
 ):
     """跑單一策略的完整回測
 
@@ -130,6 +131,13 @@ def run_backtest(
 
     # 預先排序
     candles = sorted(candles, key=lambda c: c['timestamp'])
+
+    # Phase 9.5: 滑點 — entry 往不利方向偏，exit 也往不利方向
+    slip = slippage_pct / 100.0
+    def entry_fill(price, side):
+        return price * (1 + slip) if side == 'long' else price * (1 - slip)
+    def exit_fill(price, side):
+        return price * (1 - slip) if side == 'long' else price * (1 + slip)
 
     equity = initial_capital
     position = None  # { entry_price, size_btc, opened_idx, opened_ts }
@@ -157,6 +165,13 @@ def run_backtest(
                 close_reason = 'take_profit'
 
             if close_reason:
+                # 重算 raw_pct 用 filled exit price（之前的 raw_pct 用 raw price）
+                filled_exit = exit_fill(price, position['side'])
+                if position['side'] == 'short':
+                    raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
+                else:
+                    raw_pct = (filled_exit - position['entry_price']) / position['entry_price'] * 100
+                pnl_pct = raw_pct * leverage
                 pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
                 fee = position_size_usdt * (fee_pct / 100) * 2  # 開倉 + 平倉
                 pnl_net = pnl - fee
@@ -165,7 +180,7 @@ def run_backtest(
                     'entry_ts': position['opened_ts'],
                     'exit_ts': ts,
                     'entry_price': position['entry_price'],
-                    'exit_price': price,
+                    'exit_price': filled_exit,
                     'size': position['size_btc'],
                     'side': position['side'],
                     'pnl': round(pnl_net, 4),
@@ -195,11 +210,13 @@ def run_backtest(
         if position is None:
             # 開倉
             if is_buy or is_sell:
-                size_btc = round(position_size_usdt / price, 6)
+                side_open = 'long' if is_buy else 'short'
+                filled_entry = entry_fill(price, side_open)
+                size_btc = round(position_size_usdt / filled_entry, 6)
                 position = {
-                    'entry_price': price,
+                    'entry_price': filled_entry,
                     'size_btc': size_btc,
-                    'side': 'long' if is_buy else 'short',
+                    'side': side_open,
                     'opened_idx': i,
                     'opened_ts': ts,
                 }
@@ -211,10 +228,11 @@ def run_backtest(
                 signal == 'close'
             )
             if should_close:
+                filled_exit = exit_fill(price, position['side'])
                 if position['side'] == 'short':
-                    raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+                    raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
                 else:
-                    raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+                    raw_pct = (filled_exit - position['entry_price']) / position['entry_price'] * 100
                 pnl_pct = raw_pct * leverage
                 pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
                 fee = position_size_usdt * (fee_pct / 100) * 2
@@ -224,7 +242,7 @@ def run_backtest(
                     'entry_ts': position['opened_ts'],
                     'exit_ts': ts,
                     'entry_price': position['entry_price'],
-                    'exit_price': price,
+                    'exit_price': filled_exit,
                     'size': position['size_btc'],
                     'side': position['side'],
                     'pnl': round(pnl_net, 4),
@@ -254,10 +272,11 @@ def run_backtest(
     if position:
         last = candles[-1]
         price = last['close']
+        filled_exit = exit_fill(price, position['side'])
         if position['side'] == 'short':
-            raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+            raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
         else:
-            raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+            raw_pct = (filled_exit - position['entry_price']) / position['entry_price'] * 100
         pnl_pct = raw_pct * leverage
         pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
         fee = position_size_usdt * (fee_pct / 100) * 2
@@ -267,7 +286,7 @@ def run_backtest(
             'entry_ts': position['opened_ts'],
             'exit_ts': last['timestamp'],
             'entry_price': position['entry_price'],
-            'exit_price': price,
+            'exit_price': filled_exit,
             'size': position['size_btc'],
             'side': position['side'],
             'pnl': round(pnl_net, 4),

@@ -229,9 +229,13 @@ def _run_strategy_backtest(strategy, candle_limit=2000):
     from app.services.backtest_engine import run_backtest
 
     candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=candle_limit)
+    from app.services.config_service import get_config as _gc
+    cfg = _gc()
     result = run_backtest(
         strategy.type, strategy.params or {}, candles,
         timeframe=strategy.timeframe,
+        slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
+        fee_pct=cfg.get('backtest_fee_pct', 0.05),
     )
 
     if result.get('status') == 'error':

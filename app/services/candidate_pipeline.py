@@ -142,12 +142,17 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
 
     # Phase 5.4: walk-forward 取代單段回測
     try:
+        # Phase 9.5: 帶上 cfg 的 slippage/fee
+        from app.services.config_service import get_config
+        cfg = get_config()
         wf = run_walkforward_backtest(
             c.candidate_type or 'candidate',
             c.default_params or {},
             candles,
             timeframe=timeframe,
             signal_fn=signal_fn,
+            slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
+            fee_pct=cfg.get('backtest_fee_pct', 0.05),
         )
     except Exception as e:
         c.status = 'error'
