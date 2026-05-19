@@ -170,6 +170,91 @@ Produce the `<output>` JSON now."""
 _OUTPUT_RE = re.compile(r'<output>\s*(\{.*?\})\s*</output>', re.DOTALL)
 
 
+def build_full_prompt(*, raw_code: str, raw_lang: str = 'python',
+                      source_name: str = 'unknown', source_author: str = 'unknown',
+                      source_url: str = '') -> str:
+    """把 SYSTEM_PROMPT + USER_TEMPLATE 串成一條給 CLI/外部 LLM 用的純文字 prompt。"""
+    user_msg = USER_TEMPLATE.format(
+        raw_lang=raw_lang or 'python',
+        source_name=source_name or 'unknown',
+        source_author=source_author or 'unknown',
+        source_url=source_url or '',
+        raw_code=(raw_code or '')[:30000],
+    )
+    return SYSTEM_PROMPT + '\n\n' + user_msg
+
+
+def build_prompt_for_candidate(candidate_id: int) -> dict:
+    """從 DB 抓出 candidate，組好 prompt 文字（host 端會用這個）"""
+    from app.models import StrategyCandidate
+    c = StrategyCandidate.query.get(candidate_id)
+    if c is None:
+        raise LLMTranslatorError(f'candidate {candidate_id} not found')
+    if not c.raw_code or not c.raw_code.strip():
+        raise LLMTranslatorError(f'candidate {candidate_id} has no raw_code')
+    return {
+        'candidate_id': c.id,
+        'source_name': c.source_name or 'unknown',
+        'raw_lang': c.raw_lang or 'python',
+        'prompt': build_full_prompt(
+            raw_code=c.raw_code,
+            raw_lang=c.raw_lang or 'python',
+            source_name=c.source_name or 'unknown',
+            source_author=c.source_author or 'unknown',
+            source_url=c.source_url or '',
+        ),
+    }
+
+
+def save_translation_for_candidate(candidate_id: int, raw_output: str, model_label: str = 'claude-cli') -> dict:
+    """收到 CLI/外部 LLM 的回應後，解析 + 沙箱驗證 + 寫回 DB。
+    跟 candidate_pipeline.translate_and_verify 共用後段邏輯，只是不調 SDK。
+    """
+    from app.extensions import db
+    from app.models import StrategyCandidate
+    from app.services.candidate_sandbox import verify_signal_fn
+
+    c = StrategyCandidate.query.get(candidate_id)
+    if c is None:
+        return {'ok': False, 'error': f'candidate {candidate_id} not found'}
+
+    # 解析
+    try:
+        parsed = _parse_output(raw_output)
+    except LLMTranslatorError as e:
+        c.status = 'error'
+        c.error_log = f'parse: {e}'
+        db.session.commit()
+        return {'ok': False, 'error': str(e), 'candidate': c.to_dict()}
+
+    # 沙箱驗證
+    verify = verify_signal_fn(
+        source=parsed['signal_fn_source'],
+        fn_name=parsed['signal_fn_name'],
+        default_params=parsed.get('default_params') or {},
+    )
+    # 先寫入翻譯產物（即使沙箱失敗也保留，方便 debug）
+    c.parsed_signal = parsed['signal_fn_source']
+    c.signal_fn_name = parsed['signal_fn_name']
+    c.candidate_type = parsed['candidate_type']
+    c.category = parsed['category']
+    c.timeframe = parsed['timeframe']
+    c.default_params = parsed['default_params']
+    c.llm_notes = parsed['notes']
+    c.llm_model = model_label
+
+    if not verify['ok']:
+        c.status = 'error'
+        c.error_log = f'sandbox: {verify["error"]}'
+        db.session.commit()
+        return {'ok': False, 'error': f'sandbox: {verify["error"]}', 'candidate': c.to_dict(), 'verify': verify}
+
+    c.status = 'translated'
+    c.error_log = None
+    db.session.commit()
+    return {'ok': True, 'candidate': c.to_dict(include_code=False), 'verify': verify}
+
+
 class LLMTranslatorError(Exception):
     pass
 
