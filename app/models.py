@@ -302,6 +302,30 @@ class SystemConfig(db.Model):
         }
 
 
+class AuditLog(db.Model):
+    """Phase 8.4: 审计日志 — 任何 mutating 事件都記一條"""
+    __tablename__ = 'audit_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_type = db.Column(db.String(50), nullable=False, index=True)
+    # config_change | halt | unhalt | kill_switch | promote | reject | retire |
+    # candidate_translate | candidate_backtest | order_placed | order_failed | live_mode_flip
+    actor = db.Column(db.String(50), default='system')   # 'system' | 'user' | 'user:<id>' (未來 SaaS)
+    context = db.Column(db.JSON, default={})
+    ip = db.Column(db.String(45))                        # IPv4/IPv6
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'event_type': self.event_type,
+            'actor': self.actor,
+            'context': self.context or {},
+            'ip': self.ip,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class StrategyCandidate(db.Model):
     """策略候選池 — 來自爬蟲（TradingView / GitHub）+ LLM 翻譯的策略，待回測 / 待 promote"""
     __tablename__ = 'strategy_candidates'

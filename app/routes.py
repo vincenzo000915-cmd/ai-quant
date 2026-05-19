@@ -93,6 +93,7 @@ def strategies_health_check():
 @api_bp.route('/strategies/<int:id>/revive', methods=['POST'])
 def revive_strategy(id):
     """手動把 retired 策略救回 stopped 狀態（不直接 running，user 還要再啟）"""
+    from app.services.audit import log as audit
     strategy = Strategy.query.get_or_404(id)
     if strategy.status != 'retired':
         return jsonify({'error': f'status={strategy.status}, not retired'}), 400
@@ -100,6 +101,7 @@ def revive_strategy(id):
     strategy.retired_at = None
     strategy.retire_reason = None
     db.session.commit()
+    audit('strategy_revive', actor='user', strategy_id=id, name=strategy.name)
     return jsonify(strategy.to_dict())
 
 
@@ -546,6 +548,7 @@ def anomaly_check_now():
 def killswitch():
     """Phase 6.3: 緊急停 — stop 所有策略 + 強平所有持倉 + halt + 通知"""
     from app.services.kill_switch import execute_kill_switch
+    from app.services.audit import log as audit
     data = request.get_json() or {}
     reason = data.get('reason', 'manual')
     if data.get('confirm') != 'KILL':
@@ -554,6 +557,9 @@ def killswitch():
             'note': '兩段確認防誤觸',
         }), 400
     result = execute_kill_switch(reason)
+    audit('kill_switch', actor='user', reason=reason,
+          stopped_strategies=result.get('stopped_strategies'),
+          closed_positions=len(result.get('closed_positions', [])))
     return jsonify(result), 200
 
 
@@ -574,9 +580,11 @@ def telegram_test():
 def manual_halt():
     """Phase 6.1: 手動觸發 halt（全局拒新開倉）"""
     from app.services.config_service import set_halted
+    from app.services.audit import log as audit
     data = request.get_json() or {}
     reason = data.get('reason', 'manual halt')
     cfg = set_halted(reason)
+    audit('halt', actor='user', reason=reason)
     return jsonify(cfg), 200
 
 
@@ -584,7 +592,9 @@ def manual_halt():
 def manual_unhalt():
     """解除 halt"""
     from app.services.config_service import set_halted
+    from app.services.audit import log as audit
     cfg = set_halted(None)
+    audit('unhalt', actor='user')
     return jsonify(cfg), 200
 
 
@@ -601,6 +611,22 @@ def get_system_config():
     """系統設定 — capital / leverage / trade_size / SL/TP / 模式 (paper|live)"""
     from app.services.config_service import get_config
     return jsonify(get_config())
+
+
+@api_bp.route('/audit', methods=['GET'])
+def list_audit():
+    """Phase 8.4: 查 audit log。?type=halt&limit=100"""
+    from app.models import AuditLog
+    q = AuditLog.query
+    event_type = request.args.get('type')
+    actor = request.args.get('actor')
+    if event_type:
+        q = q.filter_by(event_type=event_type)
+    if actor:
+        q = q.filter(AuditLog.actor.like(f'{actor}%'))
+    limit = min(int(request.args.get('limit', 100)), 500)
+    rows = q.order_by(AuditLog.created_at.desc()).limit(limit).all()
+    return jsonify([r.to_dict() for r in rows])
 
 
 @api_bp.route('/auth/check', methods=['GET', 'POST'])
@@ -663,7 +689,15 @@ def update_system_config():
         return jsonify({'error': 'stop_loss_pct out of range (0,50]'}), 400
     if 'take_profit_pct' in patch and not (0 < patch['take_profit_pct'] <= 200):
         return jsonify({'error': 'take_profit_pct out of range (0,200]'}), 400
-    return jsonify(update(patch))
+    from app.services.audit import log as audit
+    is_live_flip = patch.get('trading_mode') == 'live'
+    new_cfg = update(patch)
+    audit(
+        'live_mode_flip' if is_live_flip else 'config_change',
+        actor='user',
+        patch=patch,
+    )
+    return jsonify(new_cfg)
 
 
 @api_bp.route('/simulation/estimate', methods=['GET'])
@@ -881,9 +915,13 @@ def promote_candidate(cid):
     Body 可選：{ "name": "...", "symbol": "BTC/USDT" }
     """
     from app.services.candidate_pipeline import promote_candidate as do_promote
+    from app.services.audit import log as audit
     data = request.get_json() or {}
     result = do_promote(cid, name=data.get('name'), symbol=data.get('symbol', 'BTC/USDT'))
     if result['ok']:
+        audit('candidate_promote', actor='user', candidate_id=cid,
+              strategy_id=result['strategy']['id'],
+              strategy_type=result['strategy']['type'])
         return jsonify(result), 201
     err = result.get('error', '')
     code = 400 if ('not found' in err or 'must be qualified' in err or 'already exists' in err or 'missing' in err) else 500

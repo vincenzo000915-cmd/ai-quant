@@ -426,7 +426,10 @@ def monitor_strategy_health():
                 s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + reason_txt
                 actions.append(f'🔴 {s.name} retired: {", ".join(retire_reasons)}')
                 from app.services.telegram_service import notify_retire
+                from app.services.audit import log as audit
                 notify_retire(s.name, reason_txt)
+                audit('strategy_retire', actor='auto:health_check', strategy_id=s.id,
+                      name=s.name, reasons=retire_reasons)
             else:
                 actions.append(f'✅ {s.name} OK (full Sharpe={full_sh}, OOS={oos_sh}, trades={total_trades})')
 
@@ -505,7 +508,10 @@ def monitor_daily_loss():
         reason = f'daily loss {total:.2f} ≤ -{max_loss:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f})'
         set_halted(reason)
         from app.services.telegram_service import notify_halt
+        from app.services.audit import log as audit
         notify_halt(reason)
+        audit('halt', actor='auto:daily_loss', reason=reason,
+              realized=float(realized), unrealized=float(unrealized), threshold=-max_loss)
         return f'🛑 HALTED: {reason}'
 
     return f'OK: 今日 PnL ${total:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f}) > -${max_loss:.2f}'

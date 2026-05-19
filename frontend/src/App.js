@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';
 import Candidates from './pages/Candidates';
 import Trades from './pages/Trades';
+import Audit from './pages/Audit';
 import Settings from './pages/Settings';
 import './auth';   // 全局 fetch wrap 副作用
 
@@ -450,6 +451,7 @@ export default function App() {
               <Route path="strategies" element={<Strategies />} />
               <Route path="candidates" element={<Candidates />} />
               <Route path="trades" element={<Trades />} />
+              <Route path="audit" element={<Audit />} />
               <Route path="settings" element={<Settings />} />
             </Route>
           </Routes>
