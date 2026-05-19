@@ -633,6 +633,23 @@ def reject_candidate(cid):
     return jsonify(c.to_dict())
 
 
+@api_bp.route('/candidates/crawl/github', methods=['POST'])
+def crawl_github():
+    """觸發 GitHub 爬蟲。POST body 可選：
+    { "repos": [...自訂 repo cfg...], "max_files_per_repo": 20 }
+    沒帶 body 就跑預設清單，慢（可能 1-3 分鐘）。
+    """
+    from app.services.crawlers.github import crawl_all
+    data = request.get_json() or {}
+    repos = data.get('repos')
+    max_files = data.get('max_files_per_repo')
+    try:
+        result = crawl_all(repos=repos, max_files_per_repo=max_files)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+
+
 @api_bp.route('/candidates/<int:cid>/translate', methods=['POST'])
 def translate_candidate(cid):
     """跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-15s/candidate）。"""
