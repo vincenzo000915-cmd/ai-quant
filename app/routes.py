@@ -77,6 +77,24 @@ def strategies_live_state():
     return jsonify(all_live_states())
 
 
+@api_bp.route('/strategies/correlation', methods=['GET'])
+def strategies_correlation():
+    """Phase 10.1: pairwise daily-PnL correlation matrix for running strategies.
+
+    Uses live trades when available; falls back to latest backtest's trades_json
+    so the matrix is useful even with no closed trades yet.
+    """
+    from app.services.strategy_correlation import build_correlation_matrix
+    ids_param = request.args.get('ids')
+    ids = None
+    if ids_param:
+        try:
+            ids = [int(x) for x in ids_param.split(',') if x.strip()]
+        except ValueError:
+            return jsonify({'error': 'ids must be comma-separated integers'}), 400
+    return jsonify(build_correlation_matrix(ids))
+
+
 @api_bp.route('/strategies/health/check', methods=['POST'])
 def strategies_health_check():
     """Phase 5.3: 觸發一次健康檢查（async，丟給 Celery worker）。
