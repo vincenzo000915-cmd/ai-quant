@@ -142,9 +142,12 @@ def run_backtest(
         ts = c['timestamp']
         price = c['close']
 
-        # 1. 檢查止損 / 止盈（基於收盤價）
+        # 1. 檢查止損 / 止盈（基於收盤價）— 支援 long/short
         if position:
-            raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+            if position['side'] == 'short':
+                raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+            else:
+                raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
             pnl_pct = raw_pct * leverage
 
             close_reason = None
@@ -154,7 +157,7 @@ def run_backtest(
                 close_reason = 'take_profit'
 
             if close_reason:
-                pnl = (price - position['entry_price']) * position['size_btc'] * leverage
+                pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
                 fee = position_size_usdt * (fee_pct / 100) * 2  # 開倉 + 平倉
                 pnl_net = pnl - fee
                 equity += pnl_net
@@ -164,7 +167,7 @@ def run_backtest(
                     'entry_price': position['entry_price'],
                     'exit_price': price,
                     'size': position['size_btc'],
-                    'side': 'long',
+                    'side': position['side'],
                     'pnl': round(pnl_net, 4),
                     'pnl_pct': round(pnl_pct, 4),
                     'reason': close_reason,
@@ -185,59 +188,80 @@ def run_backtest(
         else:
             signal = get_signal(strategy_type, df, params)
 
-        # 3. 處理信號
-        if signal in ('buy', 'long') and position is None:
-            size_btc = position_size_usdt / price
-            size_btc = round(size_btc, 6)
-            position = {
-                'entry_price': price,
-                'size_btc': size_btc,
-                'opened_idx': i,
-                'opened_ts': ts,
-            }
+        # 3. 處理信號 — Phase 9.2: 支援 short
+        is_buy = signal in ('buy', 'long')
+        is_sell = signal in ('sell', 'short')
 
-        elif signal in ('sell', 'close') and position is not None:
-            pnl_raw = (price - position['entry_price']) * position['size_btc'] * leverage
-            fee = position_size_usdt * (fee_pct / 100) * 2
-            pnl_net = pnl_raw - fee
-            raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
-            pnl_pct = raw_pct * leverage
-            equity += pnl_net
-            trades.append({
-                'entry_ts': position['opened_ts'],
-                'exit_ts': ts,
-                'entry_price': position['entry_price'],
-                'exit_price': price,
-                'size': position['size_btc'],
-                'side': 'long',
-                'pnl': round(pnl_net, 4),
-                'pnl_pct': round(pnl_pct, 4),
-                'reason': 'signal',
-                'bars_held': i - position['opened_idx'],
-            })
-            date_key = pd.Timestamp(ts, unit='s').date().isoformat()
-            daily_pnl_by_date[date_key] = daily_pnl_by_date.get(date_key, 0) + pnl_net
-            position = None
+        if position is None:
+            # 開倉
+            if is_buy or is_sell:
+                size_btc = round(position_size_usdt / price, 6)
+                position = {
+                    'entry_price': price,
+                    'size_btc': size_btc,
+                    'side': 'long' if is_buy else 'short',
+                    'opened_idx': i,
+                    'opened_ts': ts,
+                }
+        else:
+            # 持倉中 — 反向信號平倉
+            should_close = (
+                (position['side'] == 'long' and is_sell) or
+                (position['side'] == 'short' and is_buy) or
+                signal == 'close'
+            )
+            if should_close:
+                if position['side'] == 'short':
+                    raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+                else:
+                    raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+                pnl_pct = raw_pct * leverage
+                pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
+                fee = position_size_usdt * (fee_pct / 100) * 2
+                pnl_net = pnl - fee
+                equity += pnl_net
+                trades.append({
+                    'entry_ts': position['opened_ts'],
+                    'exit_ts': ts,
+                    'entry_price': position['entry_price'],
+                    'exit_price': price,
+                    'size': position['size_btc'],
+                    'side': position['side'],
+                    'pnl': round(pnl_net, 4),
+                    'pnl_pct': round(pnl_pct, 4),
+                    'reason': 'signal',
+                    'bars_held': i - position['opened_idx'],
+                })
+                date_key = pd.Timestamp(ts, unit='s').date().isoformat()
+                daily_pnl_by_date[date_key] = daily_pnl_by_date.get(date_key, 0) + pnl_net
+                position = None
 
         # 4. 紀錄 equity curve（含浮動）
         unrealized = 0.0
         if position:
-            unrealized = (price - position['entry_price']) * position['size_btc'] * leverage
+            if position['side'] == 'short':
+                raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+            else:
+                raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+            unrealized = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
         equity_curve.append({
             'ts': ts,
             'equity': round(equity + unrealized, 4),
             'realized_equity': round(equity, 4),
         })
 
-    # 收盤時若仍有持倉，按最後收盤價強平
+    # 收盤時若仍有持倉，按最後收盤價強平 — 支援 long/short
     if position:
         last = candles[-1]
         price = last['close']
-        pnl_raw = (price - position['entry_price']) * position['size_btc'] * leverage
-        fee = position_size_usdt * (fee_pct / 100) * 2
-        pnl_net = pnl_raw - fee
-        raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+        if position['side'] == 'short':
+            raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+        else:
+            raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
         pnl_pct = raw_pct * leverage
+        pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
+        fee = position_size_usdt * (fee_pct / 100) * 2
+        pnl_net = pnl - fee
         equity += pnl_net
         trades.append({
             'entry_ts': position['opened_ts'],
@@ -245,7 +269,7 @@ def run_backtest(
             'entry_price': position['entry_price'],
             'exit_price': price,
             'size': position['size_btc'],
-            'side': 'long',
+            'side': position['side'],
             'pnl': round(pnl_net, 4),
             'pnl_pct': round(pnl_pct, 4),
             'reason': 'end_of_period',

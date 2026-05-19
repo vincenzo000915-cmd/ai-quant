@@ -144,16 +144,35 @@ def _run_signals(strategy_id=None, category_filter=None):
                 strategy_id=s.id, status='open'
             ).first()
 
-            if signal in ('buy', 'long') and position:
-                results.append(f'{s.name}: 已有持倉，跳過信號')
+            # Phase 9.2: long-only → 支援 short。決策矩陣：
+            #   無持倉 + buy/long  → 開多
+            #   無持倉 + sell/short → 開空
+            #   多倉 + sell/close  → 平多
+            #   空倉 + buy/close   → 平空
+            #   同向重複 → 略過
+            is_buy = signal in ('buy', 'long')
+            is_sell = signal in ('sell', 'short')
+            is_close = signal == 'close'
+
+            if not position and is_close:
+                results.append(f'{s.name}: 無持倉，無需平倉')
                 continue
 
-            if signal in ('sell', 'close') and not position:
-                results.append(f'{s.name}: 無持倉，跳過信號')
-                continue
+            if position:
+                if position.side == 'long' and is_buy:
+                    results.append(f'{s.name}: 多倉中，買信號略過')
+                    continue
+                if position.side == 'short' and is_sell:
+                    results.append(f'{s.name}: 空倉中，賣信號略過')
+                    continue
+                # 反向信號 → 平倉
+                action = 'close'
+            else:
+                # 無持倉 → 開倉，方向看 signal
+                action = 'open_long' if is_buy else 'open_short'
 
-            # Phase 6.1: halted 時拒絕新開倉，但允許平倉
-            if halted and signal in ('buy', 'long'):
+            # Phase 6.1: halted 時拒新開倉，但允許平倉
+            if halted and action in ('open_long', 'open_short'):
                 results.append(f'⛔ {s.name}: 系統 HALTED，拒絕開倉信號')
                 continue
 
@@ -161,15 +180,13 @@ def _run_signals(strategy_id=None, category_filter=None):
             ticker = get_ticker(s.symbol)
             price = ticker['price']
 
-            if signal in ('buy', 'long'):
-                # 計算倉位：trade_size_usdt / price = BTC數量
-                amount_btc = trade_size / price
-                amount_btc = round(amount_btc, 6)
+            if action in ('open_long', 'open_short'):
+                side = 'long' if action == 'open_long' else 'short'
+                okx_side = 'buy' if side == 'long' else 'sell'
+                amount_base = round(trade_size / price, 6)
+                notional = amount_base * price * lev
 
-                # 名義倉位價值
-                notional = amount_btc * price * lev
-
-                order = _place_order(s.symbol, 'buy', trade_size, price, mode, leverage=lev)
+                order = _place_order(s.symbol, okx_side, trade_size, price, mode, leverage=lev)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -177,35 +194,40 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pos = Position(
                     strategy_id=s.id,
                     symbol=s.symbol,
-                    side='long',
-                    size=amount_btc,
+                    side=side,
+                    size=amount_base,
                     entry_price=price,
                     current_price=price,
                     status='open',
                 )
                 db.session.add(pos)
                 db.session.commit()
+                emoji = '🟢' if side == 'long' else '🔴'
                 results.append(
-                    f'✅ {s.name}: 模擬買入 {amount_btc} BTC @ ${price:.1f} '
-                    f'(本金${trade_size:.0f}, 槓桿{lev}x, '
-                    f'名義${notional:.0f})'
+                    f'{emoji} {s.name}: 開{("多" if side=="long" else "空")} {amount_base} @ ${price:.1f} '
+                    f'(本金${trade_size:.0f}, 槓桿{lev}x, 名義${notional:.0f})'
                 )
                 from app.services.telegram_service import notify_open
-                notify_open(s.name, s.symbol, 'long', amount_btc, price, notional)
+                notify_open(s.name, s.symbol, side, amount_base, price, notional)
 
-            elif signal in ('sell', 'close') and position:
-                # 計算PnL
-                pnl_raw = (price - position.entry_price) * position.size
-                pnl_leveraged = pnl_raw * lev
-                pnl_pct = ((price - position.entry_price) / position.entry_price) * 100 * lev
+            elif action == 'close':
+                # 平倉 PnL：long 是 exit-entry，short 是 entry-exit
+                if position.side == 'long':
+                    pnl_raw_pct = (price - position.entry_price) / position.entry_price * 100
+                    okx_side = 'sell'
+                else:   # short
+                    pnl_raw_pct = (position.entry_price - price) / position.entry_price * 100
+                    okx_side = 'buy'
+                pnl_pct = pnl_raw_pct * lev
+                pnl_leveraged = pnl_raw_pct * position.size * position.entry_price * lev / 100
 
-                order = _place_order(s.symbol, 'sell', position.size * price, price, mode, leverage=lev)
-                
+                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev)
+
                 trade = Trade(
                     position_id=position.id,
                     strategy_id=s.id,
                     symbol=s.symbol,
-                    side='long',
+                    side=position.side,
                     entry_price=position.entry_price,
                     exit_price=price,
                     quantity=position.size,
@@ -234,17 +256,27 @@ def _run_signals(strategy_id=None, category_filter=None):
     return ' | '.join(results)
 
 
+def _pnl_pct_for(pos, current_price, leverage):
+    """Phase 9.2: 同時支援 long/short 的 PnL% 計算（含槓桿）"""
+    if pos.side == 'short':
+        raw_pct = (pos.entry_price - current_price) / pos.entry_price * 100
+    else:   # long
+        raw_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+    return raw_pct * leverage, raw_pct   # leveraged, raw
+
+
 @celery_app.task
 def update_positions():
-    """更新持倉當前價格和浮動盈虧（含槓桿）"""
+    """更新持倉當前價格和浮動盈虧（含槓桿）— long/short 都正確"""
     lev = _cfg()['leverage']
     positions = Position.query.filter_by(status='open').all()
     for pos in positions:
         try:
             ticker = get_ticker(pos.symbol)
-            pos.current_price = ticker['price']
-            raw_pnl = (ticker['price'] - pos.entry_price) * pos.size
-            pos.unrealized_pnl = raw_pnl * lev
+            current = ticker['price']
+            pos.current_price = current
+            _, raw_pct = _pnl_pct_for(pos, current, lev)
+            pos.unrealized_pnl = raw_pct * pos.size * pos.entry_price * lev / 100
         except Exception as e:
             print(f'[update] 持倉 {pos.id} 更新失敗: {e}')
     db.session.commit()
@@ -253,11 +285,12 @@ def update_positions():
 
 @celery_app.task
 def check_stop_loss():
-    """檢查止損止盈（含槓桿）"""
+    """檢查止損止盈（含槓桿）— long/short 都觸發"""
     cfg = _cfg()
     lev = cfg['leverage']
     sl_pct = cfg['stop_loss_pct']
     tp_pct = cfg['take_profit_pct']
+    mode = cfg.get('trading_mode', 'paper')
 
     positions = Position.query.filter_by(status='open').all()
     triggered = []
@@ -265,17 +298,17 @@ def check_stop_loss():
         try:
             ticker = get_ticker(pos.symbol)
             current = ticker['price']
-            raw_pnl_pct = ((current - pos.entry_price) / pos.entry_price) * 100
-            pnl_pct = raw_pnl_pct * lev
+            pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
+            close_side = 'buy' if pos.side == 'short' else 'sell'
 
             if pnl_pct <= -sl_pct:
-                order = _place_order(pos.symbol, 'sell', pos.size * current, current, _cfg().get('trading_mode', 'paper'), leverage=lev)
-                pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
+                pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
                     symbol=pos.symbol,
-                    side='long',
+                    side=pos.side,
                     entry_price=pos.entry_price,
                     exit_price=current,
                     quantity=pos.size,
@@ -295,13 +328,13 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif pnl_pct >= tp_pct:
-                order = _place_order(pos.symbol, 'sell', pos.size * current, current, _cfg().get('trading_mode', 'paper'), leverage=lev)
-                pnl = raw_pnl_pct * pos.size * pos.entry_price * lev / 100
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
+                pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
                     symbol=pos.symbol,
-                    side='long',
+                    side=pos.side,
                     entry_price=pos.entry_price,
                     exit_price=current,
                     quantity=pos.size,
