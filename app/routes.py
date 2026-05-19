@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from app.extensions import db
 from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate, ParamOptimization
+from app.services.rate_limit import rate_limit
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
@@ -78,6 +79,7 @@ def strategies_live_state():
 
 
 @api_bp.route('/strategies/<int:id>/optimize', methods=['POST'])
+@rate_limit('10/min')
 def trigger_optimize(id):
     """Phase 10.2: 觸發策略參數網格搜尋（非同步，丟給 Celery worker）。"""
     from app.services.audit import log as audit
@@ -168,6 +170,7 @@ def apply_strategy_params(id):
 
 
 @api_bp.route('/strategies/<int:id>/fan-out', methods=['POST'])
+@rate_limit('10/min')
 def fan_out_strategy(id):
     """Phase 10.6: clone a strategy across multiple symbols in one click.
 
@@ -841,6 +844,7 @@ def anomaly_check_now():
 
 
 @api_bp.route('/killswitch', methods=['POST'])
+@rate_limit('5/min')
 def killswitch():
     """Phase 6.3: 緊急停 — stop 所有策略 + 強平所有持倉 + halt + 通知"""
     from app.services.kill_switch import execute_kill_switch
@@ -873,6 +877,7 @@ def telegram_test():
 
 
 @api_bp.route('/halt', methods=['POST'])
+@rate_limit('10/min')
 def manual_halt():
     """Phase 6.1: 手動觸發 halt（全局拒新開倉）"""
     from app.services.config_service import set_halted
@@ -885,6 +890,7 @@ def manual_halt():
 
 
 @api_bp.route('/unhalt', methods=['POST'])
+@rate_limit('10/min')
 def manual_unhalt():
     """解除 halt"""
     from app.services.config_service import set_halted
@@ -945,6 +951,7 @@ def preflight_check():
 
 
 @api_bp.route('/config', methods=['PUT'])
+@rate_limit('30/min')
 def update_system_config():
     """部分更新 system_config。
     寫 trading_mode='live' 需要：
