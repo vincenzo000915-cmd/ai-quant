@@ -76,4 +76,11 @@ beat_schedule = {
         'schedule': crontab(hour='2', minute='30'),
         'options': {'queue': 'default'},
     },
+
+    # === Phase 6.1: 每 5 分鐘檢查當日虧損 → 觸發 halt ===
+    'monitor-daily-loss': {
+        'task': 'app.tasks.strategy_tasks.monitor_daily_loss',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'default'},
+    },
 }

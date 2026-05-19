@@ -278,6 +278,12 @@ class SystemConfig(db.Model):
     stop_loss_pct = db.Column(db.Float, default=5.0)          # 槓桿後的 PnL %
     take_profit_pct = db.Column(db.Float, default=8.0)
     max_daily_loss_usdt = db.Column(db.Float, default=10.0)
+
+    # Phase 6.1: 全局風控狀態。halted=True 時拒絕所有新開倉
+    halted = db.Column(db.Boolean, default=False)
+    halt_reason = db.Column(db.Text, nullable=True)
+    halted_at = db.Column(db.DateTime, nullable=True)
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -289,6 +295,9 @@ class SystemConfig(db.Model):
             'stop_loss_pct': self.stop_loss_pct,
             'take_profit_pct': self.take_profit_pct,
             'max_daily_loss_usdt': self.max_daily_loss_usdt,
+            'halted': self.halted,
+            'halt_reason': self.halt_reason,
+            'halted_at': self.halted_at.isoformat() if self.halted_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

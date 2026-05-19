@@ -514,6 +514,32 @@ export default function Dashboard() {
         </Typography>
       </Box>
 
+      {/* === Phase 6.1: HALTED banner === */}
+      {cfg?.halted && (
+        <Box
+          onClick={async () => {
+            if (!window.confirm(`系統 HALTED:\n${cfg.halt_reason}\n\n確定要解除？解除後新信號會立刻能開倉。`)) return;
+            await fetch(`${API}/api/unhalt`, { method: 'POST' });
+            fetchData();
+          }}
+          sx={{
+            mb: 2, p: 1.5,
+            backgroundColor: 'rgba(220, 38, 38, 0.18)',
+            border: '1px solid rgba(220, 38, 38, 0.6)',
+            borderRadius: 1,
+            cursor: 'pointer',
+            animation: 'pulse-red 1.4s ease-in-out infinite',
+            '@keyframes pulse-red': {
+              '0%,100%': { boxShadow: '0 0 10px rgba(220,38,38,.3)' },
+              '50%':     { boxShadow: '0 0 22px rgba(220,38,38,.8)' },
+            },
+          }}>
+          <Typography sx={{ color: '#fff', fontWeight: 800, fontSize: '0.85rem', letterSpacing: 1, fontFamily: 'JetBrains Mono, monospace' }}>
+            🛑 SYSTEM HALTED · {cfg.halt_reason} · <span style={{ textDecoration: 'underline' }}>點此解除</span>
+          </Typography>
+        </Box>
+      )}
+
       {/* === Charts Row === */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
         <Grid item xs={12} md={8}>

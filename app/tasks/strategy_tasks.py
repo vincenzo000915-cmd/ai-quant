@@ -90,6 +90,7 @@ def _run_signals(strategy_id=None, category_filter=None):
     lev = cfg['leverage']
     sl_pct = cfg['stop_loss_pct']
     tp_pct = cfg['take_profit_pct']
+    halted = cfg.get('halted', False)
 
     results = []
     for s in strategies:
@@ -121,6 +122,11 @@ def _run_signals(strategy_id=None, category_filter=None):
 
             if signal in ('sell', 'close') and not position:
                 results.append(f'{s.name}: 無持倉，跳過信號')
+                continue
+
+            # Phase 6.1: halted 時拒絕新開倉，但允許平倉
+            if halted and signal in ('buy', 'long'):
+                results.append(f'⛔ {s.name}: 系統 HALTED，拒絕開倉信號')
                 continue
 
             # 獲取當前價格
@@ -404,6 +410,38 @@ def auto_backtest_translated_candidates(max_count: int = 20):
 
 
 # ===== Phase 5.1: 自動爬蟲 + 翻譯 =====
+
+@celery_app.task
+def monitor_daily_loss():
+    """Phase 6.1: 每 5 分鐘檢查當日累積虧損是否觸發 halt"""
+    from datetime import datetime, timezone
+    from app.services.config_service import get_config, set_halted
+
+    cfg = get_config()
+    if cfg.get('halted'):
+        return f'already halted: {cfg.get("halt_reason")}'
+
+    max_loss = cfg.get('max_daily_loss_usdt', 10.0)
+    if max_loss <= 0:
+        return 'max_daily_loss_usdt <= 0, skip'
+
+    # 今日 00:00 UTC
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+
+    # realized = 今日 trades 的 pnl 加總
+    realized = db.session.query(db.func.coalesce(db.func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0.0
+    # unrealized = 當前 open positions 的浮動 pnl 加總
+    unrealized = db.session.query(db.func.coalesce(db.func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0.0
+    total = float(realized) + float(unrealized)
+
+    if total <= -max_loss:
+        reason = f'daily loss {total:.2f} ≤ -{max_loss:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f})'
+        set_halted(reason)
+        # Telegram 通知留 6.2 接通
+        return f'🛑 HALTED: {reason}'
+
+    return f'OK: 今日 PnL ${total:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f}) > -${max_loss:.2f}'
+
 
 @celery_app.task
 def auto_crawl_github(max_files_per_repo: int = 10):

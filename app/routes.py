@@ -502,6 +502,32 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/halt', methods=['POST'])
+def manual_halt():
+    """Phase 6.1: 手動觸發 halt（全局拒新開倉）"""
+    from app.services.config_service import set_halted
+    data = request.get_json() or {}
+    reason = data.get('reason', 'manual halt')
+    cfg = set_halted(reason)
+    return jsonify(cfg), 200
+
+
+@api_bp.route('/unhalt', methods=['POST'])
+def manual_unhalt():
+    """解除 halt"""
+    from app.services.config_service import set_halted
+    cfg = set_halted(None)
+    return jsonify(cfg), 200
+
+
+@api_bp.route('/halt/check', methods=['POST'])
+def check_daily_loss():
+    """立即跑一次 monitor_daily_loss（不等 cron）"""
+    from app.tasks.strategy_tasks import monitor_daily_loss
+    task = monitor_daily_loss.delay()
+    return jsonify({'task_id': task.id, 'note': '已派發 Celery，幾秒內生效'}), 202
+
+
 @api_bp.route('/config', methods=['GET'])
 def get_system_config():
     """系統設定 — capital / leverage / trade_size / SL/TP / 模式 (paper|live)"""

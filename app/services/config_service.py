@@ -20,6 +20,8 @@ DEFAULTS = {
     'stop_loss_pct': 5.0,
     'take_profit_pct': 8.0,
     'max_daily_loss_usdt': 10.0,
+    'halted': False,
+    'halt_reason': None,
 }
 
 
@@ -62,8 +64,28 @@ def update(patch: dict) -> dict:
     from app.extensions import db
     row = _load_row()
     for k, v in patch.items():
-        if k in DEFAULTS and v is not None:
-            setattr(row, k, v)
+        # halted/halt_reason 允許設為 None / False；其他 None skip
+        if k in DEFAULTS:
+            if k in ('halted', 'halt_reason') or v is not None:
+                setattr(row, k, v)
+    db.session.commit()
+    invalidate()
+    return row.to_dict()
+
+
+def set_halted(reason: str | None):
+    """便利：設為 halted（若 reason None 則解除）"""
+    import datetime
+    from app.extensions import db
+    row = _load_row()
+    if reason:
+        row.halted = True
+        row.halt_reason = reason
+        row.halted_at = datetime.datetime.utcnow()
+    else:
+        row.halted = False
+        row.halt_reason = None
+        row.halted_at = None
     db.session.commit()
     invalidate()
     return row.to_dict()
