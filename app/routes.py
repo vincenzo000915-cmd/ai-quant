@@ -359,6 +359,25 @@ def strategies_health_check():
     }), 202
 
 
+@api_bp.route('/strategies/<int:id>/retire', methods=['POST'])
+@rate_limit('20/min')
+def retire_strategy(id):
+    """Phase 10.7: 手動把策略退役（給 AdvisorPanel 一鍵套用用）。"""
+    from app.services.audit import log as audit
+    import datetime as _dt
+    strategy = Strategy.query.get_or_404(id)
+    if strategy.status == 'retired':
+        return jsonify(strategy.to_dict())  # 已退役，幂等
+    body = request.get_json(silent=True) or {}
+    reason = body.get('reason') or '手動退役（advisor 建議）'
+    strategy.status = 'retired'
+    strategy.retired_at = _dt.datetime.utcnow()
+    strategy.retire_reason = reason
+    db.session.commit()
+    audit('strategy_retire', actor='user', strategy_id=id, name=strategy.name, reason=reason)
+    return jsonify(strategy.to_dict())
+
+
 @api_bp.route('/strategies/<int:id>/revive', methods=['POST'])
 def revive_strategy(id):
     """手動把 retired 策略救回 stopped 狀態（不直接 running，user 還要再啟）"""
