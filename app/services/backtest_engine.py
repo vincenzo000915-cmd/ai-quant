@@ -106,7 +106,7 @@ def run_backtest(
     *,
     timeframe: str = '4h',
     leverage: float = 15.0,
-    position_size_usdt: float = 50.0,
+    position_size_usdt: float = 10.0,
     stop_loss_pct: float = 5.0,
     take_profit_pct: float = 8.0,
     initial_capital: float = 100.0,

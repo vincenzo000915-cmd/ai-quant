@@ -10,7 +10,7 @@ from app.services.strategy_engine import get_signal, get_candle_df
 # ===== 模擬盤設定 =====
 SIMULATED_BALANCE = 100.0       # 模擬本金 $100
 LEVERAGE = 15                   # 15x 槓桿
-TRADE_SIZE_USDT = 50.0          # 每次下單 $50（使用 $100本金下 50%，15x槓桿 = $750名義倉位）
+TRADE_SIZE_USDT = 10.0          # 每次下單 $10（$100 本金切 10 份，15x 槓桿 = $150 名義倉位/筆）
 STOP_LOSS_PCT = 5.0             # 5% 止損
 TAKE_PROFIT_PCT = 8.0           # 8% 止盈
 

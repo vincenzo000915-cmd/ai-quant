@@ -161,7 +161,7 @@ class BacktestResult(db.Model):
 
     # 回測設定
     leverage = db.Column(db.Float, default=15.0)
-    position_size_usdt = db.Column(db.Float, default=50.0)
+    position_size_usdt = db.Column(db.Float, default=10.0)
     stop_loss_pct = db.Column(db.Float, default=5.0)
     take_profit_pct = db.Column(db.Float, default=8.0)
     initial_capital = db.Column(db.Float, default=100.0)

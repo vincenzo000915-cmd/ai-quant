@@ -501,7 +501,7 @@ export default function Dashboard() {
       }}>
         <WarningAmberIcon sx={{ fontSize: 18, color: C.warnYellow, filter: `drop-shadow(0 0 6px ${C.warnYellow})` }} />
         <Typography variant="caption" sx={{ color: '#fff', fontWeight: 700, letterSpacing: 1, flexGrow: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem' }}>
-          ⚠ HIGH LEVERAGE ZONE · 15× · POSITION SIZE $50 · MAX LOSS PER TRADE 5% · MAX GAIN 8% · NOT FINANCIAL ADVICE
+          ⚠ HIGH LEVERAGE ZONE · 15× · POSITION SIZE $10 (1/10 OF $100 EQUITY) · MAX LOSS PER TRADE 5% · MAX GAIN 8% · NOT FINANCIAL ADVICE
         </Typography>
       </Box>
 
