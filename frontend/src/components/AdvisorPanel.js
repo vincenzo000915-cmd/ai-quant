@@ -22,11 +22,12 @@ const SEVERITY_META = {
 };
 
 const ACTION_META = {
-  retire:       { emoji: '🪦', label: '退役', actionable: true,  btn: '退役此策略' },
-  pause:        { emoji: '⏸️',  label: '暫停', actionable: true,  btn: '暫停' },
-  apply_params: { emoji: '🔧', label: '套用最佳參數', actionable: true, btn: '套用參數' },
-  fan_out:      { emoji: '📡', label: '一鍵擴幣種',   actionable: true, btn: '擴到 ETH/SOL/AVAX' },
-  mtf_caution:  { emoji: '⚠️',  label: '多 TF 衝突', actionable: false, btn: '' },
+  retire:            { emoji: '🪦', label: '退役', actionable: true,  btn: '退役此策略' },
+  pause:             { emoji: '⏸️',  label: '暫停', actionable: true,  btn: '暫停' },
+  apply_params:      { emoji: '🔧', label: '套用最佳參數', actionable: true, btn: '套用參數' },
+  fan_out:           { emoji: '📡', label: '一鍵擴幣種',   actionable: true, btn: '擴到 ETH/SOL/AVAX' },
+  promote_candidate: { emoji: '🚀', label: '上線新候選',  actionable: true, btn: '上線並啟動' },
+  mtf_caution:       { emoji: '⚠️',  label: '多 TF 衝突', actionable: false, btn: '' },
 };
 
 // fan_out 預設目標幣種（除 BTC 之外的 3 個流動性最好的）
@@ -143,6 +144,19 @@ export default function AdvisorPanel() {
         url: `${API}/api/strategies/${sid}/apply-params`,
         body: { params, optimization_id: item.meta?.optimization_id },
         okMsg: `已套用新參數到 #${sid}`,
+      };
+    } else if (item.action === 'promote_candidate') {
+      const cid = item.meta?.candidate_id;
+      const oos = item.meta?.oos_sharpe;
+      if (!cid) {
+        setSnackbar({ open: true, severity: 'error', message: '找不到 candidate_id' });
+        return;
+      }
+      confirmMsg = `上線候選 #${cid}（OOS Sharpe ${oos?.toFixed?.(2)}）？\n會建立新 strategy 並 status=running，立刻納入信號循環。`;
+      req = {
+        url: `${API}/api/candidates/${cid}/promote`,
+        body: { symbol: item.meta?.symbol || 'BTC/USDT' },
+        okMsg: `已上線候選 #${cid}（需手動到策略表啟動，或開啟智能托管自動）`,
       };
     } else if (item.action === 'fan_out') {
       confirmMsg = `把 #${sid} ${item.strategy_name} 一鍵複製到 ${FAN_OUT_DEFAULTS.join(' / ')}？\n（會以 status=stopped 建立，需手動啟動）`;
@@ -362,10 +376,11 @@ export default function AdvisorPanel() {
             <Typography variant="subtitle2" sx={{ mb: 1 }}>授權的自動 action（按風險排序）：</Typography>
             <FormGroup>
               {[
-                { val: 'apply_params', label: '🔧 套用最佳參數（最安全）', desc: '把參數優化跑出的最佳組合直接套用到策略' },
-                { val: 'pause',        label: '⏸️ 暫停策略（中等）',       desc: '當 regime 不匹配時把策略改為 stopped' },
-                { val: 'fan_out',      label: '📡 一鍵擴幣種（中等）',     desc: '為高 Sharpe 策略建立 ETH/SOL/AVAX 兄弟（status=stopped）' },
-                { val: 'retire',       label: '🪦 退役策略（最積極）',      desc: 'LIVE 模式會自動跳過 retire，只在 paper 生效' },
+                { val: 'apply_params',      label: '🔧 套用最佳參數（最安全）', desc: '把參數優化跑出的最佳組合直接套用到策略' },
+                { val: 'pause',             label: '⏸️ 暫停策略（中等）',       desc: '當 regime 不匹配時把策略改為 stopped' },
+                { val: 'fan_out',           label: '📡 一鍵擴幣種（中等）',     desc: '為高 Sharpe 策略建立 ETH/SOL/AVAX 兄弟（回測過門檻才自動啟動）' },
+                { val: 'promote_candidate', label: '🚀 上線新候選（積極）',     desc: '候選池 qualified（已過 walk-forward）→ 自動建 strategy 並 status=running' },
+                { val: 'retire',            label: '🪦 退役策略（最積極）',      desc: 'LIVE 模式會自動跳過 retire，只在 paper 生效' },
               ].map(opt => {
                 const checked = (config?.auto_apply_actions || []).includes(opt.val);
                 return (
@@ -446,6 +461,46 @@ export default function AdvisorPanel() {
               helperText="保守建議 1.0（不錯）；積極可降到 0.5；嚴格可拉到 1.5"
               inputProps={{ min: -5, max: 10, step: 0.1 }}
             />
+
+            <Divider sx={{ my: 2 }} />
+
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>🚀 候選自動 promote 上線設定</Typography>
+            <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mb: 1 }}>
+              候選池跑出 qualified（walk-forward 過）後，達到下方門檻就自動建 strategy 並 status=running。
+              <br />需在上方勾選「🚀 上線新候選」action 才生效。
+            </Typography>
+            <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
+              <TextField
+                label="OOS Sharpe 門檻"
+                type="number"
+                size="small"
+                fullWidth
+                value={config?.auto_promote_min_oos_sharpe ?? 1.5}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (!Number.isNaN(n) && n >= -5 && n <= 10) {
+                    saveAutoConfig({ auto_promote_min_oos_sharpe: n });
+                  }
+                }}
+                helperText="建議 1.5（比 fan_out 嚴格，因為是全新策略）"
+                inputProps={{ min: -5, max: 10, step: 0.1 }}
+              />
+              <TextField
+                label="每日 promote 上限"
+                type="number"
+                size="small"
+                fullWidth
+                value={config?.auto_promote_max_per_day ?? 2}
+                onChange={(e) => {
+                  const n = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(n) && n >= 0 && n <= 20) {
+                    saveAutoConfig({ auto_promote_max_per_day: n });
+                  }
+                }}
+                helperText="2-3 比較合理，避免一天爆出 10 個新策略"
+                inputProps={{ min: 0, max: 20 }}
+              />
+            </Stack>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setAutoSettingsOpen(false)}>關閉</Button>

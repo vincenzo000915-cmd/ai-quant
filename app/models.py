@@ -314,6 +314,9 @@ class SystemConfig(db.Model):
     # Phase 10.9: fan_out 兄弟跑完回測且 OOS Sharpe >= 阈值才自動 start
     fan_out_auto_start = db.Column(db.Boolean, default=False)
     fan_out_min_oos_sharpe = db.Column(db.Float, default=1.0)
+    # Phase 10.10: 自動 promote 合格候選成 strategy
+    auto_promote_max_per_day = db.Column(db.Integer, default=2)
+    auto_promote_min_oos_sharpe = db.Column(db.Float, default=1.5)
 
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
@@ -344,6 +347,8 @@ class SystemConfig(db.Model):
             'auto_apply_max_per_day': self.auto_apply_max_per_day or 5,
             'fan_out_auto_start': bool(self.fan_out_auto_start),
             'fan_out_min_oos_sharpe': self.fan_out_min_oos_sharpe or 1.0,
+            'auto_promote_max_per_day': self.auto_promote_max_per_day or 2,
+            'auto_promote_min_oos_sharpe': self.auto_promote_min_oos_sharpe or 1.5,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

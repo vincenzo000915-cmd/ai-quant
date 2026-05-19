@@ -1056,7 +1056,7 @@ def update_system_config():
         return jsonify({'error': 'atr_tp_mult out of range [0.5, 20]'}), 400
     # Phase 10.8: 智能托管 config 守衛
     if 'auto_apply_actions' in patch:
-        allowed = {'apply_params', 'pause', 'retire', 'fan_out'}
+        allowed = {'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate'}
         actions = patch['auto_apply_actions']
         if not isinstance(actions, list) or any(a not in allowed for a in actions):
             return jsonify({'error': f'auto_apply_actions 必須是 list，元素限：{sorted(allowed)}'}), 400
@@ -1064,6 +1064,10 @@ def update_system_config():
         return jsonify({'error': 'auto_apply_max_per_day 必須 [0, 100]'}), 400
     if 'fan_out_min_oos_sharpe' in patch and not (-5 <= patch['fan_out_min_oos_sharpe'] <= 10):
         return jsonify({'error': 'fan_out_min_oos_sharpe 必須 [-5, 10]'}), 400
+    if 'auto_promote_max_per_day' in patch and not (0 <= patch['auto_promote_max_per_day'] <= 20):
+        return jsonify({'error': 'auto_promote_max_per_day 必須 [0, 20]'}), 400
+    if 'auto_promote_min_oos_sharpe' in patch and not (-5 <= patch['auto_promote_min_oos_sharpe'] <= 10):
+        return jsonify({'error': 'auto_promote_min_oos_sharpe 必須 [-5, 10]'}), 400
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)

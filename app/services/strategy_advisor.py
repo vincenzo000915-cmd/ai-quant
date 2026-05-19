@@ -16,7 +16,7 @@ the dashboard can render. The user always decides; we don't auto-act.
 from __future__ import annotations
 
 from app.extensions import db
-from app.models import Strategy, BacktestResult, ParamOptimization
+from app.models import Strategy, BacktestResult, ParamOptimization, StrategyCandidate
 from app.services.strategy_correlation import build_correlation_matrix
 from app.services.regime_detector import detect_regime, affinity_for, fit_label
 from app.services.mtf_consensus import mtf_check
@@ -183,6 +183,39 @@ def build_recommendations() -> dict:
                     ),
                     'meta': {'current_symbol': s.symbol, 'sharpe': sh},
                 })
+
+    # 6) 合格候選 → promote 上線（Phase 10.10）
+    qualified_cands = (
+        StrategyCandidate.query
+        .filter_by(status='qualified')
+        .filter(StrategyCandidate.promoted_strategy_id.is_(None))
+        .all()
+    )
+    for c in qualified_cands:
+        bt = c.backtest
+        if not bt:
+            continue
+        wf = (bt.walkforward_json or {}).get('out_sample') or {}
+        oos = wf.get('sharpe_ratio')
+        if oos is None:
+            continue
+        items.append({
+            'action': 'promote_candidate',
+            'strategy_id': None,
+            'strategy_name': c.source_name or f'候選 #{c.id}',
+            'severity': 'info',
+            'reason': (
+                f'候選 #{c.id} ({c.candidate_type}) 已通過 walk-forward 驗證 — '
+                f'OOS Sharpe = {oos:.2f}。建議 promote 上線。'
+            ),
+            'meta': {
+                'candidate_id': c.id,
+                'oos_sharpe': oos,
+                'candidate_type': c.candidate_type,
+                'symbol': 'BTC/USDT',
+                'source': c.source,
+            },
+        })
 
     # 嚴重度排序：critical > warn > info
     sev_rank = {'critical': 0, 'warn': 1, 'info': 2}

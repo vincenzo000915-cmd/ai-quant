@@ -97,6 +97,33 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         db.session.commit()
         return True, f'已退役（{reason}）'
 
+    if action == 'promote_candidate':
+        # Phase 10.10: 候選池 qualified → 上線
+        from app.services.candidate_pipeline import promote_candidate as do_promote
+        cfg = get_config()
+        cid = item.get('meta', {}).get('candidate_id')
+        oos = item.get('meta', {}).get('oos_sharpe')
+        threshold = float(cfg.get('auto_promote_min_oos_sharpe', 1.5))
+        if oos is None or oos < threshold:
+            return False, f'OOS Sharpe {oos} < 阈值 {threshold}，跳過'
+        symbol = item.get('meta', {}).get('symbol', 'BTC/USDT')
+        result = do_promote(cid, symbol=symbol)
+        if not result.get('ok'):
+            return False, f'promote 失败: {result.get("error")}'
+        new_sid = result['strategy']['id']
+        # qualified 已過 walk-forward → 直接上線（user 要的就是不手動）
+        new_strat = Strategy.query.get(new_sid)
+        if new_strat:
+            new_strat.status = 'running'
+            db.session.commit()
+        _telegram_safe(
+            f'🚀 <b>智能托管自動上線新策略</b>\n'
+            f'#{new_sid} {new_strat.name if new_strat else "?"}（候選 #{cid}）\n'
+            f'OOS Sharpe = {oos:.2f}\n'
+            f'已 status=running，立刻納入信號循環。'
+        )
+        return True, f'已 promote 候選 #{cid} → strategy #{new_sid}（已啟動）'
+
     if action == 'fan_out':
         # 直接複用 routes 的邏輯太重；重寫精簡版
         import re
@@ -144,6 +171,18 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     return False, f'未知 action: {action}'
 
 
+def _today_count_action(action: str) -> int:
+    """今日（UTC）某特定 action 已執行幾次。"""
+    today = datetime.datetime.utcnow().date()
+    rows = (
+        AuditLog.query
+        .filter(AuditLog.event_type == 'advisor_auto_apply')
+        .filter(AuditLog.created_at >= datetime.datetime.combine(today, datetime.time.min))
+        .all()
+    )
+    return sum(1 for r in rows if (r.context or {}).get('action') == action)
+
+
 def run_auto_apply() -> dict:
     """主入口 — Celery task 跟手動觸發都呼這個。"""
     cfg = get_config()
@@ -158,7 +197,9 @@ def run_auto_apply() -> dict:
         return {'skipped': True, 'reason': 'auto_apply_actions 為空'}
 
     daily_cap = int(cfg.get('auto_apply_max_per_day') or 5)
+    promote_cap = int(cfg.get('auto_promote_max_per_day') or 2)
     already_today = _today_count()
+    promote_today = _today_count_action('promote_candidate')
     remaining = max(0, daily_cap - already_today)
     if remaining == 0:
         return {'skipped': True, 'reason': f'已達每日上限 {daily_cap}', 'today_count': already_today}
@@ -179,6 +220,11 @@ def run_auto_apply() -> dict:
         if len(applied) >= remaining:
             skipped.append({'item': item, 'why': '本輪達到剩餘日限'})
             continue
+        # promote_candidate 額外有自己的日限
+        if action == 'promote_candidate':
+            if promote_today + sum(1 for a in applied if a['action'] == 'promote_candidate') >= promote_cap:
+                skipped.append({'item': item, 'why': f'promote 日限 {promote_cap} 已達'})
+                continue
 
         ok, msg = _execute_one(item)
         rec = {
