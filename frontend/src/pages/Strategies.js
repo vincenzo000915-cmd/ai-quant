@@ -4,8 +4,9 @@ import {
   TableContainer, TableHead, TableRow, Paper, Chip, Button, IconButton,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
-  LinearProgress, Tooltip, Alert, Snackbar, Grid,
+  LinearProgress, Tooltip, Alert, Snackbar, Grid, Checkbox,
 } from '@mui/material';
+import PodcastsIcon from '@mui/icons-material/Podcasts';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
@@ -83,6 +84,47 @@ export default function Strategies() {
   const [backtestDialog, setBacktestDialog] = useState(false);
   const [backtestData, setBacktestData] = useState(null);
   const [backtestRunning, setBacktestRunning] = useState(null); // strategy_id running
+  // Phase 10.6: fan-out modal
+  const [fanOutOpen, setFanOutOpen] = useState(false);
+  const [fanOutSource, setFanOutSource] = useState(null);
+  const [fanOutSelected, setFanOutSelected] = useState([]);
+  const [fanOutSubmitting, setFanOutSubmitting] = useState(false);
+
+  const handleOpenFanOut = (strategy) => {
+    setFanOutSource(strategy);
+    setFanOutSelected([]);
+    setFanOutOpen(true);
+  };
+
+  const handleSubmitFanOut = async () => {
+    if (!fanOutSource || fanOutSelected.length === 0) return;
+    setFanOutSubmitting(true);
+    try {
+      const r = await fetch(`${API}/api/strategies/${fanOutSource.id}/fan-out`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbols: fanOutSelected }),
+      });
+      const body = await r.json();
+      if (r.ok) {
+        const made = body.created?.length || 0;
+        const skipped = body.skipped?.length || 0;
+        setSnackbar({
+          open: true,
+          severity: made > 0 ? 'success' : 'warning',
+          message: `已建立 ${made} 個兄弟策略${skipped ? `（${skipped} 個跳過）` : ''}，全部 status=stopped`,
+        });
+        setFanOutOpen(false);
+        await fetchStrategies();
+      } else {
+        setSnackbar({ open: true, severity: 'error', message: body.error || '擴充失敗' });
+      }
+    } catch (e) {
+      setSnackbar({ open: true, severity: 'error', message: `失敗：${e.message}` });
+    } finally {
+      setFanOutSubmitting(false);
+    }
+  };
 
   const handleRunBacktest = async (strategy) => {
     setBacktestRunning(strategy.id);
@@ -350,6 +392,13 @@ export default function Strategies() {
                             <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        {strategy.status !== 'retired' && (
+                          <Tooltip title="一鍵複製此策略到其他幣種">
+                            <IconButton size="small" sx={{ color: '#a78bfa' }} onClick={() => handleOpenFanOut(strategy)}>
+                              <PodcastsIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         <Tooltip title="刪除">
                           <IconButton size="small" color="error" onClick={() => handleDelete(strategy)}>
                             <DeleteIcon fontSize="small" />
@@ -654,6 +703,99 @@ export default function Strategies() {
             {backtestRunning ? '回測中⋯' : '重新跑回測'}
           </Button>
           <Button onClick={() => setBacktestDialog(false)} variant="contained">關閉</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Phase 10.6: Fan-out Modal */}
+      <Dialog open={fanOutOpen} onClose={() => setFanOutOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <PodcastsIcon sx={{ color: '#a78bfa' }} />
+          一鍵擴充策略到多幣種
+        </DialogTitle>
+        <DialogContent>
+          {fanOutSource && (
+            <>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                來源策略：<strong>{fanOutSource.name}</strong>（{fanOutSource.symbol} · {fanOutSource.timeframe} · {fanOutSource.type}）
+                <br />
+                將以相同參數複製到下面勾選的幣種。新策略以 <strong>已停止</strong> 狀態建立，需手動啟動。
+              </Alert>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>選擇要擴充的目標幣種：</Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {supportedSymbols
+                  .filter(s => s.symbol !== fanOutSource.symbol)
+                  .map(s => {
+                    const checked = fanOutSelected.includes(s.symbol);
+                    const alreadyInFamily = strategies.some(
+                      st => st.template_group && st.template_group === (fanOutSource.template_group || fanOutSource.id) && st.symbol === s.symbol,
+                    );
+                    return (
+                      <Box
+                        key={s.symbol}
+                        onClick={() => {
+                          if (alreadyInFamily) return;
+                          setFanOutSelected(prev =>
+                            prev.includes(s.symbol)
+                              ? prev.filter(x => x !== s.symbol)
+                              : [...prev, s.symbol],
+                          );
+                        }}
+                        sx={{
+                          minWidth: 110,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.5,
+                          px: 1.5,
+                          py: 0.8,
+                          border: '1px solid',
+                          borderColor: checked ? '#a78bfa' : 'rgba(255,255,255,0.12)',
+                          bgcolor: checked ? 'rgba(167,139,250,0.12)' : 'transparent',
+                          borderRadius: 1,
+                          cursor: alreadyInFamily ? 'not-allowed' : 'pointer',
+                          opacity: alreadyInFamily ? 0.35 : 1,
+                          '&:hover': { borderColor: alreadyInFamily ? 'rgba(255,255,255,0.12)' : '#a78bfa' },
+                        }}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          disabled={alreadyInFamily}
+                          size="small"
+                          sx={{ p: 0.3, color: '#a78bfa', '&.Mui-checked': { color: '#a78bfa' } }}
+                          tabIndex={-1}
+                        />
+                        <Typography variant="body2" fontWeight={600}>
+                          {s.symbol}
+                          {alreadyInFamily && (
+                            <Typography component="span" variant="caption" sx={{ ml: 0.5, color: 'text.secondary' }}>
+                              （已有）
+                            </Typography>
+                          )}
+                        </Typography>
+                      </Box>
+                    );
+                  })}
+              </Box>
+              {fanOutSelected.length > 0 && (
+                <Box sx={{ mt: 2, p: 1.5, bgcolor: 'rgba(167,139,250,0.08)', borderRadius: 1 }}>
+                  <Typography variant="caption" color="text.secondary">即將建立：</Typography>
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    {fanOutSelected.map(s => `${fanOutSource.name.replace(/\s*\([A-Z]{2,6}\)\s*$/, '')} (${s.split('/')[0]})`).join('、')}
+                  </Typography>
+                </Box>
+              )}
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFanOutOpen(false)}>取消</Button>
+          <Button
+            variant="contained"
+            disabled={fanOutSelected.length === 0 || fanOutSubmitting}
+            onClick={handleSubmitFanOut}
+            sx={{ bgcolor: '#a78bfa', '&:hover': { bgcolor: '#8b5cf6' } }}
+          >
+            {fanOutSubmitting ? '建立中…' : `建立 ${fanOutSelected.length} 個兄弟策略`}
+          </Button>
         </DialogActions>
       </Dialog>
 

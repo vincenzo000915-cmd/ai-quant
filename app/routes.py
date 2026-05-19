@@ -77,6 +77,91 @@ def strategies_live_state():
     return jsonify(all_live_states())
 
 
+@api_bp.route('/strategies/<int:id>/fan-out', methods=['POST'])
+def fan_out_strategy(id):
+    """Phase 10.6: clone a strategy across multiple symbols in one click.
+
+    Body: {"symbols": ["ETH/USDT", "SOL/USDT", ...]}
+
+    - 每個 symbol 建一個新的 Strategy（status='stopped'，使用者手動啟動）
+    - params / timeframe / category / max_positions / max_daily_loss 全部繼承
+    - 用 template_group 串起家族（source 本身也補上自己的 id 當 anchor）
+    - 已存在同 group 同 symbol 的兄弟會被跳過（回傳 skipped）
+    """
+    from app.services.audit import log as audit
+    from app.services.symbols import SUPPORTED_SYMBOLS
+
+    source = Strategy.query.get_or_404(id)
+    data = request.get_json() or {}
+    raw_symbols = data.get('symbols') or []
+    if not isinstance(raw_symbols, list) or not raw_symbols:
+        return jsonify({'error': '需要 symbols 陣列'}), 400
+
+    # 驗證 symbol
+    invalid = [s for s in raw_symbols if s not in SUPPORTED_SYMBOLS]
+    if invalid:
+        return jsonify({'error': f'不支援的幣種：{invalid}'}), 400
+
+    # 確保 source 自己也在 template_group 內當 anchor
+    if source.template_group is None:
+        source.template_group = source.id
+    group = source.template_group
+
+    # 同 group 已存在哪些 symbol，避免重複
+    existing_symbols = {
+        s.symbol for s in Strategy.query
+        .filter(Strategy.template_group == group)
+        .all()
+    }
+
+    created = []
+    skipped = []
+
+    # 取出 source 名字的基底（去掉舊的「(XXX)」後綴，若有）
+    import re
+    base_name = re.sub(r'\s*\([A-Z]{2,6}\)\s*$', '', source.name).strip()
+
+    for sym in raw_symbols:
+        if sym == source.symbol or sym in existing_symbols:
+            skipped.append({'symbol': sym, 'reason': '已存在同 group 兄弟'})
+            continue
+        nickname = sym.split('/')[0]
+        clone = Strategy(
+            name=f'{base_name} ({nickname})',
+            type=source.type,
+            category=source.category,
+            params=dict(source.params or {}),
+            symbol=sym,
+            timeframe=source.timeframe,
+            status='stopped',
+            max_positions=source.max_positions,
+            max_daily_loss=source.max_daily_loss,
+            template_group=group,
+        )
+        db.session.add(clone)
+        db.session.flush()  # 拿 id
+        created.append({'id': clone.id, 'symbol': sym, 'name': clone.name})
+        existing_symbols.add(sym)
+
+    db.session.commit()
+
+    audit('strategy_fan_out',
+          actor='user',
+          source_id=source.id,
+          source_name=source.name,
+          template_group=group,
+          created=created,
+          skipped=skipped)
+
+    return jsonify({
+        'source_id': source.id,
+        'template_group': group,
+        'created': created,
+        'skipped': skipped,
+        'message': f'已新增 {len(created)} 個兄弟實例（status=stopped，請至策略表手動啟動）',
+    }), 201
+
+
 @api_bp.route('/strategies/correlation', methods=['GET'])
 def strategies_correlation():
     """Phase 10.1: pairwise daily-PnL correlation matrix for running strategies.

@@ -21,6 +21,9 @@ class Strategy(db.Model):
     # Phase 5.3: 自動退役紀錄 — status='retired' 時填入
     retired_at = db.Column(db.DateTime, nullable=True)
     retire_reason = db.Column(db.Text, nullable=True)
+    # Phase 10.6: 一鍵 fan-out — 同 template_group 的兄弟實例由同一個 source 衍生
+    # 值 = source strategy id（自身也填，以便 GROUP BY 拿到完整家族）
+    template_group = db.Column(db.Integer, nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     updated_at = db.Column(db.DateTime, onupdate=datetime.datetime.utcnow)
 
@@ -45,6 +48,7 @@ class Strategy(db.Model):
             'candidate_id': self.candidate_id,
             'retired_at': self.retired_at.isoformat() if self.retired_at else None,
             'retire_reason': self.retire_reason,
+            'template_group': self.template_group,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
