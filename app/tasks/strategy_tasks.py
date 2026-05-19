@@ -862,3 +862,21 @@ def daily_advisor_summary():
 
     _tg('\n'.join(lines), force=True)
     return f'daily-summary sent: pnl={today_pnl:+.2f} auto={auto_count}'
+
+
+# ===== Phase 12.4: 預熱 Dashboard 緩存（避免用戶等 24s 冷啟動）=====
+
+@celery_app.task
+def prewarm_dashboard_cache():
+    """每 90s 跑 — 提前算好 advisor / regime / MTF / correlation，灌進 Redis 緩存。
+    用戶開 Dashboard 直接拿緩存。"""
+    from app.services.strategy_advisor import build_recommendations
+    from app.services.strategy_correlation import build_correlation_matrix
+    # build_recommendations 內部會用到 regime + MTF + correlation，這一個調用全暖
+    try:
+        recs = build_recommendations()
+        # correlation 額外暖一下（如果 advisor 沒走過）
+        build_correlation_matrix()
+        return f'prewarm ok: {recs.get("summary", {}).get("total", 0)} items'
+    except Exception as e:
+        return f'prewarm error: {type(e).__name__}: {e}'

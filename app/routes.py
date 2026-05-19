@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from app.extensions import db
 from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate, ParamOptimization
 from app.services.rate_limit import rate_limit
+from app.services.cache import cached_response
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
@@ -256,6 +257,7 @@ def fan_out_strategy(id):
 
 
 @api_bp.route('/advisor/recommendations', methods=['GET'])
+@cached_response('advisor', ttl=60)
 def advisor_recommendations():
     """Phase 10.7: 综合所有 phase-10 诊断（相关性 + regime + MTF + 优化）生成建议。"""
     from app.services.strategy_advisor import build_recommendations
@@ -299,6 +301,7 @@ def strategy_mtf(id):
 
 
 @api_bp.route('/mtf/running', methods=['GET'])
+@cached_response('mtf_running', ttl=120)
 def mtf_for_running():
     """Phase 10.4: MTF consensus for every running strategy."""
     from app.services.mtf_consensus import mtf_check
@@ -318,6 +321,7 @@ def get_regime():
 
 
 @api_bp.route('/regime/running', methods=['GET'])
+@cached_response('regime_running', ttl=120)
 def regime_for_running():
     """Phase 10.3: regime per distinct (symbol,timeframe) used by running strategies,
     plus per-strategy affinity fit."""
@@ -353,6 +357,7 @@ def regime_for_running():
 
 
 @api_bp.route('/strategies/correlation', methods=['GET'])
+@cached_response('correlation', ttl=120)
 def strategies_correlation():
     """Phase 10.1: pairwise daily-PnL correlation matrix for running strategies.
 

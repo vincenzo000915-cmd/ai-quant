@@ -20,6 +20,7 @@ import pandas as pd
 import ta
 
 from app.services.exchange_service import fetch_ohlcv
+from app.services.cache import cached
 
 
 STRATEGY_AFFINITY = {
@@ -98,6 +99,7 @@ def _classify(adx: float | None, hurst: float | None) -> str:
     return 'range'
 
 
+@cached('regime', ttl=120)
 def detect_regime(symbol: str = 'BTC/USDT', timeframe: str = '4h', limit: int = 300) -> dict:
     """Compute regime for a single symbol+timeframe.
 

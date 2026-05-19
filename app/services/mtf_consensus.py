@@ -14,12 +14,14 @@ import pandas as pd
 
 from app.services.exchange_service import fetch_ohlcv
 from app.services.strategy_engine import get_signal, get_candle_df
+from app.services.cache import cached
 
 
 DEFAULT_TFS = ['15m', '1h', '4h', '1d']
 MIN_CANDLES = 100
 
 
+@cached('mtf_signal', ttl=120)
 def signal_at_tf(strategy_type: str, params: dict, symbol: str, timeframe: str) -> dict:
     """Returns {tf, signal, n, error?}."""
     try:
