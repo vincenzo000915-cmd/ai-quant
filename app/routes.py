@@ -502,6 +502,19 @@ def btc_chart():
         return jsonify({'error': str(e)}), 500
 
 
+@api_bp.route('/telegram/test', methods=['POST'])
+def telegram_test():
+    """Phase 6.2: 試送一則 Telegram 驗證 BOT_TOKEN / CHAT_ID 設定"""
+    from app.services.telegram_service import send, _enabled
+    if not _enabled():
+        return jsonify({
+            'enabled': False,
+            'error': 'TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 未設定（.env）',
+        }), 503
+    result = send('🧪 <b>Telegram 通道測試</b>\n收到這則表示告警通道工作正常。', force=True)
+    return jsonify({'enabled': True, **result}), (200 if result.get('sent') else 502)
+
+
 @api_bp.route('/halt', methods=['POST'])
 def manual_halt():
     """Phase 6.1: 手動觸發 halt（全局拒新開倉）"""

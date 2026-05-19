@@ -159,6 +159,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     f'(本金${trade_size:.0f}, 槓桿{lev}x, '
                     f'名義${notional:.0f})'
                 )
+                from app.services.telegram_service import notify_open
+                notify_open(s.name, s.symbol, 'long', amount_btc, price, notional)
 
             elif signal in ('sell', 'close') and position:
                 # 計算PnL
@@ -191,6 +193,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     f'✅ {s.name}: 平倉 @ ${price:.1f} '
                     f'PnL=${pnl_leveraged:.2f} ({pnl_pct:+.2f}%)'
                 )
+                from app.services.telegram_service import notify_close
+                notify_close(s.name, s.symbol, price, pnl_leveraged, pnl_pct, 'signal')
 
         except Exception as e:
             results.append(f'{s.name}: 錯誤 - {e}')
@@ -256,6 +260,8 @@ def check_stop_loss():
                 db.session.add(trade)
                 db.session.commit()
                 triggered.append(f'{pos.symbol} 止損 @ ${current:.1f} ({pnl_pct:.1f}%)')
+                from app.services.telegram_service import notify_close
+                notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif pnl_pct >= tp_pct:
                 order = _simulated_order(pos.symbol, 'sell', pos.size * current, current)
@@ -280,6 +286,8 @@ def check_stop_loss():
                 db.session.add(trade)
                 db.session.commit()
                 triggered.append(f'{pos.symbol} 止盈 @ ${current:.1f} ({pnl_pct:.1f}%)')
+                from app.services.telegram_service import notify_close
+                notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'take_profit')
 
         except Exception as e:
             print(f'[sl] 檢查失敗: {e}')
@@ -383,8 +391,11 @@ def monitor_strategy_health():
             if retire_reasons:
                 s.status = 'retired'
                 s.retired_at = datetime.utcnow()
-                s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + '; '.join(retire_reasons)
+                reason_txt = '; '.join(retire_reasons)
+                s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + reason_txt
                 actions.append(f'🔴 {s.name} retired: {", ".join(retire_reasons)}')
+                from app.services.telegram_service import notify_retire
+                notify_retire(s.name, reason_txt)
             else:
                 actions.append(f'✅ {s.name} OK (full Sharpe={full_sh}, OOS={oos_sh}, trades={total_trades})')
 
@@ -437,7 +448,8 @@ def monitor_daily_loss():
     if total <= -max_loss:
         reason = f'daily loss {total:.2f} ≤ -{max_loss:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f})'
         set_halted(reason)
-        # Telegram 通知留 6.2 接通
+        from app.services.telegram_service import notify_halt
+        notify_halt(reason)
         return f'🛑 HALTED: {reason}'
 
     return f'OK: 今日 PnL ${total:.2f} (realized {realized:.2f} + unrealized {unrealized:.2f}) > -${max_loss:.2f}'
