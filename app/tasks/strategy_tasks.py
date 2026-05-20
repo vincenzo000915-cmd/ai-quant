@@ -205,15 +205,32 @@ def _run_signals(strategy_id=None, category_filter=None):
                     entry_price=price, cfg=cfg,
                 )
 
-                # Phase 12.7: 本地 Position.size 要對齊 OKX 真實合約持倉
-                # LIVE 模式 place_order_live 按 ctVal 取整下整數張，本地必須也存「實際 base amount」
-                # 否則 reconcile size_drift 報警 + SL/TP 算出來的 PnL 金額偏低 N 倍
-                real_size = amount_base
+                # Phase 12.7+12.8: Position.size 統一為「實際 base amount」（含槓桿）
+                # 這樣 PnL = size × delta_price 直接得真實 USDT，不用再 × lev
+                intended_base = (effective_size * lev) / price
+                intended_notional = intended_base * price
+                real_size = intended_base
                 if mode == 'live':
                     from app.services.symbols import get_contract_size
                     contract_size = get_contract_size(s.symbol)
-                    contracts_target = max(1, round((effective_size * lev / price) / contract_size))
+                    contracts_target = max(1, round(intended_base / contract_size))
                     real_size = contracts_target * contract_size
+                    real_notional = real_size * price
+                    # Phase 12.8: 合約最小張數取整可能讓實際 > 目標 N 倍。
+                    # 超出 50% 就跳過（避免 ETH $120 目標變 $210 實際持倉）。
+                    if intended_notional > 0 and real_notional / intended_notional > 1.5:
+                        results.append(
+                            f'⛔ {s.name}: 跳過 — 合約最小張數 ${real_notional:.0f} '
+                            f'超過目標 ${intended_notional:.0f} 太多（{(real_notional/intended_notional-1)*100:.0f}%）。'
+                            f'若想做 {s.symbol}，提高 trade_size 到 ${effective_size * (real_notional/intended_notional):.0f} 以上'
+                        )
+                        from app.services.telegram_service import send as _tg
+                        _tg(
+                            f'⚠️ <b>{s.name} 跳過下單</b>\n'
+                            f'{s.symbol} 最小合約 ${real_notional:.0f} >> 目標 ${intended_notional:.0f}\n'
+                            f'建議：提高 trade_size 或關掉此 symbol。'
+                        )
+                        continue
 
                 pos = Position(
                     strategy_id=s.id,
@@ -248,7 +265,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     pnl_raw_pct = (position.entry_price - price) / position.entry_price * 100
                     okx_side = 'buy'
                 pnl_pct = pnl_raw_pct * lev
-                pnl_leveraged = pnl_raw_pct * position.size * position.entry_price * lev / 100
+                # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
+                pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
                 order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side)
 
@@ -305,7 +323,8 @@ def update_positions():
             current = ticker['price']
             pos.current_price = current
             _, raw_pct = _pnl_pct_for(pos, current, lev)
-            pos.unrealized_pnl = raw_pct * pos.size * pos.entry_price * lev / 100
+            # Phase 12.8: size 已含 lev，PnL 不再 × lev
+            pos.unrealized_pnl = raw_pct * pos.size * pos.entry_price / 100
         except Exception as e:
             print(f'[update] 持倉 {pos.id} 更新失敗: {e}')
     db.session.commit()
@@ -347,7 +366,7 @@ def check_stop_loss():
 
             if sl_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
-                pnl = raw_pct * pos.size * pos.entry_price * lev / 100
+                pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
@@ -373,7 +392,7 @@ def check_stop_loss():
 
             elif tp_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
-                pnl = raw_pct * pos.size * pos.entry_price * lev / 100
+                pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
