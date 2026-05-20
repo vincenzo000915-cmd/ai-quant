@@ -111,13 +111,13 @@ def reconcile() -> dict:
         actions.append({'type': 'okx_orphan_halted', 'count': len(okx_orphans), 'details': okx_orphans})
 
     # === (c) 兩邊都有 — 比對 size / avg_px ===
+    from app.services.symbols import get_contract_size
     drift_alerts = []
     for key in set(okx_by_key.keys()) & set(local_by_key.keys()):
         op = okx_by_key[key]
         lp = local_by_key[key]
-        # OKX 的 pos 是合約張數（contract = 0.01 BTC for BTC-USDT-SWAP），轉成 BTC 數量比較
-        # 簡化：假設 BTC swap 是 0.01 BTC/contract；其他幣可能不同，未來擴展時看
-        contract_size = 0.01 if 'BTC' in op['inst_id'] else 0.01   # TODO: 其他 inst 查 OKX instruments
+        # OKX 的 pos 是合約張數，每幣種 ctVal 不同（BTC=0.01, ETH=0.1, SOL=1, DOGE=1000 ...）
+        contract_size = get_contract_size(lp.symbol)
         okx_btc = abs(op['pos_contracts']) * contract_size
         if abs(okx_btc - lp.size) / max(lp.size, 1e-9) > 0.05:   # > 5% 偏差
             drift_alerts.append({

@@ -205,11 +205,21 @@ def _run_signals(strategy_id=None, category_filter=None):
                     entry_price=price, cfg=cfg,
                 )
 
+                # Phase 12.7: 本地 Position.size 要對齊 OKX 真實合約持倉
+                # LIVE 模式 place_order_live 按 ctVal 取整下整數張，本地必須也存「實際 base amount」
+                # 否則 reconcile size_drift 報警 + SL/TP 算出來的 PnL 金額偏低 N 倍
+                real_size = amount_base
+                if mode == 'live':
+                    from app.services.symbols import get_contract_size
+                    contract_size = get_contract_size(s.symbol)
+                    contracts_target = max(1, round((effective_size * lev / price) / contract_size))
+                    real_size = contracts_target * contract_size
+
                 pos = Position(
                     strategy_id=s.id,
                     symbol=s.symbol,
                     side=side,
-                    size=amount_base,
+                    size=real_size,
                     entry_price=price,
                     current_price=price,
                     status='open',

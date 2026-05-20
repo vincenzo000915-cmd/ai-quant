@@ -254,10 +254,17 @@ def fetch_okx_positions() -> list[dict]:
         pos = float(p.get('pos') or 0)
         if pos == 0:
             continue  # 無實際持倉的條目跳過
+        # hedge mode (long_short_mode) → posSide 字段直接給 'long' / 'short'
+        # net mode → posSide='net'，這時才看 pos 符號判方向
+        pos_side = p.get('posSide')
+        if pos_side in ('long', 'short'):
+            side = pos_side
+        else:
+            side = 'long' if pos > 0 else 'short'
         result.append({
             'inst_id': p.get('instId'),
             'pos_contracts': pos,
-            'side': 'long' if pos > 0 else 'short',
+            'side': side,
             'avg_px': float(p.get('avgPx') or 0),
             'upl': float(p.get('upl') or 0),
             'lever': float(p.get('lever') or 0),
