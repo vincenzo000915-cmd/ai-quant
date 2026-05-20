@@ -298,7 +298,8 @@ def _gen_client_order_id() -> str:
 
 
 def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0,
-                     client_order_id: str | None = None, max_retries: int = 3) -> dict:
+                     client_order_id: str | None = None, max_retries: int = 3,
+                     pos_side: str | None = None) -> dict:
     """Phase 6.5 + 8.3: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
 
     8.3 加入：
@@ -343,12 +344,17 @@ def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float =
     body = {
         'instId': inst_id,
         'tdMode': 'cross',
-        'side': side,            # 'buy' open long; 'sell' close long (or open short — careful)
+        'side': side,            # 'buy' / 'sell'
         'ordType': 'market',
         'sz': str(int(contracts)),
         'clOrdId': cl_ord_id,    # 8.3: 防重
-        # posSide 不設讓 OKX 用 net mode（雙向 'long'/'short' 用 net 模式）
     }
+    # 若帳號是 long_short_mode 必須帶 posSide。net mode 不會看這欄。
+    # caller 沒傳就推：buy → long，sell → short（只對「開倉」正確；平倉 caller 必須顯式傳）
+    if pos_side:
+        body['posSide'] = pos_side
+    else:
+        body['posSide'] = 'long' if side == 'buy' else 'short'
 
     # 8.3: exponential backoff retry — 暫時性錯誤重試最多 max_retries 次
     last_err = None

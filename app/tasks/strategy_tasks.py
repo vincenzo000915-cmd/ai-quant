@@ -37,14 +37,17 @@ def _simulated_order(symbol, side, amount_usdt, price):
     }
 
 
-def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0):
+def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0,
+                 pos_side: str | None = None):
     """Phase 6.5: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
     失敗時 fallback 寫 telegram，return None。
+
+    pos_side: 'long' | 'short' — 平倉時 caller 必須顯式傳；開倉若不傳會由 side 推。
     """
     if mode == 'live':
         try:
             from app.services.exchange_service import place_order_live
-            res = place_order_live(symbol, side, amount_usdt, leverage=leverage)
+            res = place_order_live(symbol, side, amount_usdt, leverage=leverage, pos_side=pos_side)
             return {
                 'id': res['okx'].get('ordId', 'live_unknown'),
                 'symbol': symbol, 'side': side, 'type': 'market',
@@ -190,7 +193,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 amount_base = round(effective_size / price, 6)
                 notional = amount_base * price * lev
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev)
+                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -237,7 +240,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pnl_pct = pnl_raw_pct * lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price * lev / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side)
 
                 trade = Trade(
                     position_id=position.id,
@@ -333,7 +336,7 @@ def check_stop_loss():
                 tp_hit = pnl_pct >= tp_pct
 
             if sl_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
                 pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
@@ -359,7 +362,7 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif tp_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev)
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
                 pnl = raw_pct * pos.size * pos.entry_price * lev / 100
                 trade = Trade(
                     position_id=pos.id,
