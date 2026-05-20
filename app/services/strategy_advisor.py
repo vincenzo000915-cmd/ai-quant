@@ -23,7 +23,10 @@ from app.services.mtf_consensus import mtf_check
 
 
 HIGH_CORR = 0.7
-APPLY_PARAMS_LIFT = 0.5   # OOS Sharpe must beat baseline by this much
+APPLY_PARAMS_LIFT = 0.5    # OOS Sharpe must beat baseline by this much
+RETIRE_MIN_SHARPE_DIFF = 0.5    # 兩支 Sharpe 差距 < 0.5 不算明顯，不推 retire
+RETIRE_GRACE_DAYS = 7      # 創建 < 7 天的策略不推 retire（跟 monitor_strategy_health 同步）
+RETIRE_REQUIRE_POSITIVE_KEEP = True   # 留下的那支 Sharpe 必須 > 0，否則「保留較好的」沒意義
 
 
 def _latest_backtest_sharpe(strategy_id: int) -> float | None:
@@ -34,6 +37,12 @@ def _latest_backtest_sharpe(strategy_id: int) -> float | None:
         .first()
     )
     return bt.sharpe_ratio if bt else None
+
+
+def _has_open_position(strategy_id: int) -> bool:
+    """有 open position 時退役不會平倉，只是阻新信號 — 通常沒救急效果"""
+    from app.models import Position
+    return Position.query.filter_by(strategy_id=strategy_id, status='open').count() > 0
 
 
 def _latest_completed_optimization(strategy_id: int):
@@ -53,10 +62,14 @@ def build_recommendations() -> dict:
     items: list[dict] = []
     sharpe_by_id = {s.id: _latest_backtest_sharpe(s.id) for s in running}
 
-    # 1) 相關性 → retire 較弱的那一支
+    # 1) 相關性 → retire 較弱的那一支（Phase 12.12: 5 個 sanity check）
+    import datetime as _dt
     corr = build_correlation_matrix([s.id for s in running])
     strat_map = {s.id: s for s in running}
     seen_pairs: set[frozenset] = set()
+    retired_already: set[int] = set()  # dedup — 同一個 drop 只推一次
+    grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=RETIRE_GRACE_DAYS)
+
     for flag in corr.get('flagged', []):
         pair = frozenset({flag['a_id'], flag['b_id']})
         if pair in seen_pairs:
@@ -64,19 +77,43 @@ def build_recommendations() -> dict:
         seen_pairs.add(pair)
         a_sh = sharpe_by_id.get(flag['a_id'])
         b_sh = sharpe_by_id.get(flag['b_id'])
-        # 留 Sharpe 高的，退 Sharpe 低的
-        if a_sh is None and b_sh is None:
-            keep_id, drop_id = flag['a_id'], flag['b_id']
-        elif a_sh is None:
-            keep_id, drop_id = flag['b_id'], flag['a_id']
-        elif b_sh is None:
-            keep_id, drop_id = flag['a_id'], flag['b_id']
-        else:
-            keep_id, drop_id = (flag['a_id'], flag['b_id']) if a_sh >= b_sh else (flag['b_id'], flag['a_id'])
+
+        # check 1: Sharpe 數據不夠就跳過（沒得比較）
+        if a_sh is None or b_sh is None:
+            continue
+
+        keep_id, drop_id = (flag['a_id'], flag['b_id']) if a_sh >= b_sh else (flag['b_id'], flag['a_id'])
+        keep_sh, drop_sh = (a_sh, b_sh) if keep_id == flag['a_id'] else (b_sh, a_sh)
         drop = strat_map.get(drop_id)
         keep = strat_map.get(keep_id)
         if not drop or not keep:
             continue
+
+        # check 2: dedup — 一個策略最多只推一次 retire
+        if drop_id in retired_already:
+            continue
+
+        # check 3: 兩邊 Sharpe 差距太小不算「明顯較差」
+        if abs(keep_sh - drop_sh) < RETIRE_MIN_SHARPE_DIFF:
+            continue
+
+        # check 4: 留下的那支 Sharpe 必須 > 0 才有意義（不然只是比誰更糟）
+        if RETIRE_REQUIRE_POSITIVE_KEEP and keep_sh <= 0:
+            continue
+
+        # check 5: 同 template_group 兄弟（同策略不同幣種）— 高相關是設計使然，不算冗餘
+        if drop.template_group is not None and drop.template_group == keep.template_group:
+            continue
+
+        # check 6: 7 天保護期 — 新策略還沒累積 live 數據，不該被 backtest fallback 殺
+        if drop.created_at and drop.created_at > grace_cutoff:
+            continue
+
+        # check 7: 有 open position — retire 不會平倉只是阻新信號，沒救急效果
+        if _has_open_position(drop_id):
+            continue
+
+        retired_already.add(drop_id)
         items.append({
             'action': 'retire',
             'strategy_id': drop_id,
@@ -84,8 +121,7 @@ def build_recommendations() -> dict:
             'severity': 'warn',
             'reason': (
                 f'與 #{keep_id} {keep.name} 相關係數 {flag["corr"]:.2f}（高度同質）。'
-                f'兩者 Sharpe = {a_sh if drop_id == flag["a_id"] else b_sh} vs '
-                f'{b_sh if drop_id == flag["a_id"] else a_sh}，保留較高那支。'
+                f'Sharpe = {drop_sh:.2f} vs {keep_sh:.2f}（差 {abs(keep_sh-drop_sh):.2f}），保留較高那支。'
             ),
             'meta': {'twin_id': keep_id, 'corr': flag['corr']},
         })
