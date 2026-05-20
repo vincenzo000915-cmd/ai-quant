@@ -193,20 +193,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 amount_base = round(effective_size / price, 6)
                 notional = amount_base * price * lev
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side)
-                if order is None:
-                    results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
-                    continue
-
-                # Phase 9.4: 開倉時計算絕對 SL/TP（ATR mode）
-                from app.services.risk_levels import compute_sl_tp
-                sl_price, tp_price, sl_dbg = compute_sl_tp(
-                    symbol=s.symbol, timeframe=s.timeframe, side=side,
-                    entry_price=price, cfg=cfg,
-                )
-
-                # Phase 12.7+12.8: Position.size 統一為「實際 base amount」（含槓桿）
-                # 這樣 PnL = size × delta_price 直接得真實 USDT，不用再 × lev
+                # Phase 12.7+12.8+12.9.2: 先算出實際合約持倉，超額就跳過下單
                 intended_base = (effective_size * lev) / price
                 intended_notional = intended_base * price
                 real_size = intended_base
@@ -216,8 +203,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     contracts_target = max(1, round(intended_base / contract_size))
                     real_size = contracts_target * contract_size
                     real_notional = real_size * price
-                    # Phase 12.8: 合約最小張數取整可能讓實際 > 目標 N 倍。
-                    # 超出 50% 就跳過（避免 ETH $120 目標變 $210 實際持倉）。
+                    # Phase 12.9.2: 超額檢查**必須**在 _place_order 之前 — 之前順序顛倒，
+                    # OKX 真下單後才檢查，跳過的只是本地 Position 寫入 → OKX 孤兒
                     if intended_notional > 0 and real_notional / intended_notional > 1.5:
                         results.append(
                             f'⛔ {s.name}: 跳過 — 合約最小張數 ${real_notional:.0f} '
@@ -231,6 +218,18 @@ def _run_signals(strategy_id=None, category_filter=None):
                             f'建議：提高 trade_size 或關掉此 symbol。'
                         )
                         continue
+
+                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side)
+                if order is None:
+                    results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
+                    continue
+
+                # Phase 9.4: 開倉時計算絕對 SL/TP（ATR mode）
+                from app.services.risk_levels import compute_sl_tp
+                sl_price, tp_price, sl_dbg = compute_sl_tp(
+                    symbol=s.symbol, timeframe=s.timeframe, side=side,
+                    entry_price=price, cfg=cfg,
+                )
 
                 pos = Position(
                     strategy_id=s.id,
