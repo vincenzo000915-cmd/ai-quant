@@ -23,19 +23,29 @@ from app.services.mtf_consensus import mtf_check
 
 
 HIGH_CORR = 0.7
-APPLY_PARAMS_LIFT = 0.5    # OOS Sharpe must beat baseline by this much
+APPLY_PARAMS_LIFT = 0.5         # OOS Sharpe must beat baseline by this much
+APPLY_PARAMS_MAX_AGE_DAYS = 14  # 優化超過 14 天 → 不推（K 線早變了）
 RETIRE_MIN_SHARPE_DIFF = 0.5    # 兩支 Sharpe 差距 < 0.5 不算明顯，不推 retire
-RETIRE_GRACE_DAYS = 7      # 創建 < 7 天的策略不推 retire（跟 monitor_strategy_health 同步）
+RETIRE_GRACE_DAYS = 7           # 創建 < 7 天的策略不推 retire（跟 monitor_strategy_health 同步）
 RETIRE_REQUIRE_POSITIVE_KEEP = True   # 留下的那支 Sharpe 必須 > 0，否則「保留較好的」沒意義
+PAUSE_GRACE_DAYS = 7            # pause 推薦也走 grace
+PROMOTE_MIN_OOS_SHARPE = 1.5    # promote_candidate 至少這 Sharpe 才推（跟 executor 阈值同步）
+FAN_OUT_MIN_SHARPE = 2.0
+FAN_OUT_BACKTEST_MAX_AGE_DAYS = 14   # backtest 太老 → 不推 fan_out
+FAN_OUT_GRACE_DAYS = 7
 
 
-def _latest_backtest_sharpe(strategy_id: int) -> float | None:
-    bt = (
+def _latest_backtest(strategy_id: int) -> BacktestResult | None:
+    return (
         BacktestResult.query
         .filter_by(strategy_id=strategy_id, status='completed')
         .order_by(BacktestResult.created_at.desc())
         .first()
     )
+
+
+def _latest_backtest_sharpe(strategy_id: int) -> float | None:
+    bt = _latest_backtest(strategy_id)
     return bt.sharpe_ratio if bt else None
 
 
@@ -126,31 +136,47 @@ def build_recommendations() -> dict:
             'meta': {'twin_id': keep_id, 'corr': flag['corr']},
         })
 
-    # 2) regime 不匹配 → pause / 用 fan-out 換到適合的市場
-    regime_cache: dict[tuple, str] = {}
+    # 2) regime 不匹配 → pause（Phase 12.12: 加 grace + open position + 數據可靠檢查）
+    pause_grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=PAUSE_GRACE_DAYS)
+    regime_full_cache: dict[tuple, dict] = {}
     for s in running:
         key = (s.symbol, s.timeframe)
-        if key not in regime_cache:
-            regime_cache[key] = detect_regime(s.symbol, s.timeframe).get('regime', 'unknown')
-        regime = regime_cache[key]
+        if key not in regime_full_cache:
+            regime_full_cache[key] = detect_regime(s.symbol, s.timeframe)
+        rd = regime_full_cache[key]
+        regime = rd.get('regime', 'unknown')
         fit = fit_label(s.type, regime)
-        if fit == 'bad':
-            items.append({
-                'action': 'pause',
-                'strategy_id': s.id,
-                'strategy_name': s.name,
-                'severity': 'warn',
-                'reason': (
-                    f'類型 {affinity_for(s.type)} 與當前 {s.symbol} {s.timeframe} 市場狀態 '
-                    f'({regime}) 不匹配，歷史上這個組合通常虧損。建議暫停或先做 walk-forward 驗證。'
-                ),
-                'meta': {'regime': regime, 'affinity': affinity_for(s.type)},
-            })
+        if fit != 'bad':
+            continue
+        # check: regime 數據不可靠（K 線太少 / 數據沒拉到）→ 不推 pause
+        if rd.get('n', 0) < 100:
+            continue
+        # check: 7 天 grace — 新策略還沒累積實盤數據
+        if s.created_at and s.created_at > pause_grace_cutoff:
+            continue
+        # check: 有 open position — pause 不平倉只阻新信號，先讓現有 SL/TP 處理
+        has_pos = _has_open_position(s.id)
+        items.append({
+            'action': 'pause',
+            'strategy_id': s.id,
+            'strategy_name': s.name,
+            'severity': 'info' if has_pos else 'warn',
+            'reason': (
+                f'類型 {affinity_for(s.type)} 與當前 {s.symbol} {s.timeframe} 市場狀態 '
+                f'({regime}) 不匹配，歷史上這個組合通常虧損。'
+                + ('（目前有持倉，pause 只阻新信號，現有單會走 SL/TP）' if has_pos else '建議暫停或先做 walk-forward 驗證。')
+            ),
+            'meta': {'regime': regime, 'affinity': affinity_for(s.type), 'has_open_position': has_pos},
+        })
 
-    # 3) 最新優化 → 套用最佳參數
+    # 3) 最新優化 → 套用最佳參數（Phase 12.12: 加 freshness 檢查）
+    apply_age_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=APPLY_PARAMS_MAX_AGE_DAYS)
     for s in running:
         opt = _latest_completed_optimization(s.id)
         if not opt or not opt.best_params or opt.best_oos_sharpe is None:
+            continue
+        # check: 優化太老（> 14 天）→ 跳過，K 線早變了應該重跑
+        if opt.completed_at and opt.completed_at < apply_age_cutoff:
             continue
         baseline = opt.baseline_oos_sharpe
         best = opt.best_oos_sharpe
@@ -196,10 +222,18 @@ def build_recommendations() -> dict:
                 'meta': {'per_tf': m['per_tf'], 'consensus': m['consensus']},
             })
 
-    # 5) fan-out 機會 — Sharpe 高、單一幣種、沒兄弟
+    # 5) fan-out 機會（Phase 12.12: 加 backtest freshness + 7 天 grace）
+    fanout_age_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=FAN_OUT_BACKTEST_MAX_AGE_DAYS)
+    fanout_grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=FAN_OUT_GRACE_DAYS)
     for s in running:
-        sh = sharpe_by_id.get(s.id)
-        if sh is None or sh < 2.0:
+        # check: 7 天 grace — 新策略還沒累積實盤數據，先別 fan-out
+        if s.created_at and s.created_at > fanout_grace_cutoff:
+            continue
+        bt = _latest_backtest(s.id)
+        if not bt or bt.sharpe_ratio is None or bt.sharpe_ratio < FAN_OUT_MIN_SHARPE:
+            continue
+        # check: backtest 太老 → 數據過時不該基於此推 fan_out
+        if bt.created_at and bt.created_at < fanout_age_cutoff:
             continue
         # 無 template_group 或 group 只有自己
         if s.template_group is None or s.template_group == s.id:
@@ -214,19 +248,24 @@ def build_recommendations() -> dict:
                     'strategy_name': s.name,
                     'severity': 'info',
                     'reason': (
-                        f'Sharpe {sh:.2f} 表現良好但只跑 {s.symbol}。考慮一鍵 fan-out 到 ETH/SOL/AVAX '
+                        f'Sharpe {bt.sharpe_ratio:.2f} 表現良好但只跑 {s.symbol}。考慮一鍵 fan-out 到 ETH/SOL/AVAX '
                         f'等其他幣種分散單一資產風險。'
                     ),
-                    'meta': {'current_symbol': s.symbol, 'sharpe': sh},
+                    'meta': {'current_symbol': s.symbol, 'sharpe': bt.sharpe_ratio},
                 })
 
-    # 6) 合格候選 → promote 上線（Phase 10.10）
+    # 6) 合格候選 → promote 上線（Phase 12.12: 加 OOS 門檻 + dedup）
     qualified_cands = (
         StrategyCandidate.query
         .filter_by(status='qualified')
         .filter(StrategyCandidate.promoted_strategy_id.is_(None))
         .all()
     )
+    # dedup: 已有同 candidate_type + symbol running 策略 → 跳過（避免重複上線）
+    existing_types = {(s.type, s.symbol) for s in Strategy.query.filter(
+        Strategy.status.in_(['running', 'stopped'])
+    ).all()}
+
     for c in qualified_cands:
         bt = c.backtest
         if not bt:
@@ -235,6 +274,13 @@ def build_recommendations() -> dict:
         oos = wf.get('sharpe_ratio')
         if oos is None:
             continue
+        # check: OOS Sharpe 必須過 promote 門檻（跟 executor / auto_promote_min_oos_sharpe 同步）
+        if oos < PROMOTE_MIN_OOS_SHARPE:
+            continue
+        # check: dedup — 同類型同 symbol 已存在 → 跳過
+        target_symbol = 'BTC/USDT'
+        if (c.candidate_type, target_symbol) in existing_types:
+            continue
         items.append({
             'action': 'promote_candidate',
             'strategy_id': None,
@@ -242,13 +288,13 @@ def build_recommendations() -> dict:
             'severity': 'info',
             'reason': (
                 f'候選 #{c.id} ({c.candidate_type}) 已通過 walk-forward 驗證 — '
-                f'OOS Sharpe = {oos:.2f}。建議 promote 上線。'
+                f'OOS Sharpe = {oos:.2f} ≥ {PROMOTE_MIN_OOS_SHARPE}。建議 promote 上線。'
             ),
             'meta': {
                 'candidate_id': c.id,
                 'oos_sharpe': oos,
                 'candidate_type': c.candidate_type,
-                'symbol': 'BTC/USDT',
+                'symbol': target_symbol,
                 'source': c.source,
             },
         })
