@@ -269,6 +269,17 @@ def _run_signals(strategy_id=None, category_filter=None):
 
                 order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side)
 
+                # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
+                if mode == 'live' and order:
+                    try:
+                        from app.services.exchange_service import fetch_okx_order_real_pnl, _okx_symbol
+                        ord_id = order.get('id') if isinstance(order, dict) else None
+                        real = fetch_okx_order_real_pnl(_okx_symbol(s.symbol).replace('/', '-') + '-SWAP', ord_id)
+                        if real.get('found'):
+                            pnl_leveraged = real['real_pnl']
+                    except Exception:
+                        pass
+
                 trade = Trade(
                     position_id=position.id,
                     strategy_id=s.id,
@@ -366,6 +377,17 @@ def check_stop_loss():
             if sl_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
+                # Phase 12.10: live 用 OKX 真實 balChg 覆寫 PnL（含手續費）
+                if mode == 'live' and order:
+                    try:
+                        from app.services.exchange_service import fetch_okx_order_real_pnl
+                        inst = pos.symbol.replace('/', '-') + '-SWAP'
+                        ord_id = order.get('id') if isinstance(order, dict) else None
+                        real = fetch_okx_order_real_pnl(inst, ord_id)
+                        if real.get('found'):
+                            pnl = real['real_pnl']
+                    except Exception:
+                        pass
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
@@ -392,6 +414,16 @@ def check_stop_loss():
             elif tp_hit:
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
+                if mode == 'live' and order:
+                    try:
+                        from app.services.exchange_service import fetch_okx_order_real_pnl
+                        inst = pos.symbol.replace('/', '-') + '-SWAP'
+                        ord_id = order.get('id') if isinstance(order, dict) else None
+                        real = fetch_okx_order_real_pnl(inst, ord_id)
+                        if real.get('found'):
+                            pnl = real['real_pnl']
+                    except Exception:
+                        pass
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
