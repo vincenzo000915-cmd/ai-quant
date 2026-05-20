@@ -34,6 +34,21 @@ DEFAULT_REPOS = [
         'walk_subdirs': ['.'],
         'license_hint': 'GPLv3',
     },
+    # Phase 12.11: 擴充來源以維持候選池供給速率（vs 退役速率）
+    {
+        'kind': 'jesse',
+        'url': 'https://github.com/jesse-ai/example-strategies.git',
+        'branch': 'master',
+        'walk_subdirs': ['.'],
+        'license_hint': 'MIT',
+    },
+    {
+        'kind': 'freqtrade',
+        'url': 'https://github.com/froggleston/freqtrade-stuff.git',
+        'branch': 'main',
+        'walk_subdirs': ['.'],
+        'license_hint': 'GPLv3',
+    },
 ]
 
 

@@ -555,19 +555,31 @@ def monitor_strategy_health():
                 if oos_sh is not None and oos_sh < RETIRE_SHARPE_OOS:
                     retire_reasons.append(f'OOS Sharpe {oos_sh:.2f} < {RETIRE_SHARPE_OOS}')
 
+            from app.services.audit import log as audit
             if retire_reasons:
-                s.status = 'retired'
-                s.retired_at = datetime.utcnow()
-                reason_txt = '; '.join(retire_reasons)
-                s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + reason_txt
-                actions.append(f'🔴 {s.name} retired: {", ".join(retire_reasons)}')
-                from app.services.telegram_service import notify_retire
-                from app.services.audit import log as audit
-                notify_retire(s.name, reason_txt)
-                audit('strategy_retire', actor='auto:health_check', strategy_id=s.id,
-                      name=s.name, reasons=retire_reasons)
+                # Phase 12.11: 2-strike — 第一次只警告，連續兩次才真退役
+                s.retire_warning_count = (s.retire_warning_count or 0) + 1
+                if s.retire_warning_count >= 2:
+                    s.status = 'retired'
+                    s.retired_at = datetime.utcnow()
+                    reason_txt = '; '.join(retire_reasons) + f' (strike #{s.retire_warning_count})'
+                    s.retire_reason = f'auto-retire @ {datetime.utcnow().isoformat(timespec="seconds")}: ' + reason_txt
+                    actions.append(f'🔴 {s.name} retired: {", ".join(retire_reasons)} (2nd strike)')
+                    from app.services.telegram_service import notify_retire
+                    notify_retire(s.name, reason_txt)
+                    audit('strategy_retire', actor='auto:health_check', strategy_id=s.id,
+                          name=s.name, reasons=retire_reasons, strikes=s.retire_warning_count)
+                else:
+                    actions.append(f'⚠️ {s.name} 警告 #{s.retire_warning_count}/2: {", ".join(retire_reasons)}')
+                    audit('strategy_retire_warning', actor='auto:health_check', strategy_id=s.id,
+                          name=s.name, reasons=retire_reasons, strike=s.retire_warning_count)
             else:
-                actions.append(f'✅ {s.name} OK (full Sharpe={full_sh}, OOS={oos_sh}, trades={total_trades})')
+                # 通過 health check → 重置 strike 計數
+                if s.retire_warning_count and s.retire_warning_count > 0:
+                    actions.append(f'✅ {s.name} 恢復健康（清零 strike，原有 {s.retire_warning_count}）')
+                    s.retire_warning_count = 0
+                else:
+                    actions.append(f'✅ {s.name} OK (full Sharpe={full_sh}, OOS={oos_sh}, trades={total_trades})')
 
             db.session.commit()
 
@@ -952,3 +964,91 @@ def prewarm_dashboard_cache():
         return f'prewarm ok: {recs.get("summary", {}).get("total", 0)} items'
     except Exception as e:
         return f'prewarm error: {type(e).__name__}: {e}'
+
+
+# ===== Phase 12.11: auto-revive retired strategies if market changed =====
+
+REVIVE_MIN_DAYS_RETIRED = 7    # 退役 >= 7 天才考慮復活（給策略息一段時間）
+REVIVE_MIN_OOS_SHARPE = 0.5    # 復活門檻 — OOS Sharpe > 0.5 才復活
+
+
+@celery_app.task
+def auto_revive_retired_strategies():
+    """Phase 12.11: 每週掃描 retired 策略，行情變了重新試。
+
+    對每個 status='retired' 且 retired_at < (now - 7 days) 的策略：
+      1) 用最新 K 線重跑 walk-forward
+      2) OOS Sharpe > REVIVE_MIN_OOS_SHARPE → 復活成 'stopped' + Telegram
+      3) 不過 → 留 retired
+
+    退役策略池會自然不斷重評估，避免供給枯竭。
+    """
+    import datetime as _dt
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.backtest_engine import run_walkforward_backtest
+    from app.services.candidate_sandbox import load_signal_fn
+    from app.models import StrategyCandidate
+    from app.services.telegram_service import send as _tg
+    from app.services.audit import log as audit
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=REVIVE_MIN_DAYS_RETIRED)
+    candidates = Strategy.query.filter(
+        Strategy.status == 'retired',
+        Strategy.retired_at < cutoff,
+    ).all()
+    if not candidates:
+        return 'auto-revive: 沒有符合的 retired 策略（需 >= 7 天）'
+
+    revived = 0
+    skipped = 0
+    for s in candidates:
+        try:
+            candles = fetch_ohlcv_history(s.symbol, s.timeframe, total_limit=2000)
+            if len(candles) < 200:
+                skipped += 1
+                continue
+
+            signal_fn = None
+            if s.candidate_id:
+                c = StrategyCandidate.query.get(s.candidate_id)
+                if c and c.parsed_signal and c.signal_fn_name:
+                    try:
+                        signal_fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+                    except Exception:
+                        skipped += 1
+                        continue
+
+            wf = run_walkforward_backtest(
+                s.type, s.params or {}, candles,
+                timeframe=s.timeframe, signal_fn=signal_fn,
+            )
+            if wf.get('status') == 'error':
+                skipped += 1
+                continue
+
+            oos = wf.get('out_sample') or {}
+            oos_sh = oos.get('sharpe_ratio')
+
+            if oos_sh is not None and oos_sh > REVIVE_MIN_OOS_SHARPE:
+                s.status = 'stopped'   # 復活成 stopped，user 決定要不要啟動
+                s.retired_at = None
+                s.retire_reason = None
+                s.retire_warning_count = 0   # 清零
+                s.revive_count = (s.revive_count or 0) + 1
+                db.session.commit()
+                revived += 1
+                _tg(
+                    f'🌱 <b>策略自動復活</b>\n'
+                    f'#{s.id} {s.name} ({s.symbol} {s.timeframe})\n'
+                    f'最新 walk-forward OOS Sharpe = {oos_sh:.2f} > {REVIVE_MIN_OOS_SHARPE}\n'
+                    f'已 status=stopped，請至策略表審視後啟動。'
+                )
+                audit('strategy_revive', actor='auto:weekly_revive',
+                      strategy_id=s.id, name=s.name, oos_sharpe=oos_sh,
+                      revive_count=s.revive_count)
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+
+    return f'auto-revive: 復活 {revived} 個，跳過 {skipped} 個（OOS 未過或樣本不足）'

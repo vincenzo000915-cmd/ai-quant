@@ -24,6 +24,10 @@ class Strategy(db.Model):
     # Phase 10.6: 一鍵 fan-out — 同 template_group 的兄弟實例由同一個 source 衍生
     # 值 = source strategy id（自身也填，以便 GROUP BY 拿到完整家族）
     template_group = db.Column(db.Integer, nullable=True, index=True)
+    # Phase 12.11: 2-strike retire — 連續兩次 health check 不過才退役
+    retire_warning_count = db.Column(db.Integer, default=0)
+    # 自動 revive 次數（給 future analysis 看哪些策略反覆死灰復燃）
+    revive_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     updated_at = db.Column(db.DateTime, onupdate=datetime.datetime.utcnow)
 

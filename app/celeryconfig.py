@@ -103,6 +103,12 @@ beat_schedule = {
         'schedule': crontab(hour='23', minute='0'),
     },
 
+    # === Phase 12.11: 每週日 05:00 UTC 復活 retired 策略（行情變了重新試）===
+    'weekly-auto-revive': {
+        'task': 'app.tasks.strategy_tasks.auto_revive_retired_strategies',
+        'schedule': crontab(hour='5', minute='0', day_of_week='sun'),
+    },
+
     # === Phase 12.4: 每 90s 預熱 Dashboard 緩存（保用戶不見 24s 冷啟動）===
     'prewarm-dashboard-cache': {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',
