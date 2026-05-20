@@ -278,88 +278,102 @@ export default function Trades() {
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>交易ID</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>時間</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>交易對</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>ID</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>平倉時間</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>策略</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>幣種</TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>方向</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">價格</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">入場</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">出場</TableCell>
                   <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">數量</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">總額</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">手續費</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>狀態</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>交易所</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">盈虧 (含手續費)</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">盈虧%</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>原因</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {trades.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                    <TableCell colSpan={11} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                       暫無交易紀錄
                     </TableCell>
                   </TableRow>
                 ) : (
-                  trades.map((trade) => (
-                    <TableRow
-                      key={trade.id}
-                      sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}
-                    >
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-                          {trade.id}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontSize: 12 }}>
-                          {formatTime(trade.time)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={600}>{trade.symbol}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={getSideLabel(trade.side)}
-                          size="small"
-                          color={trade.side === 'buy' ? 'success' : 'error'}
-                          variant="outlined"
-                          sx={{ fontWeight: 600, fontSize: 11 }}
-                        />
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          ${trade.price?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {trade.qty}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          ${trade.total?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'text.secondary', fontSize: 12 }}>
-                          ${trade.fee?.toFixed(2)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={getStatusLabel(trade.status)}
-                          size="small"
-                          color={getStatusColor(trade.status)}
-                          sx={{ fontWeight: 600, fontSize: 11 }}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontSize: 12 }}>
-                          {trade.exchange}
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  trades.map((trade) => {
+                    const pnl = Number(trade.pnl ?? 0);
+                    const pnlPct = Number(trade.pnl_percent ?? 0);
+                    const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#94a3b8';
+                    const sideZh = trade.side === 'long' ? '多' : trade.side === 'short' ? '空' : trade.side;
+                    const reasonZh = {
+                      stop_loss: '🛑 止損',
+                      take_profit: '🎯 止盈',
+                      signal: '🔄 信號',
+                      reconcile_orphan: '⚠ 對賬補平',
+                      manual_close_oversize: '✋ 手動平超額',
+                    }[trade.reason] || trade.reason || '—';
+                    return (
+                      <TableRow
+                        key={trade.id}
+                        sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}
+                      >
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                            {trade.id}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontSize: 12 }}>
+                            {formatTime(trade.exit_time)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontSize: 12, color: 'text.secondary' }}>
+                            #{trade.strategy_id}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={600}>{trade.symbol}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={sideZh}
+                            size="small"
+                            color={trade.side === 'long' ? 'success' : 'error'}
+                            variant="outlined"
+                            sx={{ fontWeight: 600, fontSize: 11, minWidth: 36 }}
+                          />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                            ${Number(trade.entry_price)?.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                            ${Number(trade.exit_price)?.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
+                            {trade.quantity}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 700, color: pnlColor }}>
+                            {pnl >= 0 ? '+' : ''}${pnl.toFixed(3)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', color: pnlColor, fontSize: 12 }}>
+                            {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="caption" sx={{ fontSize: 11 }}>{reasonZh}</Typography>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
