@@ -94,12 +94,10 @@ export default function Trades() {
       const res = await fetch(`${API}/api/trades?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.trades && data.trades.length > 0) {
-          setTrades(data.trades);
-          setTotalCount(data.total || data.trades.length);
-        } else {
-          throw new Error('Empty data');
-        }
+        // Phase 12.12.3: API returns flat array; older code expected {trades,total} wrapper
+        const list = Array.isArray(data) ? data : (data.trades || []);
+        setTrades(list);
+        setTotalCount(Array.isArray(data) ? list.length : (data.total || list.length));
       } else {
         throw new Error('Fetch failed');
       }
