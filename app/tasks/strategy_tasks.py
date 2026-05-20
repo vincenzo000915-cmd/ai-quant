@@ -424,10 +424,11 @@ def check_stop_loss():
 
 # ===== Phase 5.3: 策略健康監控 / 自動退役 =====
 
-# 退役門檻（從 candidate_pipeline 借同一套）
-RETIRE_SHARPE_FULL = 0.3       # 全段 Sharpe 跌破這個 → 退役
-RETIRE_SHARPE_OOS = 0.0        # OOS Sharpe 跌破 0 → 真的不行了
-RETIRE_MIN_TRADES = 8          # 樣本不足就不退役（避免短期噪音誤判）
+# 退役門檻（Phase 12.9 放寬：之前 11 個策略一次被誤殺）
+RETIRE_SHARPE_FULL = -0.5      # 全段 Sharpe 跌破 -0.5（真的虧損）→ 退役
+RETIRE_SHARPE_OOS = -1.0       # OOS Sharpe 跌破 -1.0 → 真的不行了
+RETIRE_MIN_TRADES = 12         # 樣本不足就不退役
+RETIRE_GRACE_HOURS = 48        # Phase 12.9: 創建 < 48h 的策略不 auto-retire（給時間累積實盤數據）
 
 
 @celery_app.task
@@ -449,8 +450,15 @@ def monitor_strategy_health():
         return 'no running strategies'
 
     actions = []
+    from datetime import datetime, timedelta
+    grace_cutoff = datetime.utcnow() - timedelta(hours=RETIRE_GRACE_HOURS)
     for s in running:
         try:
+            # Phase 12.9: 保護期 — 創建 < 48h 的策略不 auto-retire
+            if s.created_at and s.created_at > grace_cutoff:
+                actions.append(f'⏸ {s.name}: 保護期內（< {RETIRE_GRACE_HOURS}h），跳過 auto-retire')
+                continue
+
             candles = fetch_ohlcv_history(s.symbol, s.timeframe, total_limit=2000)
             if len(candles) < 200:
                 actions.append(f'{s.name}: 跳過 (K線不足 {len(candles)})')
