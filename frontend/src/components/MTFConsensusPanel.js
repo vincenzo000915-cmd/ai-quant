@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton,
   Alert, LinearProgress, Table, TableHead, TableBody, TableRow, TableCell,
@@ -25,7 +25,7 @@ const CONSENSUS_META = {
   insufficient: { label: '資料不足',  color: '#475569', emoji: '❓' },
 };
 
-export default function MTFConsensusPanel() {
+function MTFConsensusPanelInner() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -167,3 +167,6 @@ export default function MTFConsensusPanel() {
     </Card>
   );
 }
+
+const MTFConsensusPanel = memo(MTFConsensusPanelInner);
+export default MTFConsensusPanel;

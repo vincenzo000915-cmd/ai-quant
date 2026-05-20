@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton, Stack,
   Alert, LinearProgress, Grid,
@@ -27,7 +27,7 @@ const AFFINITY_LABEL = {
   breakout:       '突破',
 };
 
-export default function RegimePanel() {
+function RegimePanelInner() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -176,3 +176,6 @@ export default function RegimePanel() {
     </Card>
   );
 }
+
+const RegimePanel = memo(RegimePanelInner);
+export default RegimePanel;

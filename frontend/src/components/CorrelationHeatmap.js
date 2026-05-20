@@ -1,10 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton,
-  Alert, LinearProgress, Stack,
+  Alert, LinearProgress, Stack, Button,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -30,10 +32,12 @@ function fmt(c) {
   return c.toFixed(2);
 }
 
-export default function CorrelationHeatmap() {
+// 大矩陣（>10 策略）預設折疊，避免 256+ Tooltip 同時掛載卡瀏覽器
+function CorrelationHeatmapInner() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [forceExpand, setForceExpand] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -82,7 +86,21 @@ export default function CorrelationHeatmap() {
           <Alert severity="info">没有运行中的策略可用于计算相关性。</Alert>
         )}
 
-        {data && n > 0 && (
+        {data && n > 10 && !forceExpand && (
+          <Alert
+            severity="info"
+            action={
+              <Button size="small" startIcon={<ExpandMoreIcon />} onClick={() => setForceExpand(true)}>
+                展開矩陣
+              </Button>
+            }
+          >
+            目前 {n} 個策略（{n}×{n}={n*n} 個格子），預設折疊以避免影響首頁載入。
+            {flagged.length > 0 && ` ⚠️ 發現 ${flagged.length} 對高相關策略。`}
+          </Alert>
+        )}
+
+        {data && n > 0 && (n <= 10 || forceExpand) && (
           <>
             <Stack direction="row" spacing={1} sx={{ mb: 1.5, flexWrap: 'wrap', gap: 0.5 }}>
               <Chip
@@ -147,7 +165,7 @@ export default function CorrelationHeatmap() {
                   ))}
                 </Box>
 
-                {/* 矩阵行 */}
+                {/* 矩阵行 — 用原生 title 取代 256 個 MUI Tooltip portal */}
                 {strategies.map((rowS, i) => (
                   <Box key={`r-${rowS.id}`} sx={{ display: 'flex', alignItems: 'center' }}>
                     <Box sx={{ width: 140, pr: 1, textAlign: 'right' }}>
@@ -161,41 +179,35 @@ export default function CorrelationHeatmap() {
                     {matrix[i].map((c, j) => {
                       const isDiag = i === j;
                       const isFlagged = !isDiag && c !== null && Math.abs(c) > (data.threshold || 0.7);
+                      const title = c === null
+                        ? `${rowS.name} ↔ ${strategies[j].name}：样本不足（需至少 ${data.min_obs || 5} 个重叠日）`
+                        : `${rowS.name} ↔ ${strategies[j].name}：相关系数 ${c.toFixed(3)}`;
                       return (
-                        <Tooltip
+                        <Box
                           key={`c-${i}-${j}`}
-                          title={
-                            c === null
-                              ? `${rowS.name} ↔ ${strategies[j].name}：样本不足（需至少 ${data.min_obs || 5} 个重叠日）`
-                              : `${rowS.name} ↔ ${strategies[j].name}：相关系数 ${c.toFixed(3)}`
-                          }
+                          title={title}
+                          sx={{
+                            width: cell,
+                            height: cell,
+                            bgcolor: corrColor(c),
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            border: isFlagged ? '2px solid #f59e0b' : '1px solid rgba(255,255,255,0.05)',
+                            cursor: 'pointer',
+                          }}
                         >
-                          <Box
+                          <Typography
+                            variant="caption"
                             sx={{
-                              width: cell,
-                              height: cell,
-                              bgcolor: corrColor(c),
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              border: isFlagged ? '2px solid #f59e0b' : '1px solid rgba(255,255,255,0.05)',
-                              cursor: 'pointer',
-                              transition: 'transform 0.1s',
-                              '&:hover': { transform: 'scale(1.08)', zIndex: 2, position: 'relative' },
+                              fontSize: 11,
+                              fontWeight: isDiag || isFlagged ? 700 : 500,
+                              color: c === null ? '#64748b' : '#fff',
                             }}
                           >
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                fontSize: 11,
-                                fontWeight: isDiag || isFlagged ? 700 : 500,
-                                color: c === null ? '#64748b' : '#fff',
-                              }}
-                            >
-                              {fmt(c)}
-                            </Typography>
-                          </Box>
-                        </Tooltip>
+                            {fmt(c)}
+                          </Typography>
+                        </Box>
                       );
                     })}
                   </Box>
@@ -245,3 +257,6 @@ export default function CorrelationHeatmap() {
     </Card>
   );
 }
+
+const CorrelationHeatmap = memo(CorrelationHeatmapInner);
+export default CorrelationHeatmap;

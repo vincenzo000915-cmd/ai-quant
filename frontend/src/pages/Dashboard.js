@@ -341,7 +341,7 @@ export default function Dashboard() {
       } catch { /* */ }
     };
     tick();
-    const id = setInterval(tick, 2000);
+    const id = setInterval(tick, 5000);   // 2s → 5s，避免不必要 re-render
     return () => { cancelled = true; clearInterval(id); };
   }, [chartSymbol]);
 

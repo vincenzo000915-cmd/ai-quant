@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton,
   Alert, LinearProgress, Stack, Collapse, Button, Snackbar,
@@ -33,7 +33,7 @@ const ACTION_META = {
 // fan_out 預設目標幣種（除 BTC 之外的 3 個流動性最好的）
 const FAN_OUT_DEFAULTS = ['ETH/USDT', 'SOL/USDT', 'AVAX/USDT'];
 
-export default function AdvisorPanel() {
+function AdvisorPanelInner() {
   const [data, setData] = useState(null);
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -519,3 +519,6 @@ export default function AdvisorPanel() {
     </Card>
   );
 }
+
+const AdvisorPanel = memo(AdvisorPanelInner);
+export default AdvisorPanel;
