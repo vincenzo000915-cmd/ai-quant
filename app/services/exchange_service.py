@@ -237,59 +237,90 @@ def fetch_balance():
 
 
 def fetch_okx_order_real_pnl(inst_id: str, ord_id: str | None = None,
-                              max_wait_sec: float = 3.0) -> dict:
-    """Phase 12.10: 查 OKX 真實成交盈虧（含手續費）。
+                              max_wait_sec: float = 5.0) -> dict:
+    """Phase 12.10 + 12.12.2: 查 OKX 真實成交盈虧（含手續費）。
 
     用 /api/v5/account/bills 拉最近交易帳單，找匹配 instId（並 ordId）的 type=2 行。
-    回傳 {price_pnl, fee, real_pnl}：
-      price_pnl: OKX 內部 pnl 字段（價格 delta，不含手續費）
-      fee: 手續費（負值）
-      real_pnl: 真實對帳戶餘額影響 = price_pnl + fee（balChg）
+    回傳 {price_pnl, fee, real_pnl, fill_count}：
+      price_pnl: OKX 內部 pnl 字段（價格 delta，不含手續費）合計
+      fee: 手續費合計（負值）
+      real_pnl: 真實對帳戶餘額影響 = price_pnl + fee（balChg）合計
+      fill_count: 匹配到的帳單條數（拆單時 > 1）
 
-    OKX 帳單有延遲（< 3s），所以給點 buffer。找不到回傳 zeros + flag。
+    Phase 12.12.2: 大單會被 OKX 拆成多筆成交（同 ordId 多條 bill）。
+    舊版只取第一條 → 漏算後續部分。新版：
+      - 找到至少 1 條後，多 poll 1 次確認沒新增（穩定）
+      - 找到後合計所有匹配 bill 的 pnl/fee/balChg
+      - 只在 ord_id 明確時才合計（避免不同 order 混在一起）
+
+    OKX 帳單有延遲（< 3s），給 5s buffer。
     """
     import os, time as _time
     api_key = os.environ.get('EXCHANGE_API_KEY')
     secret = os.environ.get('EXCHANGE_SECRET')
     passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
     if not (api_key and secret and passphrase):
-        return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0, 'found': False, 'error': 'no creds'}
+        return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0, 'found': False, 'fill_count': 0, 'error': 'no creds'}
+
+    def _scan():
+        try:
+            bills = _okx_get_signed(
+                '/api/v5/account/bills?instType=SWAP&ccy=USDT&limit=50',
+                api_key, secret, passphrase,
+            )
+        except Exception as e:
+            return None, str(e)
+        ms = []
+        for b in bills:
+            if b.get('instId') != inst_id:
+                continue
+            if ord_id and b.get('ordId') != ord_id:
+                continue
+            if str(b.get('type')) != '2':
+                continue
+            ms.append(b)
+        return ms, None
 
     deadline = _time.time() + max_wait_sec
     last_err = None
+    prev_count = -1
+    matches: list[dict] = []
     while _time.time() < deadline:
-        try:
-            bills = _okx_get_signed(
-                f'/api/v5/account/bills?instType=SWAP&ccy=USDT&limit=20',
-                api_key, secret, passphrase,
-            )
-            # 找匹配
-            matches = []
-            for b in bills:
-                if b.get('instId') != inst_id:
-                    continue
-                if ord_id and b.get('ordId') != ord_id:
-                    continue
-                # type=2 trade（含開倉/平倉/部分成交）；subType 6 = close long pnl 等
-                if str(b.get('type')) != '2':
-                    continue
-                matches.append(b)
-            if matches:
-                # 取最新一條
-                m = matches[0]
-                return {
-                    'price_pnl': float(m.get('pnl') or 0),
-                    'fee': float(m.get('fee') or 0),
-                    'real_pnl': float(m.get('balChg') or 0),
-                    'found': True,
-                    'bill_id': m.get('billId'),
-                    'ord_id': m.get('ordId'),
-                    'sub_type': m.get('subType'),
-                }
-        except Exception as e:
-            last_err = e
-        _time.sleep(0.5)
-    return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0, 'found': False, 'error': str(last_err) if last_err else 'timeout'}
+        ms, err = _scan()
+        if err:
+            last_err = err
+            _time.sleep(0.5)
+            continue
+        if ms:
+            # 找到至少 1 條 — 多 poll 一次確認穩定（OKX 可能還在分批寫）
+            if len(ms) == prev_count:
+                matches = ms
+                break
+            prev_count = len(ms)
+        _time.sleep(0.7)
+
+    if not matches:
+        return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0, 'found': False, 'fill_count': 0,
+                'error': last_err or 'timeout'}
+
+    # 多筆累加 — 只在 ord_id 明確時才安全（不同 order 不要混）
+    if ord_id:
+        agg = [(float(m.get('pnl') or 0), float(m.get('fee') or 0), float(m.get('balChg') or 0)) for m in matches]
+        total_pnl = sum(p for p, _, _ in agg)
+        total_fee = sum(f for _, f, _ in agg)
+        total_bal = sum(b for _, _, b in agg)
+        return {
+            'price_pnl': total_pnl, 'fee': total_fee, 'real_pnl': total_bal,
+            'found': True, 'fill_count': len(matches),
+            'ord_id': ord_id, 'bill_ids': [m.get('billId') for m in matches],
+        }
+    # 沒 ord_id：保留舊行為，只取第一筆
+    m = matches[0]
+    return {
+        'price_pnl': float(m.get('pnl') or 0), 'fee': float(m.get('fee') or 0),
+        'real_pnl': float(m.get('balChg') or 0), 'found': True, 'fill_count': 1,
+        'bill_id': m.get('billId'), 'ord_id': m.get('ordId'),
+    }
 
 
 def fetch_okx_positions() -> list[dict]:
