@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box, Drawer, AppBar, Toolbar, Typography, List, ListItem,
   ListItemButton, ListItemIcon, ListItemText, IconButton, Chip,
   Divider, Tooltip, useTheme, useMediaQuery, BottomNavigation,
-  BottomNavigationAction,
+  BottomNavigationAction, Menu, MenuItem,
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
@@ -16,6 +16,9 @@ import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
+import PersonIcon from '@mui/icons-material/Person';
+import LogoutIcon from '@mui/icons-material/Logout';
+import { getUser, onUserChange, logout } from '../auth';
 
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
@@ -41,10 +44,19 @@ const navIconMap = {
 export default function Layout() {
   const [open, setOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [user, setUser] = useState(getUser());
+  const [userMenuAnchor, setUserMenuAnchor] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
+  useEffect(() => onUserChange(setUser), []);
+
+  const handleLogout = () => {
+    setUserMenuAnchor(null);
+    logout();
+  };
 
   const drawerContent = (
     <>
@@ -166,9 +178,54 @@ export default function Layout() {
             <Typography variant="h6" fontWeight={600} sx={{ fontSize: { xs: '0.9rem', sm: '1.1rem' } }}>
               {NAV_ITEMS.find((n) => n.path === location.pathname)?.label ?? '量化交易系統'}
             </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
               <FiberManualRecordIcon sx={{ color: 'success.main', fontSize: { xs: 10, sm: 12 } }} />
               <Typography variant="caption" color="success.main" sx={{ display: { xs: 'none', sm: 'block' } }}>已連線</Typography>
+              {user && (
+                <>
+                  <Chip
+                    icon={<PersonIcon sx={{ fontSize: 14 }} />}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="caption" sx={{ fontSize: 11, maxWidth: { xs: 90, sm: 200 }, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {user.email}
+                        </Typography>
+                        {user.role === 'admin' && (
+                          <Typography variant="caption" sx={{ fontSize: 9, color: 'warning.main', fontWeight: 700 }}>
+                            ADMIN
+                          </Typography>
+                        )}
+                      </Box>
+                    }
+                    size="small"
+                    clickable
+                    onClick={(e) => setUserMenuAnchor(e.currentTarget)}
+                    sx={{ bgcolor: 'rgba(99,102,241,0.12)', color: 'primary.light', borderColor: 'primary.dark', cursor: 'pointer' }}
+                  />
+                  <Menu
+                    anchorEl={userMenuAnchor}
+                    open={Boolean(userMenuAnchor)}
+                    onClose={() => setUserMenuAnchor(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                  >
+                    <MenuItem disabled sx={{ opacity: '1 !important' }}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">已登入</Typography>
+                        <Typography variant="body2">{user.email}</Typography>
+                        <Typography variant="caption" sx={{ color: 'primary.light' }}>
+                          {user.subscription_tier?.toUpperCase() || 'FREE'} · {user.role}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                    <Divider />
+                    <MenuItem onClick={handleLogout}>
+                      <LogoutIcon sx={{ fontSize: 16, mr: 1 }} />
+                      <Typography variant="body2">登出</Typography>
+                    </MenuItem>
+                  </Menu>
+                </>
+              )}
             </Box>
           </Toolbar>
         </AppBar>
