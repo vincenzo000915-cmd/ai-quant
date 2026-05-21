@@ -233,6 +233,7 @@ def _run_signals(strategy_id=None, category_filter=None):
 
                 pos = Position(
                     strategy_id=s.id,
+                    user_id=s.user_id,
                     symbol=s.symbol,
                     side=side,
                     size=real_size,
@@ -283,6 +284,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 trade = Trade(
                     position_id=position.id,
                     strategy_id=s.id,
+                    user_id=s.user_id,
                     symbol=s.symbol,
                     side=position.side,
                     entry_price=position.entry_price,
@@ -391,6 +393,7 @@ def check_stop_loss():
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
+                    user_id=pos.user_id,
                     symbol=pos.symbol,
                     side=pos.side,
                     entry_price=pos.entry_price,
@@ -427,6 +430,7 @@ def check_stop_loss():
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
+                    user_id=pos.user_id,
                     symbol=pos.symbol,
                     side=pos.side,
                     entry_price=pos.entry_price,

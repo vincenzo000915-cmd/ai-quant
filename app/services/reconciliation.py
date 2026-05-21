@@ -61,6 +61,7 @@ def reconcile() -> dict:
                 pnl = pnl_raw_pct * lp.size * lp.entry_price * 15.0 / 100
                 trade = Trade(
                     position_id=lp.id, strategy_id=lp.strategy_id,
+                    user_id=lp.user_id,
                     symbol=lp.symbol, side=lp.side or 'long',
                     entry_price=lp.entry_price, exit_price=current,
                     quantity=lp.size, pnl=pnl, pnl_percent=pnl_pct,

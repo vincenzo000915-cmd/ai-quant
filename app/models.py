@@ -36,6 +36,8 @@ class Strategy(db.Model):
     __tablename__ = 'strategies'
 
     id = db.Column(db.Integer, primary_key=True)
+    # Phase 11.1.2: 多租戶 — 每策略歸屬某 user (admin=1)。nullable 是過渡期，等 11.1.3 INSERT path 全帶上後鎖 NOT NULL
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=False)
     type = db.Column(db.String(50), nullable=False)  # ma_crossover / rsi / macd / bollinger / combo
     category = db.Column(db.String(10), default='swing')  # short(短線) / swing(波段) / long(長線)
@@ -91,6 +93,7 @@ class Order(db.Model):
     __tablename__ = 'orders'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
     exchange = db.Column(db.String(20), default='binance')
     symbol = db.Column(db.String(20))
@@ -126,6 +129,7 @@ class Position(db.Model):
     __tablename__ = 'positions'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
     symbol = db.Column(db.String(20))
     side = db.Column(db.String(10))       # long / short
@@ -162,6 +166,7 @@ class Trade(db.Model):
     __tablename__ = 'trades'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     position_id = db.Column(db.Integer, db.ForeignKey('positions.id'))
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
     symbol = db.Column(db.String(20))
@@ -199,6 +204,8 @@ class BacktestResult(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     # nullable: NULL 表示這是候選策略的回測（strategy 還沒 promote 進 strategies 表）
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=True)
+    # Phase 11.1.2: NULL = 候選池 stage (system resource, 全局可見)；非 NULL = 跟 strategy 同 user
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     strategy_type = db.Column(db.String(50), nullable=False)
     params_snapshot = db.Column(db.JSON, default={})       # 跑回測時的參數快照
     symbol = db.Column(db.String(20), default='BTC/USDT')
@@ -391,6 +398,7 @@ class AuditLog(db.Model):
     __tablename__ = 'audit_log'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     event_type = db.Column(db.String(50), nullable=False, index=True)
     # config_change | halt | unhalt | kill_switch | promote | reject | retire |
     # candidate_translate | candidate_backtest | order_placed | order_failed | live_mode_flip
@@ -415,6 +423,7 @@ class ParamOptimization(db.Model):
     __tablename__ = 'param_optimizations'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id', ondelete='CASCADE'), nullable=False, index=True)
     status = db.Column(db.String(20), default='pending')   # pending / running / completed / error
     grid = db.Column(db.JSON, default={})                  # {'period': [7,10,14], 'multiplier': [2,3]}

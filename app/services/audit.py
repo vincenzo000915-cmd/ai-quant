@@ -1,24 +1,34 @@
-"""Phase 8.4: audit_log helper
+"""Phase 8.4 + 11.1.3: audit_log helper
 
 簡單 fire-and-forget log helper。任何 mutating event 都 log() 一條。
 失敗 silent — 不要因為 log 不出去而阻擋業務動作。
+
+Phase 11.1.3: 自動帶 user_id（從 g.current_user_id；caller 可顯式覆寫 user_id=...）
 """
 from __future__ import annotations
 
-from flask import request, has_request_context
+from flask import g, has_request_context, request
+
 from app.extensions import db
 from app.models import AuditLog
 
 
-def log(event_type: str, actor: str = 'system', **context):
-    """寫一筆 audit。可帶任意 keyword args 進 context dict。"""
+def log(event_type: str, actor: str = 'system', user_id: int | None = None, **context):
+    """寫一筆 audit。可帶任意 keyword args 進 context dict。
+
+    user_id 解析優先序：caller 顯式傳 > g.current_user_id > NULL（system context 沒 request）
+    """
     try:
         ip = None
+        uid = user_id
         if has_request_context():
             ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+            if uid is None:
+                uid = getattr(g, 'current_user_id', None)
         entry = AuditLog(
             event_type=event_type,
             actor=actor,
+            user_id=uid,
             context=context or {},
             ip=ip,
         )

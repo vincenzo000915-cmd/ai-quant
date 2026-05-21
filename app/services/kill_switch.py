@@ -45,6 +45,7 @@ def execute_kill_switch(reason: str = 'manual kill switch') -> dict:
 
             trade = Trade(
                 position_id=pos.id, strategy_id=pos.strategy_id,
+                user_id=pos.user_id,
                 symbol=pos.symbol, side='long',
                 entry_price=pos.entry_price, exit_price=current,
                 quantity=pos.size, pnl=pnl, pnl_percent=pnl_pct,

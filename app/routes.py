@@ -1,22 +1,45 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, abort, jsonify, request
 from app.extensions import db
-from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate, ParamOptimization
+from app.models import Strategy, Order, Position, Trade, Candle, BacktestResult, StrategyCandidate, ParamOptimization, AuditLog
 from app.services.rate_limit import rate_limit
 from app.services.cache import cached_response
+from app.services.user_scope import (
+    apply_user_filter, assign_user_id, current_user_id, get_owned,
+    is_admin_actor, require_actor, scoped_query,
+)
 from app.tasks.strategy_tasks import run_strategy_signals
 
 api_bp = Blueprint('api', __name__)
 
 
+# ===== Phase 11.1.3: User-scope internal helpers =====
+
+def _owned_strategy(id):
+    """User-scoped 取 strategy。admin 看全部；user 只能看自己。無權限 → 404"""
+    s = get_owned(Strategy, id)
+    if not s:
+        abort(404)
+    return s
+
+
+def _owned_position(id):
+    p = get_owned(Position, id)
+    if not p:
+        abort(404)
+    return p
+
+
 # ===== 策略管理 =====
 
 @api_bp.route('/strategies', methods=['GET'])
+@require_actor
 def list_strategies():
-    strategies = Strategy.query.all()
+    strategies = scoped_query(Strategy).all()
     return jsonify([s.to_dict() for s in strategies])
 
 
 @api_bp.route('/strategies', methods=['POST'])
+@require_actor
 def create_strategy():
     data = request.get_json()
     strategy = Strategy(
@@ -29,6 +52,7 @@ def create_strategy():
         max_positions=data.get('max_positions', 1),
         max_daily_loss=data.get('max_daily_loss', 10.0),
     )
+    assign_user_id(strategy)
     db.session.add(strategy)
     db.session.commit()
     return jsonify(strategy.to_dict()), 201
@@ -36,7 +60,7 @@ def create_strategy():
 
 @api_bp.route('/strategies/<int:id>', methods=['PUT'])
 def update_strategy(id):
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     data = request.get_json()
     for field in ['name', 'type', 'category', 'params', 'symbol', 'timeframe',
                   'max_positions', 'max_daily_loss']:
@@ -48,7 +72,7 @@ def update_strategy(id):
 
 @api_bp.route('/strategies/<int:id>', methods=['DELETE'])
 def delete_strategy(id):
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     db.session.delete(strategy)
     db.session.commit()
     return jsonify({'message': 'deleted'})
@@ -56,7 +80,7 @@ def delete_strategy(id):
 
 @api_bp.route('/strategies/<int:id>/start', methods=['POST'])
 def start_strategy(id):
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     strategy.status = 'running'
     db.session.commit()
     # 立即觸發一次信號計算
@@ -66,7 +90,7 @@ def start_strategy(id):
 
 @api_bp.route('/strategies/<int:id>/stop', methods=['POST'])
 def stop_strategy(id):
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     strategy.status = 'stopped'
     db.session.commit()
     return jsonify(strategy.to_dict())
@@ -87,7 +111,7 @@ def trigger_optimize(id):
     from app.services.param_optimizer import get_grid, grid_size
     from app.tasks.strategy_tasks import optimize_strategy_params
 
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     grid = get_grid(strategy.type)
     if not grid:
         return jsonify({'error': f'strategy_type={strategy.type} 沒有定義參數網格，無法優化'}), 400
@@ -95,8 +119,8 @@ def trigger_optimize(id):
     body = request.get_json(silent=True) or {}
     max_combos = int(body.get('max_combos', 24))
 
-    # 防止對同一策略同時跑多個優化
-    running = ParamOptimization.query.filter(
+    # 防止對同一策略同時跑多個優化（strategy 已 user-scope，optimization 跟著綁定）
+    running = scoped_query(ParamOptimization).filter(
         ParamOptimization.strategy_id == id,
         ParamOptimization.status.in_(['pending', 'running']),
     ).first()
@@ -114,6 +138,7 @@ def trigger_optimize(id):
         baseline_params=dict(strategy.params or {}),
         combos_total=min(grid_size(grid) + 1, max_combos + 1),
     )
+    assign_user_id(opt, prefer_user_id=strategy.user_id)
     db.session.add(opt)
     db.session.commit()
 
@@ -131,10 +156,13 @@ def trigger_optimize(id):
 
 
 @api_bp.route('/strategies/<int:id>/optimize/latest', methods=['GET'])
+@require_actor
 def latest_optimize(id):
     """Phase 10.2: 取得策略最新一次優化結果（含進度）。"""
+    # 先確認策略歸屬（404 若無 access）
+    _owned_strategy(id)
     opt = (
-        ParamOptimization.query
+        scoped_query(ParamOptimization)
         .filter_by(strategy_id=id)
         .order_by(ParamOptimization.id.desc())
         .first()
@@ -148,7 +176,7 @@ def latest_optimize(id):
 def apply_strategy_params(id):
     """Phase 10.2: 把優化選出的最佳參數套用到 strategy.params。"""
     from app.services.audit import log as audit
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     body = request.get_json(silent=True) or {}
     new_params = body.get('params')
     if not isinstance(new_params, dict):
@@ -185,7 +213,7 @@ def fan_out_strategy(id):
     from app.services.audit import log as audit
     from app.services.symbols import SUPPORTED_SYMBOLS
 
-    source = Strategy.query.get_or_404(id)
+    source = _owned_strategy(id)
     data = request.get_json() or {}
     raw_symbols = data.get('symbols') or []
     if not isinstance(raw_symbols, list) or not raw_symbols:
@@ -203,7 +231,7 @@ def fan_out_strategy(id):
 
     # 同 group 已存在哪些 symbol，避免重複
     existing_symbols = {
-        s.symbol for s in Strategy.query
+        s.symbol for s in scoped_query(Strategy)
         .filter(Strategy.template_group == group)
         .all()
     }
@@ -231,6 +259,7 @@ def fan_out_strategy(id):
             max_positions=source.max_positions,
             max_daily_loss=source.max_daily_loss,
             template_group=group,
+            user_id=source.user_id,
         )
         db.session.add(clone)
         db.session.flush()  # 拿 id
@@ -274,12 +303,12 @@ def trigger_auto_apply():
 
 
 @api_bp.route('/advisor/auto-apply/history', methods=['GET'])
+@require_actor
 def auto_apply_history():
     """Phase 10.8: 最近 N 條自動套用紀錄（讀 audit_log）。"""
-    from app.models import AuditLog
     limit = min(int(request.args.get('limit', 50)), 200)
     rows = (
-        AuditLog.query
+        scoped_query(AuditLog)
         .filter(AuditLog.event_type == 'advisor_auto_apply')
         .order_by(AuditLog.id.desc())
         .limit(limit)
@@ -292,7 +321,7 @@ def auto_apply_history():
 def strategy_mtf(id):
     """Phase 10.4: multi-timeframe consensus check for one strategy."""
     from app.services.mtf_consensus import mtf_check
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     tfs_param = request.args.get('tfs')
     tfs = None
     if tfs_param:
@@ -305,7 +334,7 @@ def strategy_mtf(id):
 def mtf_for_running():
     """Phase 10.4: MTF consensus for every running strategy."""
     from app.services.mtf_consensus import mtf_check
-    running = Strategy.query.filter(Strategy.status == 'running').all()
+    running = scoped_query(Strategy).filter(Strategy.status == 'running').all()
     return jsonify({
         'strategies': [mtf_check(s) for s in running],
     })
@@ -327,7 +356,7 @@ def regime_for_running():
     plus per-strategy affinity fit."""
     from app.services.regime_detector import detect_regime, affinity_for, fit_label
 
-    running = Strategy.query.filter(Strategy.status == 'running').all()
+    running = scoped_query(Strategy).filter(Strategy.status == 'running').all()
 
     # 唯一 (symbol, tf) 對 -> 只算一次
     unique = sorted({(s.symbol, s.timeframe) for s in running})
@@ -394,7 +423,7 @@ def retire_strategy(id):
     """Phase 10.7: 手動把策略退役（給 AdvisorPanel 一鍵套用用）。"""
     from app.services.audit import log as audit
     import datetime as _dt
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     if strategy.status == 'retired':
         return jsonify(strategy.to_dict())  # 已退役，幂等
     body = request.get_json(silent=True) or {}
@@ -411,7 +440,7 @@ def retire_strategy(id):
 def revive_strategy(id):
     """手動把 retired 策略救回 stopped 狀態（不直接 running，user 還要再啟）"""
     from app.services.audit import log as audit
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     if strategy.status != 'retired':
         return jsonify({'error': f'status={strategy.status}, not retired'}), 400
     strategy.status = 'stopped'
@@ -425,9 +454,10 @@ def revive_strategy(id):
 # ===== 持倉 =====
 
 @api_bp.route('/positions', methods=['GET'])
+@require_actor
 def list_positions():
     strategy_id = request.args.get('strategy_id')
-    query = Position.query.filter_by(status='open')
+    query = scoped_query(Position).filter_by(status='open')
     if strategy_id:
         query = query.filter_by(strategy_id=strategy_id)
     return jsonify([p.to_dict() for p in query.all()])
@@ -436,6 +466,7 @@ def list_positions():
 # ===== PnL 歷史（真實資料，從 trades 表計算）=====
 
 @api_bp.route('/pnl/history', methods=['GET'])
+@require_actor
 def pnl_history():
     """每日 PnL + 累積 PnL（從真實 trades 表算）"""
     from sqlalchemy import func, cast, Date
@@ -451,6 +482,7 @@ def pnl_history():
         func.sum(Trade.pnl).label('daily_pnl'),
         func.count(Trade.id).label('trade_count'),
     ).filter(Trade.exit_time >= since)
+    q = apply_user_filter(q, Trade)
 
     if strategy_id:
         q = q.filter(Trade.strategy_id == int(strategy_id))
@@ -479,17 +511,21 @@ def pnl_history():
 
 
 @api_bp.route('/pnl/summary', methods=['GET'])
+@require_actor
 def pnl_summary():
     """總體 PnL 統計（用於 Dashboard KPI）"""
     from sqlalchemy import func
 
-    total_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).scalar() or 0
-    total_trades = db.session.query(func.count(Trade.id)).scalar() or 0
-    winning = db.session.query(func.count(Trade.id)).filter(Trade.pnl > 0).scalar() or 0
-    losing = db.session.query(func.count(Trade.id)).filter(Trade.pnl < 0).scalar() or 0
-    open_positions = db.session.query(func.count(Position.id)).filter(Position.status == 'open').scalar() or 0
-    running_strategies = db.session.query(func.count(Strategy.id)).filter(Strategy.status == 'running').scalar() or 0
-    unrealized = db.session.query(func.coalesce(func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0
+    def _q(*cols, model=Trade):
+        return apply_user_filter(db.session.query(*cols), model)
+
+    total_pnl = _q(func.coalesce(func.sum(Trade.pnl), 0)).scalar() or 0
+    total_trades = _q(func.count(Trade.id)).scalar() or 0
+    winning = _q(func.count(Trade.id)).filter(Trade.pnl > 0).scalar() or 0
+    losing = _q(func.count(Trade.id)).filter(Trade.pnl < 0).scalar() or 0
+    open_positions = _q(func.count(Position.id), model=Position).filter(Position.status == 'open').scalar() or 0
+    running_strategies = _q(func.count(Strategy.id), model=Strategy).filter(Strategy.status == 'running').scalar() or 0
+    unrealized = _q(func.coalesce(func.sum(Position.unrealized_pnl), 0), model=Position).filter(Position.status == 'open').scalar() or 0
 
     win_rate = (winning / total_trades * 100) if total_trades > 0 else 0
 
@@ -497,7 +533,7 @@ def pnl_summary():
     from datetime import datetime, timedelta
     from sqlalchemy import cast, Date
     since = datetime.utcnow() - timedelta(days=90)
-    rows = db.session.query(
+    rows = _q(
         cast(Trade.exit_time, Date).label('date'),
         func.sum(Trade.pnl).label('daily_pnl'),
     ).filter(Trade.exit_time >= since).group_by('date').order_by('date').all()
@@ -516,10 +552,10 @@ def pnl_summary():
     # 今日（UTC）統計
     from datetime import datetime as _dt, timezone as _tz
     today_start = _dt.now(_tz.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
-    today_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0
-    today_trades = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start).scalar() or 0
-    today_wins = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl > 0).scalar() or 0
-    today_losses = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl < 0).scalar() or 0
+    today_pnl = _q(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_trades = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_wins = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl > 0).scalar() or 0
+    today_losses = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl < 0).scalar() or 0
 
     return jsonify({
         'total_pnl': round(total_pnl, 2),
@@ -558,6 +594,7 @@ def _run_strategy_backtest(strategy, candle_limit=2000):
     if result.get('status') == 'error':
         bt = BacktestResult(
             strategy_id=strategy.id,
+            user_id=strategy.user_id,
             strategy_type=strategy.type,
             params_snapshot=strategy.params or {},
             symbol=strategy.symbol,
@@ -571,6 +608,7 @@ def _run_strategy_backtest(strategy, candle_limit=2000):
 
     bt = BacktestResult(
         strategy_id=strategy.id,
+        user_id=strategy.user_id,
         strategy_type=strategy.type,
         params_snapshot=strategy.params or {},
         symbol=strategy.symbol,
@@ -610,7 +648,7 @@ def _run_strategy_backtest(strategy, candle_limit=2000):
 @api_bp.route('/strategies/<int:id>/backtest', methods=['POST'])
 def trigger_backtest(id):
     """觸發單一策略回測（同步，目前不走 Celery）"""
-    strategy = Strategy.query.get_or_404(id)
+    strategy = _owned_strategy(id)
     try:
         d = _run_strategy_backtest(strategy)
         return jsonify(d), 201
@@ -619,9 +657,11 @@ def trigger_backtest(id):
 
 
 @api_bp.route('/strategies/<int:id>/backtest', methods=['GET'])
+@require_actor
 def latest_backtest(id):
     """取得策略的最新回測結果（含 equity curve + trades）"""
-    bt = BacktestResult.query.filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).first()
+    _owned_strategy(id)
+    bt = scoped_query(BacktestResult).filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).first()
     if not bt:
         return jsonify({'error': 'no backtest yet'}), 404
     include_curve = request.args.get('detailed', '0') == '1'
@@ -629,33 +669,41 @@ def latest_backtest(id):
 
 
 @api_bp.route('/strategies/<int:id>/backtest/all', methods=['GET'])
+@require_actor
 def all_backtests(id):
     """所有歷史回測（不含 curve）"""
-    bts = BacktestResult.query.filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).limit(20).all()
+    _owned_strategy(id)
+    bts = scoped_query(BacktestResult).filter_by(strategy_id=id).order_by(BacktestResult.created_at.desc()).limit(20).all()
     return jsonify([bt.to_dict() for bt in bts])
 
 
 @api_bp.route('/backtests/latest', methods=['GET'])
+@require_actor
 def all_latest_backtests():
     """所有策略各自最新一次回測（給 dashboard 用）"""
     from sqlalchemy import func
-    sub = db.session.query(
-        BacktestResult.strategy_id,
-        func.max(BacktestResult.created_at).label('latest'),
+    sub_q = apply_user_filter(
+        db.session.query(
+            BacktestResult.strategy_id,
+            func.max(BacktestResult.created_at).label('latest'),
+        ),
+        BacktestResult,
     ).group_by(BacktestResult.strategy_id).subquery()
-    rows = db.session.query(BacktestResult).join(
-        sub,
-        (BacktestResult.strategy_id == sub.c.strategy_id) &
-        (BacktestResult.created_at == sub.c.latest)
-    ).all()
+    main_q = apply_user_filter(db.session.query(BacktestResult), BacktestResult).join(
+        sub_q,
+        (BacktestResult.strategy_id == sub_q.c.strategy_id) &
+        (BacktestResult.created_at == sub_q.c.latest)
+    )
+    rows = main_q.all()
     return jsonify([r.to_dict() for r in rows])
 
 
 @api_bp.route('/backtests/run-all', methods=['POST'])
+@require_actor
 def run_all_backtests():
     """批次跑所有 strategies 的回測（一次性，慢）"""
     results = []
-    strategies = Strategy.query.all()
+    strategies = scoped_query(Strategy).all()
     for s in strategies:
         try:
             r = _run_strategy_backtest(s)
@@ -668,19 +716,23 @@ def run_all_backtests():
 # ===== 策略表現（per-strategy 統計）=====
 
 @api_bp.route('/strategies/performance', methods=['GET'])
+@require_actor
 def strategies_performance():
     """每個策略的真實表現統計（trades 表 + positions 表 + 最新 backtest）"""
     from sqlalchemy import func
 
-    strategies = Strategy.query.order_by(Strategy.id).all()
+    strategies = scoped_query(Strategy).order_by(Strategy.id).all()
 
     # 預載每個 strategy 最新 backtest
     bt_map = {}
-    sub = db.session.query(
-        BacktestResult.strategy_id,
-        func.max(BacktestResult.created_at).label('latest'),
+    sub = apply_user_filter(
+        db.session.query(
+            BacktestResult.strategy_id,
+            func.max(BacktestResult.created_at).label('latest'),
+        ),
+        BacktestResult,
     ).filter(BacktestResult.status == 'completed').group_by(BacktestResult.strategy_id).subquery()
-    latest_bts = db.session.query(BacktestResult).join(
+    latest_bts = apply_user_filter(db.session.query(BacktestResult), BacktestResult).join(
         sub,
         (BacktestResult.strategy_id == sub.c.strategy_id) &
         (BacktestResult.created_at == sub.c.latest)
@@ -772,9 +824,10 @@ def strategies_performance():
 # ===== 訂單 =====
 
 @api_bp.route('/orders', methods=['GET'])
+@require_actor
 def list_orders():
     strategy_id = request.args.get('strategy_id')
-    query = Order.query
+    query = scoped_query(Order)
     if strategy_id:
         query = query.filter_by(strategy_id=strategy_id)
     query = query.order_by(Order.created_at.desc()).limit(50)
@@ -784,9 +837,10 @@ def list_orders():
 # ===== 交易紀錄 =====
 
 @api_bp.route('/trades', methods=['GET'])
+@require_actor
 def list_trades():
     strategy_id = request.args.get('strategy_id')
-    query = Trade.query
+    query = scoped_query(Trade)
     if strategy_id:
         query = query.filter_by(strategy_id=strategy_id)
     query = query.order_by(Trade.exit_time.desc()).limit(100)
@@ -971,10 +1025,10 @@ def get_system_config():
 
 
 @api_bp.route('/audit', methods=['GET'])
+@require_actor
 def list_audit():
     """Phase 8.4: 查 audit log。?type=halt&limit=100"""
-    from app.models import AuditLog
-    q = AuditLog.query
+    q = scoped_query(AuditLog)
     event_type = request.args.get('type')
     actor = request.args.get('actor')
     if event_type:
@@ -1097,6 +1151,7 @@ def update_system_config():
 
 
 @api_bp.route('/simulation/estimate', methods=['GET'])
+@require_actor
 def estimate_returns():
     """模擬盤預期收益估算 — 改用真實 backtest 數據（Phase 3 後）"""
     capital = float(request.args.get('capital', 100))
@@ -1104,11 +1159,14 @@ def estimate_returns():
 
     # 從每個策略的最新 backtest 合計
     from sqlalchemy import func as _f
-    sub = db.session.query(
-        BacktestResult.strategy_id,
-        _f.max(BacktestResult.created_at).label('latest'),
+    sub = apply_user_filter(
+        db.session.query(
+            BacktestResult.strategy_id,
+            _f.max(BacktestResult.created_at).label('latest'),
+        ),
+        BacktestResult,
     ).group_by(BacktestResult.strategy_id).subquery()
-    rows = db.session.query(BacktestResult, Strategy).join(
+    rows = apply_user_filter(db.session.query(BacktestResult, Strategy), BacktestResult).join(
         sub,
         (BacktestResult.strategy_id == sub.c.strategy_id) &
         (BacktestResult.created_at == sub.c.latest)
@@ -1363,14 +1421,19 @@ def translate_candidate(cid):
 
 
 @api_bp.route('/candidates/<int:cid>/promote', methods=['POST'])
+@require_actor
 def promote_candidate(cid):
     """把 qualified candidate 推上線 — 建立 strategies 條目並註冊 signal_fn。
     Body 可選：{ "name": "...", "symbol": "BTC/USDT" }
+
+    Phase 11.1.3: 新策略 owner = 當前 user (admin 預設 user_id=1)。
     """
     from app.services.candidate_pipeline import promote_candidate as do_promote
     from app.services.audit import log as audit
     data = request.get_json() or {}
-    result = do_promote(cid, name=data.get('name'), symbol=data.get('symbol', 'BTC/USDT'))
+    owner = current_user_id() or 1
+    result = do_promote(cid, name=data.get('name'), symbol=data.get('symbol', 'BTC/USDT'),
+                        owner_user_id=owner)
     if result['ok']:
         audit('candidate_promote', actor='user', candidate_id=cid,
               strategy_id=result['strategy']['id'],

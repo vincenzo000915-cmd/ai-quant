@@ -256,11 +256,14 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     }
 
 
-def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str = 'BTC/USDT') -> dict:
+def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str = 'BTC/USDT',
+                      owner_user_id: int | None = None) -> dict:
     """把 qualified candidate 推上線 — 建立 Strategy 條目 + 註冊到 strategy_engine。
 
     狀態流轉：qualified → promoted
     回傳：{ok, strategy: {...}, candidate: {...}} 或 {ok: False, error}
+
+    Phase 11.1.3: owner_user_id 指定新策略歸屬。預設 1 (admin) 給 Celery / 內部腳本用。
     """
     from app.models import Strategy
     from app.services.strategy_engine import register_candidate_signal
@@ -304,6 +307,7 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
         max_positions=1,
         max_daily_loss=10.0,
         candidate_id=c.id,
+        user_id=owner_user_id if owner_user_id is not None else 1,
     )
     db.session.add(strategy)
     db.session.flush()   # 拿 strategy.id
