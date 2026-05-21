@@ -850,14 +850,28 @@ def list_trades():
 # ===== 帳戶 =====
 
 @api_bp.route('/account', methods=['GET'])
+@require_actor
 def account_info():
-    from app.services.exchange_service import fetch_balance as get_balance
+    """Phase 11.2.2: 看 actor 的 OKX 帳號餘額 — admin 看 env (system) OKX，user 看自己綁的。"""
+    from app.services.exchange_service import fetch_balance as get_balance, _resolve_creds
+    uid = current_user_id()
+    # is_admin (system token 或 role=admin) → 走 env
+    if is_admin_actor():
+        creds = None  # → fetch_balance default env
+    else:
+        creds = _resolve_creds(uid)
+        if not creds:
+            return jsonify({
+                'exchange': 'okx', 'bound': False,
+                'balance': 0, 'equity': 0, 'margin': 0, 'free_margin': 0, 'unrealized_pnl': 0,
+                'balances': {}, 'message': '尚未綁定 OKX，请到设置页绑定',
+            })
     try:
-        balances = get_balance()
+        balances = get_balance(creds=creds)
         usd_total = sum(v.get('total', 0) for v in balances.values())
         free_usdt = balances.get('USDT', {}).get('free', 0)
         return jsonify({
-            'exchange': 'okx',
+            'exchange': 'okx', 'bound': True,
             'balance': usd_total,
             'equity': usd_total,
             'margin': 0,

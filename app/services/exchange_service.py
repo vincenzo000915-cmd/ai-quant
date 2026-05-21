@@ -209,13 +209,45 @@ def create_order(symbol, side, order_type, amount, price=None):
         raise Exception(f'下單失敗: {str(e)}')
 
 
-def fetch_balance():
-    """獲取帳戶餘額（直接 OKX API，繞過 CCXT bug）"""
-    app = current_app._get_current_object()
-    config = app.config
-    api_key = config.get('EXCHANGE_API_KEY', '')
-    secret = config.get('EXCHANGE_SECRET', '')
-    passphrase = config.get('EXCHANGE_PASSPHRASE', '')
+def _env_creds() -> dict:
+    """Phase 11.2.2: env OKX creds — admin (user_id=1) 用這套"""
+    import os
+    return {
+        'api_key': os.environ.get('EXCHANGE_API_KEY', ''),
+        'secret': os.environ.get('EXCHANGE_SECRET', ''),
+        'passphrase': os.environ.get('EXCHANGE_PASSPHRASE', ''),
+    }
+
+
+def _resolve_creds(user_id: int | None) -> dict | None:
+    """根據 user_id 取 OKX creds dict。
+
+    - user_id is None / 1 (admin) → env creds（向後兼容 + admin path）
+    - 其他 user → 查 okx_credentials 表，解密；無記錄 / disabled → 回 None
+      (caller 應據此 fallback paper)
+    """
+    if user_id is None or user_id == 1:
+        return _env_creds()
+    try:
+        from app.services.okx_creds import get_decrypted_for_user
+        return get_decrypted_for_user(user_id)
+    except Exception as e:
+        print(f'[exchange] _resolve_creds(user_id={user_id}) failed: {type(e).__name__}: {e}')
+        return None
+
+
+def fetch_balance(creds: dict | None = None):
+    """獲取帳戶餘額（直接 OKX API，繞過 CCXT bug）。
+
+    Phase 11.2.2: creds 可選 — 預設 env (admin)；caller 可傳 user creds dict
+    """
+    if creds is None:
+        creds = _env_creds()
+    api_key = creds.get('api_key', '')
+    secret = creds.get('secret', '')
+    passphrase = creds.get('passphrase', '')
+    if not (api_key and secret and passphrase):
+        raise Exception('OKX credentials missing')
 
     try:
         data = _okx_get_signed('/api/v5/account/balance', api_key, secret, passphrase)
@@ -237,7 +269,7 @@ def fetch_balance():
 
 
 def fetch_okx_order_real_pnl(inst_id: str, ord_id: str | None = None,
-                              max_wait_sec: float = 5.0) -> dict:
+                              max_wait_sec: float = 5.0, creds: dict | None = None) -> dict:
     """Phase 12.10 + 12.12.2: 查 OKX 真實成交盈虧（含手續費）。
 
     用 /api/v5/account/bills 拉最近交易帳單，找匹配 instId（並 ordId）的 type=2 行。
@@ -255,10 +287,12 @@ def fetch_okx_order_real_pnl(inst_id: str, ord_id: str | None = None,
 
     OKX 帳單有延遲（< 3s），給 5s buffer。
     """
-    import os, time as _time
-    api_key = os.environ.get('EXCHANGE_API_KEY')
-    secret = os.environ.get('EXCHANGE_SECRET')
-    passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
+    import time as _time
+    if creds is None:
+        creds = _env_creds()
+    api_key = creds.get('api_key')
+    secret = creds.get('secret')
+    passphrase = creds.get('passphrase')
     if not (api_key and secret and passphrase):
         return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0, 'found': False, 'fill_count': 0, 'error': 'no creds'}
 
@@ -323,14 +357,17 @@ def fetch_okx_order_real_pnl(inst_id: str, ord_id: str | None = None,
     }
 
 
-def fetch_okx_positions() -> list[dict]:
+def fetch_okx_positions(creds: dict | None = None) -> list[dict]:
     """Phase 8.2: 拉 OKX 真實 SWAP 持倉。回傳 [{inst_id, pos_contracts, side, avg_px, upl, ...}]
     pos > 0 → long；pos < 0 → short；pos == 0 → 無持倉（OKX 仍會返回該 entry）。
+
+    Phase 11.2.2: creds 可選 — 預設 env (admin)
     """
-    import os
-    api_key = os.environ.get('EXCHANGE_API_KEY')
-    secret = os.environ.get('EXCHANGE_SECRET')
-    passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
+    if creds is None:
+        creds = _env_creds()
+    api_key = creds.get('api_key')
+    secret = creds.get('secret')
+    passphrase = creds.get('passphrase')
     if not (api_key and secret and passphrase):
         raise RuntimeError('OKX credentials missing')
 
@@ -393,23 +430,26 @@ def _gen_client_order_id() -> str:
 
 def place_order_live(symbol: str, side: str, size_usdt: float, leverage: float = 15.0,
                      client_order_id: str | None = None, max_retries: int = 3,
-                     pos_side: str | None = None) -> dict:
-    """Phase 6.5 + 8.3: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
+                     pos_side: str | None = None, creds: dict | None = None) -> dict:
+    """Phase 6.5 + 8.3 + 11.2.2: 真實下單 — OKX swap 永續合約（cross margin），ordType=market。
 
     8.3 加入：
       - client_order_id (clOrdId) — OKX 同 clOrdId 重複呼叫返回原訂單，天然防重
       - exponential backoff retry — 暫時性錯誤（網路 / 5xx）重試最多 max_retries 次
       - 永久性錯誤碼直接 raise，不重試
 
+    11.2.2: creds 可選 — 預設 env (admin)；caller 可傳 per-user creds 走該 user OKX 帳號
+
     回傳 OKX 原始 order data。失敗 raise。
     """
-    import os
     import time as _time
-    api_key = os.environ.get('EXCHANGE_API_KEY')
-    secret = os.environ.get('EXCHANGE_SECRET')
-    passphrase = os.environ.get('EXCHANGE_PASSPHRASE')
+    if creds is None:
+        creds = _env_creds()
+    api_key = creds.get('api_key')
+    secret = creds.get('secret')
+    passphrase = creds.get('passphrase')
     if not (api_key and secret and passphrase):
-        raise RuntimeError('OKX API credentials missing in env')
+        raise RuntimeError('OKX API credentials missing')
 
     from app.services.symbols import get_inst_id, get_contract_size
     inst_id = get_inst_id(symbol)
