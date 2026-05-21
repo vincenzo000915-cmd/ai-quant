@@ -470,6 +470,24 @@ def ai_personal_advice():
     return jsonify(r)
 
 
+@api_bp.route('/me/improve-strategies', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_improve_strategies():
+    """Phase 11.5.10: AI 看現有策略 + 表現 + regime → 主動生成 1-3 個補完性新候選"""
+    from app.services.llm_prompts.strategy_improve import improve_strategies
+    from app.services.audit import log as audit
+    uid = current_user_id() or 1
+    r = improve_strategies(uid)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    audit('strategy_ai_improve', actor='user',
+          generated_count=len(r.get('generated', [])),
+          rejected_count=len(r.get('rejected', [])),
+          provider=r.get('llm_meta', {}).get('provider_used'))
+    return jsonify(r), 201
+
+
 @api_bp.route('/me/diagnose', methods=['POST'])
 @require_actor
 @require_pro_tier

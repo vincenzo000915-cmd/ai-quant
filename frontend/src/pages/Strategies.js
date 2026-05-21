@@ -12,6 +12,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ParamOptimizeDialog from '../components/ParamOptimizeDialog';
 import ExplainStrategyDialog from '../components/ExplainStrategyDialog';
 import GenerateStrategyDialog from '../components/GenerateStrategyDialog';
+import ImproveStrategiesDialog from '../components/ImproveStrategiesDialog';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
@@ -100,6 +101,7 @@ export default function Strategies() {
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainTarget, setExplainTarget] = useState(null);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [improveOpen, setImproveOpen] = useState(false);
 
   const handleOpenFanOut = (strategy) => {
     setFanOutSource(strategy);
@@ -472,6 +474,10 @@ export default function Strategies() {
           <Tooltip title="重新整理">
             <IconButton onClick={fetchStrategies} color="primary"><RefreshIcon /></IconButton>
           </Tooltip>
+          <Button variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setImproveOpen(true)}
+            sx={{ color: '#a855f7', borderColor: '#a855f7', '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.08)' } }}>
+            ✨ AI 改進建議
+          </Button>
           <Button variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setGenerateOpen(true)}
             sx={{ color: '#fbbf24', borderColor: '#fbbf24', '&:hover': { borderColor: '#fcd34d', bgcolor: 'rgba(251,191,36,0.08)' } }}>
             ✨ AI 生成
@@ -755,6 +761,13 @@ export default function Strategies() {
       <GenerateStrategyDialog
         open={generateOpen}
         onClose={() => setGenerateOpen(false)}
+        onCreated={() => { fetchStrategies(); }}
+      />
+
+      {/* Phase 11.5.10: AI 改進建議（閉環最後一環） */}
+      <ImproveStrategiesDialog
+        open={improveOpen}
+        onClose={() => setImproveOpen(false)}
         onCreated={() => { fetchStrategies(); }}
       />
 
