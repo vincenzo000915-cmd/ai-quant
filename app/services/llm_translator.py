@@ -352,3 +352,44 @@ def translate(
         'cache_read_input_tokens': getattr(resp.usage, 'cache_read_input_tokens', None),
     }
     return parsed
+
+
+def translate_via_provider(
+    *,
+    raw_code: str,
+    raw_lang: str = 'python',
+    source_name: str = 'unknown',
+    source_author: str = 'unknown',
+    source_url: str = '',
+    user_id: int,
+) -> dict:
+    """Phase 11.5.9: 走 llm_provider.call_llm — admin 用 claude_cli (訂閱免費)，
+    user 用自己 BYO API key。失敗 raise LLMTranslatorError。
+    """
+    from app.services.llm_provider import call_llm
+
+    if not raw_code or not raw_code.strip():
+        raise LLMTranslatorError('raw_code is empty')
+
+    user_msg = USER_TEMPLATE.format(
+        raw_lang=raw_lang or 'python',
+        source_name=source_name or 'unknown',
+        source_author=source_author or 'unknown',
+        source_url=source_url or '',
+        raw_code=raw_code[:30000],
+    )
+
+    r = call_llm(
+        user_id=user_id,
+        prompt=user_msg,
+        system=SYSTEM_PROMPT,
+        max_tokens=4096,
+    )
+    if not r.get('ok'):
+        raise LLMTranslatorError(r.get('error', 'call_llm failed'))
+
+    parsed = _parse_output(r['text'])
+    parsed['model'] = r.get('model_used', 'unknown')
+    parsed['usage'] = r.get('usage') or {}
+    parsed['provider_used'] = r.get('provider_used')
+    return parsed

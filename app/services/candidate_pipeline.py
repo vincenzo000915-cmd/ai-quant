@@ -8,7 +8,7 @@ from __future__ import annotations
 from app.extensions import db
 from app.models import StrategyCandidate, BacktestResult
 from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
-from app.services.llm_translator import translate, LLMTranslatorError
+from app.services.llm_translator import translate, translate_via_provider, LLMTranslatorError
 
 
 # 候選策略 qualified 門檻（Phase 5.4 嚴格化）
@@ -18,10 +18,13 @@ QUALIFIED_MAX_DECAY_PCT = 70     # OOS sharpe 相對 IS 衰減超過 70% → 過
 QUALIFIED_MIN_TRADES_PER_SIDE = 5  # IS / OOS 各自至少這麼多筆，否則 Sharpe 估不準
 
 
-def translate_and_verify(candidate_id: int) -> dict:
+def translate_and_verify(candidate_id: int, *, user_id: int | None = None) -> dict:
     """LLM 翻譯 + 沙箱驗證一個 candidate。回傳更新後的 dict。
 
     狀態流轉：pending → translating → translated（成功）/ error（失敗）
+
+    Phase 11.5.9: user_id 不為 None 走 translate_via_provider（admin claude_cli /
+    user BYO API）；None 走舊 translate() 用 env ANTHROPIC_API_KEY（host cron 用）。
     """
     c = StrategyCandidate.query.get(candidate_id)
     if c is None:
@@ -39,13 +42,23 @@ def translate_and_verify(candidate_id: int) -> dict:
 
     # ---- LLM 翻譯 ----
     try:
-        parsed = translate(
-            raw_code=c.raw_code,
-            raw_lang=c.raw_lang or 'python',
-            source_name=c.source_name or 'unknown',
-            source_author=c.source_author or 'unknown',
-            source_url=c.source_url or '',
-        )
+        if user_id is not None:
+            parsed = translate_via_provider(
+                raw_code=c.raw_code,
+                raw_lang=c.raw_lang or 'python',
+                source_name=c.source_name or 'unknown',
+                source_author=c.source_author or 'unknown',
+                source_url=c.source_url or '',
+                user_id=user_id,
+            )
+        else:
+            parsed = translate(
+                raw_code=c.raw_code,
+                raw_lang=c.raw_lang or 'python',
+                source_name=c.source_name or 'unknown',
+                source_author=c.source_author or 'unknown',
+                source_url=c.source_url or '',
+            )
     except LLMTranslatorError as e:
         c.status = 'error'
         c.error_log = f'translate: {e}'

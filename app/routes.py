@@ -1539,10 +1539,15 @@ def backtest_pending_candidates():
 
 
 @api_bp.route('/candidates/<int:cid>/translate', methods=['POST'])
+@require_actor
 def translate_candidate(cid):
-    """跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-15s/candidate）。"""
+    """Phase 11.5.9: 跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-30s/candidate）。
+
+    admin 走 claude_cli (訂閱免費)、user 走自己 BYO API key。
+    Host cron (translate_pending_cron.sh) 仍走 env ANTHROPIC_API_KEY (legacy)。
+    """
     from app.services.candidate_pipeline import translate_and_verify
-    result = translate_and_verify(cid)
+    result = translate_and_verify(cid, user_id=current_user_id() or 1)
     if result['ok']:
         return jsonify(result), 200
     # 區分缺金鑰 vs 翻譯失敗
