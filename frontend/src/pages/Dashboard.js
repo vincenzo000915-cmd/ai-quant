@@ -471,27 +471,32 @@ export default function Dashboard() {
         ].filter(Boolean)}
       />
 
-      {/* === Hero KPI Bar === */}
+      {/* === Hero KPI: 1 主 + 3 副 — 帳戶餘額是最重要的數字 === */}
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
-        <Grid item xs={6} md={2.4}>
+        <Grid item xs={12} md={6}>
           <KpiCell
+            size="hero"
             label="账户余额"
+            icon="💰"
             value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
-            sub={account ? `${(account.free_margin || 0).toFixed(2)} 可用` : ''}
+            sub={account ? `${(account.free_margin || 0).toFixed(2)} USDT 可用 · 杠杆 ${cfg?.leverage || 15}x · 每笔 $${cfg?.trade_size_usdt || 4}` : ''}
+            accent="accent"
             loading={!account}
           />
         </Grid>
-        <Grid item xs={6} md={2.4}>
+        <Grid item xs={12} md={6}>
           <KpiCell
+            size="hero"
             label="今日 PnL"
+            icon={todayPnl > 0 ? '📈' : todayPnl < 0 ? '📉' : '⚖️'}
             value={`${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}`}
-            sub={todayTrades ? `${todayTrades} trades · ${pnlSummary.today_wins}W/${pnlSummary.today_losses}L` : '今日 0 trades'}
+            sub={todayTrades ? `${todayTrades} trades · ${pnlSummary.today_wins}W / ${pnlSummary.today_losses}L` : '今日 0 trades — 市场或无信号'}
             accent={todayPnl > 0 ? 'success' : todayPnl < 0 ? 'error' : null}
             trendValue={todayPnl}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} md={2.4}>
+        <Grid item xs={6} md={4}>
           <KpiCell
             label="持仓 / 运行策略"
             value={`${openPositions} / ${runningStrats}`}
@@ -500,22 +505,24 @@ export default function Dashboard() {
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} md={2.4}>
+        <Grid item xs={6} md={4}>
           <KpiCell
-            label="总 PnL"
+            label="累计 PnL"
             value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
             sub={pnlSummary ? `${pnlSummary.total_trades} trades · ${pnlSummary.win_rate}% 胜率` : ''}
             accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={12} md={2.4}>
+        <Grid item xs={12} md={4}>
           <KpiCell
-            label="BTC/USDT"
-            value={btcPrice?.price ? `$${btcPrice.price.toLocaleString()}` : '—'}
-            sub={btcPrice?.change_24h != null ? `24h ${btcPrice.change_24h >= 0 ? '+' : ''}${btcPrice.change_24h.toFixed(2)}%` : ''}
-            trendValue={btcPrice?.change_24h}
-            loading={!btcPrice}
+            label="最大回撤 (90d)"
+            value={pnlSummary?.max_drawdown_90d != null ? `-$${Math.abs(pnlSummary.max_drawdown_90d).toFixed(2)}` : '—'}
+            sub={pnlSummary?.unrealized_pnl != null
+              ? `未实现 ${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl.toFixed(2)}`
+              : ''}
+            accent={(pnlSummary?.max_drawdown_90d || 0) > 5 ? 'error' : null}
+            loading={!pnlSummary}
           />
         </Grid>
       </Grid>

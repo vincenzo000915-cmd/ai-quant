@@ -22,20 +22,24 @@ export const palette = {
   textFaint: '#64748b',
   textDim: '#475569',
 
-  // 主 accent — 一個就好
-  accent: '#06b6d4',      // cyan
+  // 主 accent — cyan 不太刺眼，作為 hero 主色
+  accent: '#06b6d4',
   accentDim: '#0891b2',
   accentGlow: 'rgba(6,182,212,0.18)',
 
-  // 狀態色（嚴格限定用途）
-  success: '#22c55e',     // 賺 / running / OK
-  error: '#ef4444',       // 虧 / halt / error
-  warning: '#f59e0b',     // 警告 / pending
-  info: '#6366f1',        // info / 中性
+  // 暖 accent — 給「人情味」 dashboard 用 (Phase 12.15.3 user 反饋太冷)
+  warmAccent: '#fb923c',    // 暖橙
+  warmAccentDim: '#ea580c',
 
-  // PnL 專用（高對比，因為這個用戶最常看）
-  pnlPositive: '#22c55e',
-  pnlNegative: '#ef4444',
+  // 狀態色 — 採柔和飽和度而非霓虹
+  success: '#10b981',     // 暗綠 (比 #22c55e 柔和)
+  error: '#f43f5e',       // 玫瑰紅 (比 #ef4444 暖)
+  warning: '#f59e0b',     // 琥珀
+  info: '#6366f1',
+
+  // PnL 專用
+  pnlPositive: '#10b981',
+  pnlNegative: '#f43f5e',
   pnlNeutral: '#94a3b8',
 };
 
