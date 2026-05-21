@@ -29,6 +29,9 @@ import {
   CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer,
 } from 'recharts';
 import CorrelationHeatmap from '../components/CorrelationHeatmap';
+import { palette } from '../theme';
+import PageHeader from '../components/common/PageHeader';
+import StatusChip from '../components/common/StatusChip';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -443,17 +446,28 @@ export default function Strategies() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5 }}>
-        <Typography variant="h5" fontWeight={700}>策略管理</Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          <Button variant="outlined" color="warning" size="small" onClick={fetchEstimate}>
-            📊 收益估算
-          </Button>
+      {/* === Phase 12.15.5: 統一 PageHeader === */}
+      <PageHeader
+        title="策略管理"
+        subtitle={`${strategies.filter(s => s.status === 'running').length} 运行中 · ${strategies.length} 总策略 · OOS 门槛 1.5`}
+        actions={[
+          <Button key="ai-improve" variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setImproveOpen(true)} size="small"
+            sx={{ color: palette.warmAccent, borderColor: `${palette.warmAccent}55`, textTransform: 'none', '&:hover': { borderColor: palette.warmAccent, bgcolor: `${palette.warmAccent}11` } }}>
+            AI 改进建议
+          </Button>,
+          <Button key="ai-gen" variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setGenerateOpen(true)} size="small"
+            sx={{ color: palette.accent, borderColor: `${palette.accent}55`, textTransform: 'none', '&:hover': { borderColor: palette.accent, bgcolor: `${palette.accent}11` } }}>
+            AI 生成
+          </Button>,
+          <Button key="estimate" variant="outlined" size="small" onClick={fetchEstimate}
+            sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>
+            收益估算
+          </Button>,
           <Button
+            key="health"
             variant="outlined"
-            color="info"
             size="small"
+            sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}
             onClick={async () => {
               if (!window.confirm('立即跑健康檢查？對每個運行中的策略做新 walk-forward 回測（~5s/策略，可能 30-60s）。')) return;
               try {
@@ -469,24 +483,17 @@ export default function Strategies() {
               }
             }}
           >
-            🩺 健康檢查
-          </Button>
-          <Tooltip title="重新整理">
-            <IconButton onClick={fetchStrategies} color="primary"><RefreshIcon /></IconButton>
-          </Tooltip>
-          <Button variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setImproveOpen(true)}
-            sx={{ color: '#a855f7', borderColor: '#a855f7', '&:hover': { borderColor: '#c084fc', bgcolor: 'rgba(168,85,247,0.08)' } }}>
-            ✨ AI 改進建議
-          </Button>
-          <Button variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setGenerateOpen(true)}
-            sx={{ color: '#fbbf24', borderColor: '#fbbf24', '&:hover': { borderColor: '#fcd34d', bgcolor: 'rgba(251,191,36,0.08)' } }}>
-            ✨ AI 生成
-          </Button>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>
+            健康检查
+          </Button>,
+          <Tooltip key="refresh" title="重新整理">
+            <IconButton onClick={fetchStrategies} size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }}><RefreshIcon fontSize="small" /></IconButton>
+          </Tooltip>,
+          <Button key="add" variant="contained" size="small" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}
+            sx={{ textTransform: 'none', bgcolor: palette.accent, '&:hover': { bgcolor: palette.accentDim } }}>
             新增策略
-          </Button>
-        </Box>
-      </Box>
+          </Button>,
+        ]}
+      />
 
       {/* Loading */}
       {loading && <LinearProgress sx={{ mb: 2 }} />}

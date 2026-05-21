@@ -11,6 +11,7 @@ import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
 import LlmBindingCard from '../components/LlmBindingCard';
 import { PageSkeleton } from '../components/Skeleton';
+import PageHeader from '../components/common/PageHeader';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -99,10 +100,10 @@ export default function Settings() {
 
   return (
     <Box>
-      <Typography variant="h5" fontWeight={800} sx={{ mb: 1 }}>系統設定</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        所有數值對 Celery / 回測即刻生效（cache TTL 30 秒）。改完按下方「儲存」。
-      </Typography>
+      <PageHeader
+        title="系统设置"
+        subtitle={`${cfg.trading_mode === 'live' ? 'LIVE 实盘' : 'PAPER 模拟'} · 杠杆 ${cfg.leverage}x · 每笔 $${cfg.trade_size_usdt} · 修改即时生效（30s cache）`}
+      />
 
       {msg && <Alert severity={msg.type} sx={{ mb: 2 }} onClose={() => setMsg(null)}>{msg.text}</Alert>}
 

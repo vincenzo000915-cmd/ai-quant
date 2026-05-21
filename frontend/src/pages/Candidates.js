@@ -18,6 +18,8 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import ContentPasteIcon from '@mui/icons-material/ContentPaste';
+import { palette } from '../theme';
+import PageHeader from '../components/common/PageHeader';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -196,56 +198,29 @@ export default function Candidates() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={800} sx={{ letterSpacing: -0.5 }}>
-            候選策略池
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            爬蟲 → LLM 翻譯 → 沙箱驗證 → 真實回測 → Promote 上線
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          <Button
-            startIcon={<RefreshIcon />}
-            onClick={load}
-            variant="outlined"
-            size="small"
-          >
-            刷新
-          </Button>
-          <Button
-            startIcon={<CloudDownloadIcon />}
-            onClick={crawlGithub}
-            variant="outlined"
-            color="primary"
-            size="small"
-            disabled={busy === 'crawl'}
-          >
-            爬 GitHub
-          </Button>
-          <Button
-            startIcon={<ContentPasteIcon />}
-            onClick={() => setPineOpen(true)}
-            variant="outlined"
-            sx={{ color: '#22d3ee', borderColor: '#22d3ee' }}
-            size="small"
-          >
-            貼入 Pine Script
-          </Button>
-          <Button
-            startIcon={<ScienceIcon />}
-            onClick={backtestPending}
-            variant="contained"
-            color="secondary"
-            size="small"
+      <PageHeader
+        title="候选策略池"
+        subtitle="爬虫 → LLM 翻译 → 沙箱验证 → 真实回测 → Promote 上线"
+        actions={[
+          <Button key="bt" startIcon={<ScienceIcon />} onClick={backtestPending} variant="contained" size="small"
             disabled={busy === 'bt-pending' || !(stats.by_status?.translated)}
-          >
-            批次回測 ({stats.by_status?.translated || 0})
-          </Button>
-        </Stack>
-      </Box>
+            sx={{ textTransform: 'none', bgcolor: palette.accent, '&:hover': { bgcolor: palette.accentDim } }}>
+            批次回测 ({stats.by_status?.translated || 0})
+          </Button>,
+          <Button key="pine" startIcon={<ContentPasteIcon />} onClick={() => setPineOpen(true)} variant="outlined" size="small"
+            sx={{ color: palette.accent, borderColor: `${palette.accent}55`, textTransform: 'none', '&:hover': { borderColor: palette.accent, bgcolor: `${palette.accent}11` } }}>
+            贴入 Pine
+          </Button>,
+          <Button key="crawl" startIcon={<CloudDownloadIcon />} onClick={crawlGithub} variant="outlined" size="small" disabled={busy === 'crawl'}
+            sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>
+            爬 GitHub
+          </Button>,
+          <Button key="refresh" startIcon={<RefreshIcon />} onClick={load} variant="outlined" size="small"
+            sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>
+            刷新
+          </Button>,
+        ]}
+      />
 
       {/* Stats */}
       <Grid container spacing={2} sx={{ mb: 3 }}>

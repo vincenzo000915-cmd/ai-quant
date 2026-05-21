@@ -5,6 +5,8 @@ import {
   TextField, MenuItem, Stack,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { palette } from '../theme';
+import PageHeader from '../components/common/PageHeader';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -62,23 +64,23 @@ export default function Audit() {
 
   return (
     <Box>
-      <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={800} sx={{ letterSpacing: -0.5 }}>審計日誌</Typography>
-          <Typography variant="body2" color="text.secondary">所有 mutating 事件 — config 改動 / halt / kill / retire / promote</Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <TextField select size="small" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} label="事件類型" sx={{ minWidth: 160 }}>
+      <PageHeader
+        title="审计日志"
+        subtitle="所有 mutating 事件 — config 改动 / halt / kill / retire / promote"
+        actions={[
+          <TextField key="type" select size="small" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} label="事件类型" sx={{ minWidth: 160 }}>
             <MenuItem value="">全部</MenuItem>
             {types.map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
-          </TextField>
-          <TextField select size="small" value={actorFilter} onChange={(e) => setActorFilter(e.target.value)} label="動作來源" sx={{ minWidth: 160 }}>
+          </TextField>,
+          <TextField key="actor" select size="small" value={actorFilter} onChange={(e) => setActorFilter(e.target.value)} label="动作来源" sx={{ minWidth: 160 }}>
             <MenuItem value="">全部</MenuItem>
             {actors.map(a => <MenuItem key={a} value={a}>{a}</MenuItem>)}
-          </TextField>
-          <IconButton color="primary" onClick={load}><RefreshIcon /></IconButton>
-        </Stack>
-      </Box>
+          </TextField>,
+          <IconButton key="refresh" size="small" onClick={load} sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }}>
+            <RefreshIcon fontSize="small" />
+          </IconButton>,
+        ]}
+      />
 
       {loading && <LinearProgress sx={{ mb: 1 }} />}
 

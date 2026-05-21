@@ -11,6 +11,8 @@ import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import GetAppIcon from '@mui/icons-material/GetApp';
 import InfoIcon from '@mui/icons-material/Info';
+import { palette } from '../theme';
+import PageHeader from '../components/common/PageHeader';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -176,41 +178,52 @@ export default function Trades() {
 
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h5" fontWeight={700}>交易紀錄</Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+      {/* === Phase 12.15.5: 統一 PageHeader === */}
+      <PageHeader
+        title="交易记录"
+        subtitle={`${trades.length} 笔 trade · 含 paper + LIVE`}
+        actions={[
           <TextField
+            key="search"
             size="small"
             placeholder="搜尋交易對..."
             value={filters.symbol}
             onChange={handleFilterChange('symbol')}
-            sx={{ width: 180 }}
+            sx={{
+              width: 200,
+              '& .MuiOutlinedInput-root': {
+                bgcolor: palette.surface,
+                fontSize: 13,
+                '& fieldset': { borderColor: palette.border },
+                '&:hover fieldset': { borderColor: palette.borderHot },
+                '&.Mui-focused fieldset': { borderColor: palette.accent },
+              },
+            }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                  <SearchIcon fontSize="small" sx={{ color: palette.textMuted }} />
                 </InputAdornment>
               ),
             }}
-          />
-          <Tooltip title="進階篩選">
-            <IconButton color="primary" onClick={(e) => setFilterAnchor(e.currentTarget)}>
-              <FilterListIcon />
+          />,
+          <Tooltip key="filter" title="進階篩選">
+            <IconButton size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }} onClick={(e) => setFilterAnchor(e.currentTarget)}>
+              <FilterListIcon fontSize="small" />
             </IconButton>
-          </Tooltip>
-          <Tooltip title="匯出 CSV">
-            <IconButton color="primary" onClick={handleExportCSV}>
-              <GetAppIcon />
+          </Tooltip>,
+          <Tooltip key="csv" title="匯出 CSV">
+            <IconButton size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }} onClick={handleExportCSV}>
+              <GetAppIcon fontSize="small" />
             </IconButton>
-          </Tooltip>
-          <Tooltip title="重新整理">
-            <IconButton onClick={fetchTrades} color="primary">
-              <RefreshIcon />
+          </Tooltip>,
+          <Tooltip key="refresh" title="重新整理">
+            <IconButton size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }} onClick={fetchTrades}>
+              <RefreshIcon fontSize="small" />
             </IconButton>
-          </Tooltip>
-        </Box>
-      </Box>
+          </Tooltip>,
+        ]}
+      />
 
       {/* Loading */}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
