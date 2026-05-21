@@ -569,60 +569,7 @@ export default function Dashboard() {
         <KpiBarSkeleton />
       )}
 
-      {/* === KPI Cards === */}
-      <Grid container spacing={2} sx={{ mb: 2.5 }}>
-        <Grid item xs={6} md={3}>
-          <KPICard
-            label="帳戶餘額"
-            value={account ? `$${(account.balance || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '———'}
-            sublabel={pnlSummary != null
-              ? `${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl.toFixed(2)} 未實現`
-              : 'USDT'}
-            icon={<AccountBalanceWalletIcon />}
-            accent="primary"
-            glow
-            sparkData={pnlData.slice(-15).map(d => ({ v: d.cumulative }))}
-          />
-        </Grid>
-        <Grid item xs={6} md={3}>
-          <KPICard
-            label="累積 PnL"
-            value={pnlSummary
-              ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-              : '———'}
-            sublabel={pnlSummary
-              ? `${pnlSummary.total_trades} 筆 · DD -$${pnlSummary.max_drawdown}`
-              : '尚未交易'}
-            icon={pnlSummary?.total_pnl >= 0 ? <TrendingUpIcon /> : <TrendingDownIcon />}
-            accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : 'primary'}
-            glow
-            highlight
-            sparkData={pnlData.slice(-15).map(d => ({ v: d.cumulative }))}
-          />
-        </Grid>
-        <Grid item xs={6} md={3}>
-          <KPICard
-            label="勝率"
-            value={pnlSummary ? `${pnlSummary.win_rate.toFixed(1)}%` : '———'}
-            sublabel={pnlSummary
-              ? `${pnlSummary.winning_trades}W · ${pnlSummary.losing_trades}L`
-              : '尚無交易'}
-            icon={<EmojiEventsIcon />}
-            accent={pnlSummary?.win_rate >= 50 ? 'success' : pnlSummary?.win_rate >= 40 ? 'gold' : 'error'}
-            glow
-          />
-        </Grid>
-        <Grid item xs={6} md={3}>
-          <KPICard
-            label="活躍策略"
-            value={pnlSummary ? `${pnlSummary.running_strategies}` : '———'}
-            sublabel={pnlSummary ? `${pnlSummary.open_positions} 持倉中 · ${perfList.length} 總數` : ''}
-            icon={<BoltIcon />}
-            accent="accent"
-            glow
-          />
-        </Grid>
-      </Grid>
+      {/* === Phase 12.15.6: 旧 4 块 KPICard 已删 — 新 8 cell trading top-bar 取代 === */}
 
       {/* === Phase 6.3 Kill Switch === */}
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
@@ -670,22 +617,7 @@ export default function Dashboard() {
         </Box>
       </Box>
 
-      {/* === 警告斜紋條 === */}
-      <Box className="warning-stripes" sx={{
-        py: 0.75, px: 2, mb: 2.5,
-        borderRadius: 1,
-        display: 'flex', alignItems: 'center', gap: 1.5,
-        border: `1px solid rgba(250, 204, 21, 0.3)`,
-      }}>
-        <WarningAmberIcon sx={{ fontSize: 18, color: C.warnYellow, filter: `drop-shadow(0 0 6px ${C.warnYellow})` }} />
-        <Typography variant="caption" sx={{ color: '#fff', fontWeight: 700, letterSpacing: 1, flexGrow: 1, fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem' }}>
-          {cfg ? (
-            <>
-              {(cfg.trading_mode || 'paper').toUpperCase()} MODE · {cfg.leverage}× LEV · ${cfg.trade_size_usdt}/TRADE · {cfg.capital_usdt > 0 ? `${(cfg.trade_size_usdt / cfg.capital_usdt * 100).toFixed(0)}% EQUITY` : ''} · SL −{cfg.stop_loss_pct}% / TP +{cfg.take_profit_pct}% · NOT FINANCIAL ADVICE
-            </>
-          ) : '⚠ HIGH LEVERAGE ZONE · LOADING CONFIG…'}
-        </Typography>
-      </Box>
+      {/* === Phase 12.15.6: cyberpunk 警告斜紋條已刪 — 模式 / leverage / SL TP 已在 hero KPI === */}
 
       {/* === Phase 6.1: HALTED banner === */}
       {cfg?.halted && (

@@ -182,8 +182,8 @@ export default function Layout() {
                 duration: theme.transitions.duration.enteringScreen,
               }),
               overflow: 'hidden',
-              bgcolor: 'background.paper',
-              borderRight: '1px solid rgba(255,255,255,0.06)',
+              bgcolor: palette.bgDeep,
+              borderRight: `1px solid ${palette.border}`,
             },
           }}
         >
@@ -200,8 +200,8 @@ export default function Layout() {
           sx={{
             '& .MuiDrawer-paper': {
               width: DRAWER_WIDTH,
-              bgcolor: 'background.paper',
-              borderRight: '1px solid rgba(255,255,255,0.06)',
+              bgcolor: palette.bgDeep,
+              borderRight: `1px solid ${palette.border}`,
             },
           }}
         >
@@ -212,19 +212,23 @@ export default function Layout() {
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* AppBar */}
         <AppBar position="static" elevation={0}
-          sx={{ bgcolor: 'background.paper', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          sx={{ bgcolor: palette.bg, borderBottom: `1px solid ${palette.border}` }}>
           <Toolbar sx={{ justifyContent: 'space-between', minHeight: { xs: 48, sm: 56 } }}>
             {isMobile && (
-              <IconButton edge="start" onClick={() => setMobileOpen(true)} size="small" sx={{ mr: 1 }}>
+              <IconButton edge="start" onClick={() => setMobileOpen(true)} size="small" sx={{ mr: 1, color: palette.textMuted }}>
                 <MenuIcon />
               </IconButton>
             )}
-            <Typography variant="h6" fontWeight={600} sx={{ fontSize: { xs: '0.9rem', sm: '1.1rem' } }}>
-              {NAV_ITEMS.find((n) => n.path === location.pathname)?.label ?? '量化交易系統'}
-            </Typography>
+            {/* Phase 12.15.6: 去掉 AppBar 重複頁面標題 — drawer 高亮 + PageHeader 已說明在哪頁 */}
+            <Box sx={{ flexGrow: 1 }} />
             <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1.5 } }}>
-              <FiberManualRecordIcon sx={{ color: 'success.main', fontSize: { xs: 10, sm: 12 } }} />
-              <Typography variant="caption" color="success.main" sx={{ display: { xs: 'none', sm: 'block' } }}>已連線</Typography>
+              <Box sx={{
+                width: 6, height: 6, borderRadius: '50%',
+                bgcolor: palette.success,
+                boxShadow: `0 0 6px ${palette.success}`,
+                animation: 'pulse-dot 2s ease-in-out infinite',
+              }} />
+              <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: 11, color: palette.success, fontWeight: 600, letterSpacing: 0.3 }}>已连线</Typography>
               {user && (
                 <>
                   <Chip
@@ -286,12 +290,12 @@ export default function Layout() {
             onChange={(_, value) => navigate(value)}
             sx={{
               position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1200,
-              bgcolor: 'background.paper',
-              borderTop: '1px solid rgba(255,255,255,0.06)',
+              bgcolor: palette.bgDeep,
+              borderTop: `1px solid ${palette.border}`,
               '& .MuiBottomNavigationAction-root': {
-                color: 'text.secondary',
+                color: palette.textMuted,
                 '&.Mui-selected': {
-                  color: 'primary.main',
+                  color: palette.accent,
                 },
               },
             }}
