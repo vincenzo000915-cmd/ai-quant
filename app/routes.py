@@ -435,6 +435,36 @@ def explain_strategy_route(id):
     return jsonify(r)
 
 
+@api_bp.route('/regime/ai-explain', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_explain_regime():
+    """Phase 11.5.5: AI 解讀當前 regime"""
+    from app.services.llm_prompts.regime_explain import explain_regime
+    from app.services.regime_detector import detect_regime, affinity_for, fit_label
+    # 拉當前 user 的 running 策略 regime（複用 /regime/running 邏輯但 inline）
+    running = scoped_query(Strategy).filter(Strategy.status == 'running').all()
+    unique = sorted({(s.symbol, s.timeframe) for s in running})
+    regimes = {}
+    for sym, tf in unique:
+        regimes[f'{sym}@{tf}'] = detect_regime(sym, tf)
+    per_strategy = []
+    for s in running:
+        r = regimes.get(f'{s.symbol}@{s.timeframe}', {})
+        per_strategy.append({
+            'strategy_id': s.id, 'name': s.name, 'type': s.type,
+            'symbol': s.symbol, 'timeframe': s.timeframe,
+            'affinity': affinity_for(s.type),
+            'regime': r.get('regime'),
+            'fit': fit_label(s.type, r.get('regime', 'unknown')),
+        })
+    regime_data = {'regimes': regimes, 'per_strategy': per_strategy}
+    r = explain_regime(current_user_id() or 1, regime_data)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    return jsonify(r)
+
+
 @api_bp.route('/strategies/ai-generate', methods=['POST'])
 @require_actor
 @require_pro_tier

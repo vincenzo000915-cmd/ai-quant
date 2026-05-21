@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, memo } from 'react';
 import {
   Box, Card, CardContent, Typography, Chip, Tooltip, IconButton, Stack,
-  Alert, LinearProgress, Grid,
+  Alert, LinearProgress, Grid, Button, CircularProgress,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -31,6 +32,22 @@ function RegimePanelInner() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [ai, setAi] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState(null);
+
+  const fetchAi = useCallback(async () => {
+    setAiLoading(true);
+    setAi(null);
+    setAiError(null);
+    try {
+      const r = await fetch(`${API}/api/regime/ai-explain`, { method: 'POST' });
+      const body = await r.json();
+      if (!r.ok || !body.ok) setAiError(body.error || `HTTP ${r.status}`);
+      else setAi(body);
+    } catch (e) { setAiError(e.message); }
+    finally { setAiLoading(false); }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -67,10 +84,48 @@ function RegimePanelInner() {
               ADX 趨勢強度 + Hurst 指數 → 判斷當前市場是趨勢、盤整還是過渡，並標出策略類型是否匹配
             </Typography>
           </Box>
-          <Tooltip title="重新計算">
-            <IconButton size="small" onClick={fetchData}><RefreshIcon /></IconButton>
-          </Tooltip>
+          <Stack direction="row" spacing={1}>
+            <Tooltip title="AI 解读市场状态（Pro）">
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={aiLoading ? <CircularProgress size={14} /> : <AutoAwesomeIcon />}
+                onClick={fetchAi}
+                disabled={aiLoading || !data}
+                sx={{ color: '#fbbf24', borderColor: '#fbbf2466', textTransform: 'none' }}
+              >
+                {aiLoading ? '思考中…' : 'AI 解讀'}
+              </Button>
+            </Tooltip>
+            <Tooltip title="重新計算">
+              <IconButton size="small" onClick={fetchData}><RefreshIcon /></IconButton>
+            </Tooltip>
+          </Stack>
         </Box>
+
+        {(ai || aiError) && (
+          <Alert
+            severity={aiError ? 'error' : 'info'}
+            sx={{ mb: 2, bgcolor: aiError ? undefined : 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}
+            onClose={() => { setAi(null); setAiError(null); }}
+          >
+            {aiError ? (
+              <Typography variant="body2">AI 失败：{aiError}</Typography>
+            ) : (
+              <Box>
+                <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
+                  <Chip size="small" label={ai.provider_used} variant="outlined" />
+                  <Chip size="small" label={ai.model_used} variant="outlined" />
+                  {ai.cached && <Chip size="small" label="缓存命中" color="success" variant="outlined" />}
+                  {ai.latency_ms != null && <Chip size="small" label={`${ai.latency_ms} ms`} variant="outlined" />}
+                </Stack>
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                  {ai.text}
+                </Typography>
+              </Box>
+            )}
+          </Alert>
+        )}
 
         {loading && <LinearProgress sx={{ mb: 1 }} />}
         {error && <Alert severity="error" sx={{ mb: 1 }}>讀取失敗：{error}</Alert>}
