@@ -471,58 +471,92 @@ export default function Dashboard() {
         ].filter(Boolean)}
       />
 
-      {/* === Hero KPI: 1 主 + 3 副 — 帳戶餘額是最重要的數字 === */}
-      <Grid container spacing={1.5} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={6}>
+      {/* === Trading top-bar 緊湊 KPI grid — 8 cells + sparkline === */}
+      <Grid container spacing={1} sx={{ mb: 2.5 }}>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
           <KpiCell
-            size="hero"
+            size="compact"
             label="账户余额"
-            icon="💰"
             value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
-            sub={account ? `${(account.free_margin || 0).toFixed(2)} USDT 可用 · 杠杆 ${cfg?.leverage || 15}x · 每笔 $${cfg?.trade_size_usdt || 4}` : ''}
+            sub={account ? `${(account.free_margin || 0).toFixed(2)} 可用` : ''}
+            sparkData={pnlData.length ? pnlData.map(p => (account?.balance || 75) + (p.cumulative || 0)) : null}
             accent="accent"
             loading={!account}
           />
         </Grid>
-        <Grid item xs={12} md={6}>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
           <KpiCell
-            size="hero"
+            size="compact"
             label="今日 PnL"
-            icon={todayPnl > 0 ? '📈' : todayPnl < 0 ? '📉' : '⚖️'}
             value={`${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}`}
-            sub={todayTrades ? `${todayTrades} trades · ${pnlSummary.today_wins}W / ${pnlSummary.today_losses}L` : '今日 0 trades — 市场或无信号'}
+            sub={todayTrades ? `${todayTrades} trades` : '0 trades'}
             accent={todayPnl > 0 ? 'success' : todayPnl < 0 ? 'error' : null}
             trendValue={todayPnl}
             loading={!pnlSummary}
+            badge={pnlSummary && todayTrades > 0 ? { text: `${pnlSummary.today_wins}W/${pnlSummary.today_losses}L`, color: '#94a3b8' } : null}
           />
         </Grid>
-        <Grid item xs={6} md={4}>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
           <KpiCell
-            label="持仓 / 运行策略"
+            size="compact"
+            label="累计 PnL"
+            value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
+            sub={pnlSummary ? `${pnlSummary.win_rate}% 胜率` : ''}
+            sparkData={pnlData.length ? pnlData.map(p => p.cumulative || 0) : null}
+            accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
+            trendValue={pnlSummary?.total_pnl}
+            loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+          <KpiCell
+            size="compact"
+            label="持仓 / 运行"
             value={`${openPositions} / ${runningStrats}`}
-            sub={openPositions > 0 ? `${openPositions} 个开仓中` : '无开仓'}
+            sub={openPositions > 0 ? `${openPositions} 开仓` : '无开仓'}
             accent={openPositions > 0 ? 'accent' : null}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} md={4}>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
           <KpiCell
-            label="累计 PnL"
-            value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
-            sub={pnlSummary ? `${pnlSummary.total_trades} trades · ${pnlSummary.win_rate}% 胜率` : ''}
-            accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
+            size="compact"
+            label="总交易"
+            value={pnlSummary?.total_trades ?? '—'}
+            sub={pnlSummary ? `${pnlSummary.winning_trades}胜 ${pnlSummary.losing_trades}败` : ''}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
           <KpiCell
-            label="最大回撤 (90d)"
-            value={pnlSummary?.max_drawdown_90d != null ? `-$${Math.abs(pnlSummary.max_drawdown_90d).toFixed(2)}` : '—'}
-            sub={pnlSummary?.unrealized_pnl != null
-              ? `未实现 ${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl.toFixed(2)}`
-              : ''}
-            accent={(pnlSummary?.max_drawdown_90d || 0) > 5 ? 'error' : null}
+            size="compact"
+            label="未实现"
+            value={pnlSummary ? `${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl?.toFixed(2)}` : '$0.00'}
+            sub={openPositions > 0 ? `${openPositions} 持仓中` : '无浮动'}
+            accent={pnlSummary?.unrealized_pnl > 0 ? 'success' : pnlSummary?.unrealized_pnl < 0 ? 'error' : null}
+            trendValue={pnlSummary?.unrealized_pnl}
             loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+          <KpiCell
+            size="compact"
+            label="最大回撤"
+            value={pnlSummary?.max_drawdown != null ? `-$${Math.abs(pnlSummary.max_drawdown).toFixed(2)}` : '—'}
+            sub="90d"
+            accent={(pnlSummary?.max_drawdown_pct || 0) > 30 ? 'error' : null}
+            loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+          <KpiCell
+            size="compact"
+            label={liveMode ? 'LIVE 模式' : 'PAPER 模式'}
+            value={`${cfg?.leverage || 15}x`}
+            sub={cfg ? `单笔 $${cfg.trade_size_usdt} · SL ${cfg.stop_loss_pct}%` : ''}
+            accent={liveMode ? 'error' : 'success'}
+            loading={!cfg}
+            badge={halted ? { text: 'HALT', color: '#fff', bg: palette.error } : null}
           />
         </Grid>
       </Grid>

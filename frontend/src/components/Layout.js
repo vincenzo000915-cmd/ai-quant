@@ -19,6 +19,7 @@ import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { getUser, onUserChange, logout } from '../auth';
+import { palette, typo } from '../theme';
 
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
@@ -60,47 +61,79 @@ export default function Layout() {
 
   const drawerContent = (
     <>
-      <Toolbar sx={{ justifyContent: open ? 'space-between' : 'center', px: 1 }}>
+      <Toolbar sx={{ justifyContent: open ? 'space-between' : 'center', px: 1.5, minHeight: '64px !important' }}>
         {open && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <ShowChartIcon sx={{ color: 'primary.main' }} />
-            <Typography variant="subtitle1" fontWeight={700} color="text.primary" noWrap>
-              量化交易
-            </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+            <Box sx={{
+              width: 32, height: 32, borderRadius: 1,
+              bgcolor: palette.accent, color: palette.bg,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: `0 0 16px ${palette.accentGlow}`,
+            }}>
+              <ShowChartIcon sx={{ fontSize: 20 }} />
+            </Box>
+            <Box>
+              <Typography sx={{ fontSize: 14, fontWeight: 700, color: palette.text, lineHeight: 1.1 }}>
+                Quant Pro
+              </Typography>
+              <Typography sx={{ fontSize: 10, fontWeight: 500, color: palette.textMuted, fontFamily: typo.mono, letterSpacing: 0.3 }}>
+                v0.1 · OKX
+              </Typography>
+            </Box>
           </Box>
         )}
         {!isMobile && (
-          <IconButton onClick={() => setOpen(!open)} size="small">
-            {open ? <ChevronLeftIcon /> : <MenuIcon />}
+          <IconButton onClick={() => setOpen(!open)} size="small" sx={{ color: palette.textMuted, '&:hover': { color: palette.text } }}>
+            {open ? <ChevronLeftIcon fontSize="small" /> : <MenuIcon fontSize="small" />}
           </IconButton>
         )}
       </Toolbar>
-      <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)' }} />
-      <List sx={{ mt: 1 }}>
+      <Divider sx={{ borderColor: palette.border }} />
+      <List sx={{ mt: 1, px: 1 }}>
         {NAV_ITEMS.map(({ label, icon, path }) => {
           const active = location.pathname === path;
           return (
             <Tooltip key={path} title={open ? '' : label} placement="right">
-              <ListItem disablePadding sx={{ mb: 0.5 }}>
+              <ListItem disablePadding sx={{ mb: 0.25 }}>
                 <ListItemButton
                   onClick={() => { navigate(path); if (isMobile) setMobileOpen(false); }}
                   sx={{
-                    mx: 1, borderRadius: 1.5,
-                    bgcolor: active ? 'rgba(59,130,246,0.12)' : 'transparent',
-                    '&:hover': { bgcolor: 'rgba(59,130,246,0.08)' },
+                    borderRadius: 1,
+                    position: 'relative',
+                    bgcolor: active ? `${palette.accent}14` : 'transparent',
+                    '&:hover': { bgcolor: active ? `${palette.accent}1a` : 'rgba(255,255,255,0.03)' },
                     justifyContent: open ? 'initial' : 'center',
-                    px: open ? 2 : 1.5,
+                    px: open ? 1.5 : 1.5,
+                    py: 0.85,
+                    transition: 'background-color 120ms ease',
+                    // active 左側 accent bar
+                    ...(active && {
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        left: -8, top: '50%', transform: 'translateY(-50%)',
+                        width: 3, height: 18,
+                        background: palette.accent,
+                        borderRadius: 1,
+                        boxShadow: `0 0 8px ${palette.accent}`,
+                      },
+                    }),
                   }}
                 >
-                  <ListItemIcon sx={{ minWidth: open ? 36 : 'auto', color: active ? 'primary.main' : 'text.secondary' }}>
+                  <ListItemIcon sx={{
+                    minWidth: open ? 32 : 'auto',
+                    color: active ? palette.accent : palette.textMuted,
+                    '& svg': { fontSize: 18 },
+                  }}>
                     {icon}
                   </ListItemIcon>
                   {open && (
                     <ListItemText
                       primary={label}
                       primaryTypographyProps={{
-                        fontSize: 14, fontWeight: active ? 600 : 400,
-                        color: active ? 'primary.main' : 'text.primary',
+                        fontSize: 13, fontWeight: active ? 600 : 500,
+                        color: active ? palette.text : palette.textMuted,
+                        letterSpacing: 0.2,
                       }}
                     />
                   )}
@@ -110,13 +143,24 @@ export default function Layout() {
           );
         })}
       </List>
-      <Box sx={{ mt: 'auto', p: 2 }}>
+      <Box sx={{ mt: 'auto', p: 1.5, borderTop: `1px solid ${palette.border}` }}>
         {open && (
-          <Chip
-            icon={<FiberManualRecordIcon sx={{ fontSize: '10px !important' }} />}
-            label="系統運行中" size="small"
-            sx={{ bgcolor: 'rgba(0,230,118,0.15)', color: 'success.main', fontSize: 11 }}
-          />
+          <Box sx={{
+            display: 'flex', alignItems: 'center', gap: 0.75,
+            px: 1, py: 0.5, borderRadius: 0.75,
+            bgcolor: `${palette.success}10`,
+            border: `1px solid ${palette.success}33`,
+          }}>
+            <Box sx={{
+              width: 6, height: 6, borderRadius: '50%',
+              bgcolor: palette.success,
+              boxShadow: `0 0 6px ${palette.success}`,
+              animation: 'pulse-dot 2s ease-in-out infinite',
+            }} />
+            <Typography sx={{ fontSize: 11, color: palette.success, fontWeight: 600, letterSpacing: 0.3 }}>
+              系统运行中
+            </Typography>
+          </Box>
         )}
       </Box>
     </>

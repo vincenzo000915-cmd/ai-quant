@@ -14,29 +14,31 @@ import './auth';   // 全局 fetch wrap 副作用
 const globalStyle = document.createElement('style');
 globalStyle.textContent = `
   :root {
-    --bg-void: #03040c;
-    --bg-deep: #05060f;
-    --bg-mid: #0a0d1e;
-    --bg-surface: rgba(20, 24, 44, 0.45);
-    --bg-glass: rgba(15, 18, 36, 0.6);
-    --border: rgba(99, 102, 241, 0.2);
-    --border-hot: rgba(99, 102, 241, 0.5);
-    --primary: #6366f1;
-    --primary-glow: rgba(99, 102, 241, 0.6);
+    /* Phase 12.15.6: 金融科技混合 — 取代 cyberpunk neon multi-color */
+    --bg-void: #0a0e1a;
+    --bg-deep: #070a13;
+    --bg-mid: #10172b;
+    --bg-surface: #10172b;
+    --bg-surface-elevated: #1a2240;
+    --bg-glass: rgba(16, 23, 43, 0.6);
+    --border: rgba(148, 163, 184, 0.12);
+    --border-hot: rgba(148, 163, 184, 0.24);
+    --primary: #06b6d4;
+    --primary-glow: rgba(6, 182, 212, 0.5);
     --accent: #06b6d4;
-    --accent-glow: rgba(6, 182, 212, 0.55);
+    --accent-glow: rgba(6, 182, 212, 0.4);
     --neon-pink: #ec4899;
     --neon-purple: #a855f7;
-    --gold: #fbbf24;
-    --gold-deep: #f59e0b;
-    --warn-yellow: #facc15;
-    --success: #22c55e;
-    --error: #ef4444;
-    --error-bright: #ff3355;
-    --warning: #f59e0b;
+    --gold: #f7a600;
+    --gold-deep: #d68900;
+    --warn-yellow: #f7a600;
+    --success: #00d4aa;
+    --error: #ff4757;
+    --error-bright: #ff4757;
+    --warning: #f7a600;
     --text: #e2e8f0;
     --text-dim: #94a3b8;
-    --text-faint: #475569;
+    --text-faint: #64748b;
   }
 
   html, body, #root {
@@ -48,11 +50,10 @@ globalStyle.textContent = `
   }
 
   body {
+    /* 純 dark navy + subtle 暖 cyan 一道光暈在右上 — 金融科技風 */
     background:
-      radial-gradient(ellipse 80% 50% at top left, rgba(99, 102, 241, 0.12), transparent 60%),
-      radial-gradient(ellipse 60% 40% at bottom right, rgba(6, 182, 212, 0.08), transparent 60%),
-      radial-gradient(ellipse 70% 60% at 30% 70%, rgba(168, 85, 247, 0.06), transparent 60%),
-      linear-gradient(180deg, #03040c 0%, #05060f 100%);
+      radial-gradient(ellipse 50% 30% at 85% -5%, rgba(6,182,212,0.06), transparent 70%),
+      linear-gradient(180deg, #0a0e1a 0%, #070a13 100%);
     background-attachment: fixed;
     font-feature-settings: 'tnum' 1, 'cv11' 1;
     -webkit-font-smoothing: antialiased;
@@ -60,18 +61,9 @@ globalStyle.textContent = `
     position: relative;
   }
 
-  /* === 網格背景（純 CSS、低成本）=== */
+  /* === 網格背景（去掉 — 金融感不需要 cyberpunk 網格）=== */
   body::before {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-image:
-      linear-gradient(rgba(99, 102, 241, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(99, 102, 241, 0.035) 1px, transparent 1px);
-    background-size: 56px 56px;
-    pointer-events: none;
-    z-index: 0;
-    mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+    display: none;
   }
 
   /* CRT 條紋已移除 - GPU 開銷大 */

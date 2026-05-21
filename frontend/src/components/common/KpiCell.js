@@ -6,18 +6,44 @@ import { Box, Stack, Typography } from '@mui/material';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import RemoveIcon from '@mui/icons-material/Remove';
+import { LineChart, Line, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { palette, typo, pnlColor } from '../../theme';
+
+// 內嵌 mini sparkline — 金融科技風關鍵元素
+function MiniSparkline({ data, color, height = 28 }) {
+  if (!data || data.length < 2) {
+    return <Box sx={{ height, opacity: 0.2, color: palette.textFaint, fontFamily: typo.mono, fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>···</Box>;
+  }
+  const norm = data.map((v, i) => ({ i, v }));
+  return (
+    <Box sx={{ height, width: '100%', mt: 0.5 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={norm} margin={{ top: 1, right: 0, bottom: 1, left: 0 }}>
+          <defs>
+            <linearGradient id={`spark-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={color} stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area type="monotone" dataKey="v" stroke={color} fill={`url(#spark-${color.replace('#', '')})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </Box>
+  );
+}
 
 export default function KpiCell({
   label,
   value,
   sub,
-  trend = null,          // 'up' | 'down' | 'flat' | null
-  trendValue = null,     // 數字，自動上下 — 跟 trend 二選一
-  accent = null,         // 強調色 ('success' | 'error' | 'accent' | null)
+  trend = null,
+  trendValue = null,
+  accent = null,
   loading = false,
-  size = 'sub',          // 'hero' | 'sub' — hero 是主 KPI，大字 + accent border
-  icon = null,           // 可選 emoji 或圖標
+  size = 'sub',          // 'hero' | 'sub' | 'compact' — compact 是 trading top bar 緊湊風
+  icon = null,
+  sparkData = null,      // mini sparkline 數據 [v1, v2, v3 ...]
+  badge = null,          // 右上角小徽章 (例如 24h chg "+2.4%")
 }) {
   // 自動推 trend
   let trendDir = trend;
@@ -37,8 +63,11 @@ export default function KpiCell({
     : palette.text;
 
   const isHero = size === 'hero';
+  const isCompact = size === 'compact';
   const metricFontSize = isHero
     ? { xs: '2rem', sm: '2.4rem', md: '2.8rem' }
+    : isCompact
+    ? { xs: '1rem', md: '1.15rem' }
     : { xs: '1.25rem', md: '1.5rem' };
 
   // 對應 accent color 給 hero 加 subtle radial glow 在右上角
@@ -51,13 +80,12 @@ export default function KpiCell({
   return (
     <Box sx={{
       position: 'relative',
-      p: isHero ? 2.5 : 2,
-      // hero 用更亮 surface 浮起來；sub 用標準 surface
+      p: isHero ? 2.5 : isCompact ? 1.25 : 2,
       bgcolor: isHero ? palette.surface2 : palette.surface,
       border: `1px solid ${palette.border}`,
-      borderRadius: 1.5,
+      borderRadius: isCompact ? 1 : 1.5,
       height: '100%',
-      minHeight: isHero ? 132 : 90,
+      minHeight: isHero ? 132 : isCompact ? 72 : 90,
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
       overflow: 'hidden',
       cursor: 'default',
@@ -91,11 +119,24 @@ export default function KpiCell({
           : `0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 20px -10px rgba(0,0,0,0.6)`,
       },
     }}>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: isHero ? 1 : 0.5 }}>
-        {icon && <Box sx={{ fontSize: isHero ? 18 : 13, opacity: 0.85, filter: isHero ? 'drop-shadow(0 0 8px rgba(255,255,255,0.15))' : 'none' }}>{icon}</Box>}
-        <Typography sx={{ ...typo.label, color: palette.textMuted, fontSize: isHero ? '0.78rem' : '0.6875rem' }}>
-          {label}
-        </Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={0.5} sx={{ mb: isHero ? 1 : 0.25 }}>
+        <Stack direction="row" alignItems="center" spacing={0.5}>
+          {icon && <Box sx={{ fontSize: isHero ? 18 : 12, opacity: 0.85, filter: isHero ? 'drop-shadow(0 0 8px rgba(255,255,255,0.15))' : 'none' }}>{icon}</Box>}
+          <Typography sx={{ ...typo.label, color: palette.textMuted, fontSize: isHero ? '0.78rem' : isCompact ? '0.65rem' : '0.6875rem' }}>
+            {label}
+          </Typography>
+        </Stack>
+        {badge && (
+          <Typography sx={{
+            fontSize: 10, fontWeight: 700, fontFamily: typo.mono,
+            color: typeof badge === 'object' ? badge.color : palette.textMuted,
+            bgcolor: typeof badge === 'object' && badge.bg ? badge.bg : 'transparent',
+            px: 0.6, py: 0.15, borderRadius: 0.5, letterSpacing: 0.2,
+            lineHeight: 1.4,
+          }}>
+            {typeof badge === 'object' ? badge.text : badge}
+          </Typography>
+        )}
       </Stack>
       <Box>
         <Typography sx={{
@@ -104,17 +145,15 @@ export default function KpiCell({
           fontSize: metricFontSize,
           fontWeight: 700,
           lineHeight: 1.05,
-          // 金融科技風：tabular-nums + 緊湊 letter-spacing 給「數據終端」感
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.03em',
-          // hero 數字加微 text-shadow 給「重量 + 發光」感
           ...(isHero && {
             textShadow: `0 0 28px ${accentColor}55, 0 2px 4px rgba(0,0,0,0.3)`,
           }),
         }}>
           {loading ? '—' : value}
         </Typography>
-        {(sub || trendDir) && (
+        {(sub || trendDir) && !isCompact && (
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ mt: isHero ? 1 : 0.5 }}>
             {trendDir && <TrendIcon sx={{ fontSize: isHero ? 16 : 13, color: trendColor }} />}
             <Typography sx={{
@@ -126,6 +165,17 @@ export default function KpiCell({
               {sub}
             </Typography>
           </Stack>
+        )}
+        {isCompact && sub && (
+          <Typography sx={{
+            fontSize: 10, fontFamily: typo.mono, mt: 0.25,
+            color: trendDir ? trendColor : palette.textFaint, lineHeight: 1.2,
+          }}>
+            {sub}
+          </Typography>
+        )}
+        {sparkData && (
+          <MiniSparkline data={sparkData} color={accentColor} height={isHero ? 36 : isCompact ? 18 : 24} />
         )}
       </Box>
     </Box>
