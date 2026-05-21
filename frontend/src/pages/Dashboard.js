@@ -23,6 +23,7 @@ import RegimePanel from '../components/RegimePanel';
 import MTFConsensusPanel from '../components/MTFConsensusPanel';
 import AdvisorPanel from '../components/AdvisorPanel';
 import AiInsightsCard from '../components/AiInsightsCard';
+import { PageSkeleton, KpiBarSkeleton } from '../components/Skeleton';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -198,8 +199,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (silent = false) => {
+    // Phase 12.15.1: stale-while-revalidate — 已有資料時不 setLoading（避免閃 skeleton）
+    if (!silent && !account) setLoading(true);
     try {
       const [acctRes, priceRes, posRes, pnlHistRes, pnlSumRes, perfRes, cfgRes] = await Promise.allSettled([
         fetch(`${API}/api/account`),
@@ -554,7 +556,13 @@ export default function Dashboard() {
         </Tooltip>
       </Box>
 
-      {loading && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1 }} />}
+      {/* 細條 LinearProgress 取代閃整頁 — refresh 時只顯示頂部 2px */}
+      {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1 }} />}
+
+      {/* 首次加載：用 skeleton 顯示結構 */}
+      {loading && !account && (
+        <KpiBarSkeleton />
+      )}
 
       {/* === KPI Cards === */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>

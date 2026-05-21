@@ -10,6 +10,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
 import LlmBindingCard from '../components/LlmBindingCard';
+import { PageSkeleton } from '../components/Skeleton';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -91,7 +92,7 @@ export default function Settings() {
   };
 
   if (!cfg) {
-    return <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>;
+    return <PageSkeleton />;
   }
 
   const isLive = cfg.trading_mode === 'live';
