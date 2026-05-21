@@ -456,24 +456,78 @@ export default function Dashboard() {
 
   return (
     <Box sx={{ position: 'relative', zIndex: 1 }}>
-      {/* === 統一頁頭 === */}
+      {/* === 統一頁頭 — 緊湊版 + KILL SWITCH 收進 actions === */}
       <PageHeader
         title="儀表板"
-        subtitle={`OKX · ${liveMode ? '实盘 LIVE' : '模拟 PAPER'} · 杠杆 ${cfg?.leverage || 15}x · ${utcTime}`}
+        subtitle={`OKX · ${liveMode ? 'LIVE 实盘' : 'PAPER 模拟'} · 杠杆 ${cfg?.leverage || 15}x · 每笔 $${cfg?.trade_size_usdt || 4} · ${utcTime}`}
         actions={[
           <StatusChip key="mode" status={liveMode ? 'error' : 'success'} label={liveMode ? 'LIVE' : 'PAPER'} solid />,
-          halted && <StatusChip key="halt" status="error" label="已 HALT" solid />,
+          halted && <StatusChip key="halt" status="error" label="HALTED" solid />,
           <Tooltip key="refresh" title="立即刷新">
             <IconButton onClick={() => fetchData(false)} size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }}>
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>,
+          <Tooltip key="kill" title="🆘 KILL SWITCH — 停所有策略 + 强平所有持仓">
+            <Box
+              key="kill-btn"
+              component="button"
+              onClick={async () => {
+                const yes1 = window.confirm('🆘 KILL SWITCH 會：\n• 停所有 running 策略\n• 強平所有 open positions（市價）\n• 設 halt 阻止新開倉\n\n確定？');
+                if (!yes1) return;
+                const txt = window.prompt('再次確認：請輸入大寫 KILL 才會執行');
+                if (txt !== 'KILL') { alert('未輸入 KILL，已取消'); return; }
+                const r = await fetch(`${API}/api/killswitch`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ confirm: 'KILL', reason: 'dashboard manual' }),
+                });
+                const body = await r.json();
+                alert(r.ok ? `已執行：stop ${body.stopped_strategies?.length} 策略，平 ${body.closed_positions?.length} 持倉` : `失敗：${body.error}`);
+                fetchData();
+              }}
+              sx={{
+                cursor: 'pointer',
+                border: `1px solid ${palette.error}66`,
+                bgcolor: `${palette.error}11`,
+                color: palette.error,
+                px: 1.25, py: 0.55, borderRadius: 0.75,
+                fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                lineHeight: 1, height: 28,
+                '&:hover': { bgcolor: `${palette.error}22`, borderColor: palette.error, boxShadow: `0 0 12px ${palette.errorGlow}` },
+              }}
+            >
+              🆘 KILL
+            </Box>
+          </Tooltip>,
         ].filter(Boolean)}
       />
 
-      {/* === Trading top-bar 緊湊 KPI grid — 8 cells + sparkline === */}
+      {/* === HALTED banner（cfg.halted 才顯示） === */}
+      {cfg?.halted && (
+        <Box
+          onClick={async () => {
+            if (!window.confirm(`系統 HALTED:\n${cfg.halt_reason}\n\n確定要解除？`)) return;
+            await fetch(`${API}/api/unhalt`, { method: 'POST' });
+            fetchData();
+          }}
+          sx={{
+            mb: 1.5, p: 1.25, cursor: 'pointer',
+            bgcolor: `${palette.error}14`,
+            border: `1px solid ${palette.error}55`,
+            borderRadius: 1,
+            display: 'flex', alignItems: 'center', gap: 1,
+            '&:hover': { bgcolor: `${palette.error}1f` },
+          }}>
+          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: palette.error, boxShadow: `0 0 8px ${palette.error}`, animation: 'pulse-dot 1s infinite' }} />
+          <Typography sx={{ color: palette.error, fontWeight: 600, fontSize: 13, flex: 1 }}>
+            系统已 HALTED · {cfg.halt_reason} · <span style={{ textDecoration: 'underline' }}>点击解除</span>
+          </Typography>
+        </Box>
+      )}
+
+      {/* === KPI bar — 6 cells, xs=6/sm=4/md=2 一行 6 個 === */}
       <Grid container spacing={1} sx={{ mb: 2.5 }}>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="账户余额"
@@ -484,166 +538,65 @@ export default function Dashboard() {
             loading={!account}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="今日 PnL"
             value={`${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}`}
-            sub={todayTrades ? `${todayTrades} trades` : '0 trades'}
+            sub={todayTrades ? `${pnlSummary.today_wins}W / ${pnlSummary.today_losses}L` : '0 trades'}
             accent={todayPnl > 0 ? 'success' : todayPnl < 0 ? 'error' : null}
             trendValue={todayPnl}
             loading={!pnlSummary}
-            badge={pnlSummary && todayTrades > 0 ? { text: `${pnlSummary.today_wins}W/${pnlSummary.today_losses}L`, color: '#94a3b8' } : null}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="累计 PnL"
             value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
-            sub={pnlSummary ? `${pnlSummary.win_rate}% 胜率` : ''}
+            sub={pnlSummary ? `${pnlSummary.total_trades} 笔 · ${pnlSummary.win_rate}% 胜率` : ''}
             sparkData={pnlData.length ? pnlData.map(p => p.cumulative || 0) : null}
             accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
             trendValue={pnlSummary?.total_pnl}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="持仓 / 运行"
             value={`${openPositions} / ${runningStrats}`}
-            sub={openPositions > 0 ? `${openPositions} 开仓` : '无开仓'}
+            sub={openPositions > 0 ? `${openPositions} 开仓中` : '无开仓'}
             accent={openPositions > 0 ? 'accent' : null}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
-          <KpiCell
-            size="compact"
-            label="总交易"
-            value={pnlSummary?.total_trades ?? '—'}
-            sub={pnlSummary ? `${pnlSummary.winning_trades}胜 ${pnlSummary.losing_trades}败` : ''}
-            loading={!pnlSummary}
-          />
-        </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="未实现"
             value={pnlSummary ? `${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl?.toFixed(2)}` : '$0.00'}
-            sub={openPositions > 0 ? `${openPositions} 持仓中` : '无浮动'}
+            sub={openPositions > 0 ? `${openPositions} 持仓` : '无浮动'}
             accent={pnlSummary?.unrealized_pnl > 0 ? 'success' : pnlSummary?.unrealized_pnl < 0 ? 'error' : null}
             trendValue={pnlSummary?.unrealized_pnl}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
+        <Grid item xs={6} sm={4} md={2}>
           <KpiCell
             size="compact"
             label="最大回撤"
             value={pnlSummary?.max_drawdown != null ? `-$${Math.abs(pnlSummary.max_drawdown).toFixed(2)}` : '—'}
-            sub="90d"
+            sub="90 天"
             accent={(pnlSummary?.max_drawdown_pct || 0) > 30 ? 'error' : null}
             loading={!pnlSummary}
           />
         </Grid>
-        <Grid item xs={6} sm={4} md={3} lg={1.5}>
-          <KpiCell
-            size="compact"
-            label={liveMode ? 'LIVE 模式' : 'PAPER 模式'}
-            value={`${cfg?.leverage || 15}x`}
-            sub={cfg ? `单笔 $${cfg.trade_size_usdt} · SL ${cfg.stop_loss_pct}%` : ''}
-            accent={liveMode ? 'error' : 'success'}
-            loading={!cfg}
-            badge={halted ? { text: 'HALT', color: '#fff', bg: palette.error } : null}
-          />
-        </Grid>
       </Grid>
 
-      {/* 細條 LinearProgress 取代閃整頁 — refresh 時只顯示頂部 2px */}
+      {/* refresh 時頂部 2px 細條 */}
       {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1, bgcolor: palette.border, '& .MuiLinearProgress-bar': { bgcolor: palette.accent } }} />}
-
-      {/* 首次加載：用 skeleton 顯示結構 */}
-      {loading && !account && (
-        <KpiBarSkeleton />
-      )}
-
-      {/* === Phase 12.15.6: 旧 4 块 KPICard 已删 — 新 8 cell trading top-bar 取代 === */}
-
-      {/* === Phase 6.3 Kill Switch === */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
-        <Box
-          component="button"
-          onClick={async () => {
-            const yes1 = window.confirm('🆘 KILL SWITCH 會：\n• 停所有 running 策略\n• 強平所有 open positions（市價）\n• 設 halt 阻止新開倉\n\n確定？');
-            if (!yes1) return;
-            const txt = window.prompt('再次確認：請輸入大寫 KILL 才會執行');
-            if (txt !== 'KILL') {
-              alert('未輸入 KILL，已取消');
-              return;
-            }
-            const r = await fetch(`${API}/api/killswitch`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ confirm: 'KILL', reason: 'dashboard manual' }),
-            });
-            const body = await r.json();
-            alert(r.ok
-              ? `已執行：stop ${body.stopped_strategies?.length} 策略，平 ${body.closed_positions?.length} 持倉`
-              : `失敗：${body.error}`);
-            fetchData();
-          }}
-          sx={{
-            cursor: 'pointer',
-            border: '1.5px solid rgba(220, 38, 38, 0.7)',
-            background: 'linear-gradient(180deg, rgba(220,38,38,0.18) 0%, rgba(220,38,38,0.08) 100%)',
-            color: '#fecaca',
-            px: 1.5, py: 0.6,
-            borderRadius: 1,
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: '0.7rem',
-            fontWeight: 800,
-            letterSpacing: 1.5,
-            '&:hover': {
-              background: 'rgba(220,38,38,0.3)',
-              borderColor: 'rgba(220,38,38,1)',
-              color: '#fff',
-              boxShadow: '0 0 12px rgba(220,38,38,0.6)',
-            },
-          }}
-        >
-          🆘 KILL SWITCH
-        </Box>
-      </Box>
-
-      {/* === Phase 12.15.6: cyberpunk 警告斜紋條已刪 — 模式 / leverage / SL TP 已在 hero KPI === */}
-
-      {/* === Phase 6.1: HALTED banner === */}
-      {cfg?.halted && (
-        <Box
-          onClick={async () => {
-            if (!window.confirm(`系統 HALTED:\n${cfg.halt_reason}\n\n確定要解除？解除後新信號會立刻能開倉。`)) return;
-            await fetch(`${API}/api/unhalt`, { method: 'POST' });
-            fetchData();
-          }}
-          sx={{
-            mb: 2, p: 1.5,
-            backgroundColor: 'rgba(220, 38, 38, 0.18)',
-            border: '1px solid rgba(220, 38, 38, 0.6)',
-            borderRadius: 1,
-            cursor: 'pointer',
-            animation: 'pulse-red 1.4s ease-in-out infinite',
-            '@keyframes pulse-red': {
-              '0%,100%': { boxShadow: '0 0 10px rgba(220,38,38,.3)' },
-              '50%':     { boxShadow: '0 0 22px rgba(220,38,38,.8)' },
-            },
-          }}>
-          <Typography sx={{ color: '#fff', fontWeight: 800, fontSize: '0.85rem', letterSpacing: 1, fontFamily: 'JetBrains Mono, monospace' }}>
-            🛑 SYSTEM HALTED · {cfg.halt_reason} · <span style={{ textDecoration: 'underline' }}>點此解除</span>
-          </Typography>
-        </Box>
-      )}
+      {/* KILL SWITCH 已收進 PageHeader actions，HALTED banner 已上移到 PageHeader 下 */}
 
       {/* === Top Row: BTC chart + 持倉概覽（用戶要求 BTC 在上、持倉同行）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
