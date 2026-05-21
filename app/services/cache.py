@@ -111,6 +111,31 @@ def cached_response(prefix: str, ttl: int):
     return decorator
 
 
+def cache_get(key: str) -> Any | None:
+    """Phase 11.5.2: 直接讀 cache key（給 llm_provider 等使用）"""
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        hit = r.get(f'cache:{key}')
+        if hit is not None:
+            return json.loads(hit)
+    except (RedisError, ValueError):
+        pass
+    return None
+
+
+def cache_set(key: str, value: Any, ttl: int) -> None:
+    """Phase 11.5.2: 直接寫 cache key，TTL 秒"""
+    r = _redis()
+    if r is None:
+        return
+    try:
+        r.setex(f'cache:{key}', ttl, json.dumps(value, default=str))
+    except (RedisError, TypeError, ValueError):
+        pass
+
+
 def invalidate(prefix: str):
     """Drop all keys for a prefix (best-effort SCAN + DEL)."""
     r = _redis()
