@@ -1616,3 +1616,88 @@ def me_okx_delete():
     return jsonify({'bound': False, 'source': 'user'}), 200
 
 
+# ===== Phase 11.5.1: per-user BYO LLM key =====
+
+@api_bp.route('/me/llm', methods=['GET'])
+@require_actor
+def me_llm_list():
+    """列出當前 user 綁的所有 LLM provider (masked)"""
+    from app.services.llm_creds import list_for_user, VALID_PROVIDERS
+    uid = _me_user_id()
+    items = list_for_user(uid, only_active=False)
+    bound = {r.provider: r.to_dict() for r in items}
+    return jsonify({
+        'providers': sorted(VALID_PROVIDERS),
+        'bound': bound,
+    })
+
+
+@api_bp.route('/me/llm/<provider>', methods=['POST'])
+@require_actor
+def me_llm_bind(provider):
+    """綁定 / 更新 user 某 provider 的 LLM key。{api_key, default_model?, priority?}"""
+    from app.services.llm_creds import save_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    api_key = (data.get('api_key') or '').strip()
+    if not api_key:
+        return jsonify({'error': 'api_key 必填'}), 400
+    try:
+        rec = save_for_user(uid, provider, api_key,
+                            default_model=data.get('default_model'),
+                            priority=int(data.get('priority', 100)))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    audit('llm_creds_saved', actor='user', user_id=uid, provider=rec.provider)
+    return jsonify(rec.to_dict()), 201
+
+
+@api_bp.route('/me/llm/<provider>/test', methods=['POST'])
+@require_actor
+def me_llm_test(provider):
+    """調 provider 的 ping 端點驗證 key"""
+    from app.services.llm_creds import verify
+    uid = _me_user_id()
+    return jsonify(verify(uid, provider))
+
+
+@api_bp.route('/me/llm/<provider>', methods=['PATCH'])
+@require_actor
+def me_llm_patch(provider):
+    """更新 is_active / priority / default_model"""
+    from app.services.llm_creds import get_for_user, set_active, set_priority
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    rec = get_for_user(uid, provider)
+    if not rec:
+        return jsonify({'error': '尚未綁定該 provider'}), 404
+    if 'is_active' in data:
+        set_active(uid, provider, bool(data['is_active']))
+    if 'priority' in data:
+        set_priority(uid, provider, int(data['priority']))
+    if 'default_model' in data:
+        rec = get_for_user(uid, provider)
+        rec.default_model = data['default_model']
+        db.session.commit()
+    audit('llm_creds_patched', actor='user', user_id=uid, provider=provider, fields=list(data.keys()))
+    return jsonify(get_for_user(uid, provider).to_dict())
+
+
+@api_bp.route('/me/llm/<provider>', methods=['DELETE'])
+@require_actor
+def me_llm_delete(provider):
+    """解綁某 provider"""
+    from app.services.llm_creds import delete_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    ok = delete_for_user(uid, provider)
+    if not ok:
+        return jsonify({'error': '尚未綁定該 provider'}), 404
+    audit('llm_creds_deleted', actor='user', user_id=uid, provider=provider)
+    return jsonify({'ok': True})
+
+

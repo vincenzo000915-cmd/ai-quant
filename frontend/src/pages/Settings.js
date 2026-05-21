@@ -9,6 +9,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
+import LlmBindingCard from '../components/LlmBindingCard';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -106,6 +107,9 @@ export default function Settings() {
 
       {/* === Phase 11.2: OKX 綁定 (per-user) === */}
       <OkxBindingCard />
+
+      {/* === Phase 11.5: LLM key 綁定 (BYO) === */}
+      <LlmBindingCard />
 
       {/* === Trading Mode === */}
       <Card sx={{ mb: 3 }}>

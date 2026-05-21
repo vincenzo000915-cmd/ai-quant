@@ -44,6 +44,60 @@ class OkxCredentials(db.Model):
         return d
 
 
+class LlmCredentials(db.Model):
+    """Phase 11.5: per-user BYO LLM API key (Anthropic / OpenAI / Gemini)。
+
+    一個 user 可綁多 provider。priority 數字小優先 — adapter 拿 user 綁的
+    最高 priority active provider 用；rate-limit 失敗時 fallback 到下一個。
+
+    Fernet 加密（沿用 11.2 的 OKX_CREDS_FERNET_KEY）。
+    """
+    __tablename__ = 'llm_credentials'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    provider = db.Column(db.String(20), nullable=False)   # 'anthropic' | 'openai' | 'gemini'
+    encrypted_api_key = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    priority = db.Column(db.Integer, default=100)         # 小優先
+    # 用戶可選的預設模型（None → adapter 用 provider 預設）
+    default_model = db.Column(db.String(80), nullable=True)
+    verified_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    # 累計 token 統計（給 user 看用了多少）— 月度重設
+    monthly_input_tokens = db.Column(db.BigInteger, default=0)
+    monthly_output_tokens = db.Column(db.BigInteger, default=0)
+    monthly_reset_at = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'provider', name='uix_llm_user_provider'),
+    )
+
+    def to_dict(self):
+        """永遠不返回明文 api_key"""
+        from app.services.okx_creds import try_decrypt
+        ak = try_decrypt(self.encrypted_api_key) or ''
+        masked = (ak[:4] + '…' + ak[-4:]) if len(ak) > 8 else '****'
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'provider': self.provider,
+            'api_key_masked': masked,
+            'is_active': bool(self.is_active),
+            'priority': self.priority,
+            'default_model': self.default_model,
+            'verified_at': self.verified_at.isoformat() if self.verified_at else None,
+            'last_error': self.last_error,
+            'monthly_input_tokens': self.monthly_input_tokens or 0,
+            'monthly_output_tokens': self.monthly_output_tokens or 0,
+            'monthly_reset_at': self.monthly_reset_at.isoformat() if self.monthly_reset_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class User(db.Model):
     """Phase 11.1: SaaS 用戶 — bcrypt 密碼，每 user 有自己的 strategies / positions / trades
 
