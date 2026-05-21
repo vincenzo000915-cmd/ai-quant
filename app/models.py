@@ -2,6 +2,48 @@ import datetime
 from app.extensions import db
 
 
+class OkxCredentials(db.Model):
+    """Phase 11.2: per-user OKX API key（Fernet 加密存儲）。
+
+    每 user 最多一組 OKX key (user_id UNIQUE)。admin (user_id=1) 不存這表 — 走 .env。
+    解密只在 Celery / web 內存發生，不寫 log / 不落磁碟。
+    """
+    __tablename__ = 'okx_credentials'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True, index=True)
+    # Fernet 加密 base64 字串
+    encrypted_api_key = db.Column(db.Text, nullable=False)
+    encrypted_secret = db.Column(db.Text, nullable=False)
+    encrypted_passphrase = db.Column(db.Text, nullable=False)
+    # 最後一次成功拉 OKX 餘額的時間（None = 從未驗證）
+    verified_at = db.Column(db.DateTime, nullable=True)
+    # 最後驗證錯誤訊息（給 UI 顯示）
+    last_error = db.Column(db.Text, nullable=True)
+    # user 可手動 disable 而不解綁
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def to_dict(self, include_masked=True):
+        """to_dict 永遠不返回明文密鑰；include_masked 只回前 4 後 4 提示。"""
+        d = {
+            'id': self.id,
+            'user_id': self.user_id,
+            'verified_at': self.verified_at.isoformat() if self.verified_at else None,
+            'last_error': self.last_error,
+            'is_active': bool(self.is_active),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+        if include_masked:
+            # 解密只為了顯示前 4 後 4；該函式 caller 應確認 actor 是 owner
+            from app.services.okx_creds import try_decrypt
+            ak = try_decrypt(self.encrypted_api_key)
+            d['api_key_masked'] = (ak[:4] + '…' + ak[-4:]) if ak and len(ak) > 8 else '****'
+        return d
+
+
 class User(db.Model):
     """Phase 11.1: SaaS 用戶 — bcrypt 密碼，每 user 有自己的 strategies / positions / trades
 
