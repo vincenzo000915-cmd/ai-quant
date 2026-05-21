@@ -435,6 +435,30 @@ def explain_strategy_route(id):
     return jsonify(r)
 
 
+@api_bp.route('/strategies/ai-generate', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_generate_strategy():
+    """Phase 11.5.4: AI 生成策略 — Pro 層獨享。
+
+    Body: {"description": "用 RSI 反向 + 布林帶擠壓的短線多策略"}
+    回 {ok, candidate_id, candidate, verify, llm_meta, error?}
+    """
+    from app.services.llm_prompts.strategy_generate import generate_strategy
+    from app.services.audit import log as audit
+    data = request.get_json(silent=True) or {}
+    description = (data.get('description') or '').strip()
+    if not description:
+        return jsonify({'ok': False, 'error': '需要 description 字段'}), 400
+    r = generate_strategy(current_user_id() or 1, description)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    audit('strategy_ai_generated', actor='user',
+          candidate_id=r['candidate_id'], description_len=len(description),
+          provider=r.get('llm_meta', {}).get('provider_used'))
+    return jsonify(r), 201
+
+
 @api_bp.route('/strategies/<int:id>/retire', methods=['POST'])
 @rate_limit('20/min')
 def retire_strategy(id):

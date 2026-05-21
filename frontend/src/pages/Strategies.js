@@ -11,6 +11,7 @@ import TuneIcon from '@mui/icons-material/Tune';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ParamOptimizeDialog from '../components/ParamOptimizeDialog';
 import ExplainStrategyDialog from '../components/ExplainStrategyDialog';
+import GenerateStrategyDialog from '../components/GenerateStrategyDialog';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
@@ -98,6 +99,7 @@ export default function Strategies() {
   const [optimizeTarget, setOptimizeTarget] = useState(null);
   const [explainOpen, setExplainOpen] = useState(false);
   const [explainTarget, setExplainTarget] = useState(null);
+  const [generateOpen, setGenerateOpen] = useState(false);
 
   const handleOpenFanOut = (strategy) => {
     setFanOutSource(strategy);
@@ -470,6 +472,10 @@ export default function Strategies() {
           <Tooltip title="重新整理">
             <IconButton onClick={fetchStrategies} color="primary"><RefreshIcon /></IconButton>
           </Tooltip>
+          <Button variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setGenerateOpen(true)}
+            sx={{ color: '#fbbf24', borderColor: '#fbbf24', '&:hover': { borderColor: '#fcd34d', bgcolor: 'rgba(251,191,36,0.08)' } }}>
+            ✨ AI 生成
+          </Button>
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => handleOpenDialog()}>
             新增策略
           </Button>
@@ -743,6 +749,13 @@ export default function Strategies() {
         open={explainOpen}
         strategy={explainTarget}
         onClose={() => setExplainOpen(false)}
+      />
+
+      {/* Phase 11.5.4: AI 生成策略 */}
+      <GenerateStrategyDialog
+        open={generateOpen}
+        onClose={() => setGenerateOpen(false)}
+        onCreated={() => { fetchStrategies(); }}
       />
 
       {/* Phase 10.6: Fan-out Modal */}
