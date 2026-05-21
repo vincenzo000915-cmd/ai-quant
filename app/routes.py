@@ -1509,3 +1509,110 @@ def auth_me():
     return jsonify({'is_system': False, 'user': user.to_dict()}), 200
 
 
+# ===== Phase 11.2.3: per-user OKX 綁定 =====
+
+def _me_user_id():
+    """me/* endpoint 通用：admin (system token) 也允許走，預設操作 user_id=1"""
+    uid = current_user_id()
+    if uid is None and is_admin_actor():
+        return 1
+    return uid
+
+
+@api_bp.route('/me/okx', methods=['GET'])
+@require_actor
+def me_okx_get():
+    """取當前 user 的 OKX 綁定狀態（masked，永不洩明文密鑰）"""
+    from app.services.okx_creds import get_for_user
+    uid = _me_user_id()
+    # admin 走 env，回固定狀態
+    if uid == 1:
+        import os
+        has_env = bool(os.environ.get('EXCHANGE_API_KEY'))
+        return jsonify({
+            'bound': has_env,
+            'source': 'env',
+            'note': 'admin 使用 .env 系統 OKX key（不可在 UI 改）',
+        })
+    rec = get_for_user(uid)
+    if not rec:
+        return jsonify({'bound': False, 'source': 'user'}), 200
+    return jsonify({'bound': True, 'source': 'user', **rec.to_dict()}), 200
+
+
+@api_bp.route('/me/okx', methods=['POST'])
+@require_actor
+def me_okx_bind():
+    """綁定 / 更新 user OKX key。{api_key, secret, passphrase}"""
+    from app.services.okx_creds import save_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    if uid == 1:
+        return jsonify({'error': 'admin 走 .env 系統 key，不在 UI 修改'}), 400
+    data = request.get_json(silent=True) or {}
+    ak = (data.get('api_key') or '').strip()
+    sk = (data.get('secret') or '').strip()
+    pp = (data.get('passphrase') or '').strip()
+    if not (ak and sk and pp):
+        return jsonify({'error': 'api_key / secret / passphrase 都必填'}), 400
+    try:
+        rec = save_for_user(uid, ak, sk, pp)
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    audit('okx_creds_saved', actor='user', user_id=uid)
+    return jsonify({'bound': True, 'source': 'user', **rec.to_dict()}), 201
+
+
+@api_bp.route('/me/okx/test', methods=['POST'])
+@require_actor
+def me_okx_test():
+    """拉 OKX /account/balance 驗證 user 綁定的 key 有效"""
+    from app.services.okx_creds import verify_against_okx
+    uid = _me_user_id()
+    if uid == 1:
+        # admin 直接拉 env 餘額作測試
+        from app.services.exchange_service import fetch_balance
+        try:
+            bal = fetch_balance()
+            total = sum(v.get('total', 0) for v in bal.values())
+            return jsonify({'ok': True, 'total_equity_usd': round(total, 4), 'source': 'env'})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+    return jsonify(verify_against_okx(uid))
+
+
+@api_bp.route('/me/okx', methods=['PATCH'])
+@require_actor
+def me_okx_patch():
+    """啟用 / 停用 user OKX（is_active boolean）"""
+    from app.services.okx_creds import set_active
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    if uid == 1:
+        return jsonify({'error': 'admin 走 .env 系統 key，無法在 UI 停用'}), 400
+    data = request.get_json(silent=True) or {}
+    if 'is_active' not in data:
+        return jsonify({'error': '需要 is_active boolean'}), 400
+    rec = set_active(uid, bool(data['is_active']))
+    if not rec:
+        return jsonify({'error': '尚未綁定 OKX'}), 404
+    audit('okx_creds_toggled', actor='user', user_id=uid, is_active=bool(data['is_active']))
+    return jsonify({'bound': True, 'source': 'user', **rec.to_dict()}), 200
+
+
+@api_bp.route('/me/okx', methods=['DELETE'])
+@require_actor
+def me_okx_delete():
+    """解綁 user OKX key"""
+    from app.services.okx_creds import delete_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    if uid == 1:
+        return jsonify({'error': 'admin 不能解綁 .env 系統 key'}), 400
+    ok = delete_for_user(uid)
+    if not ok:
+        return jsonify({'error': '尚未綁定 OKX'}), 404
+    audit('okx_creds_deleted', actor='user', user_id=uid)
+    return jsonify({'bound': False, 'source': 'user'}), 200
+
+

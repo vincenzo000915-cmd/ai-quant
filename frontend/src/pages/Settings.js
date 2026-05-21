@@ -8,6 +8,7 @@ import {
 import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
+import OkxBindingCard from '../components/OkxBindingCard';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -102,6 +103,9 @@ export default function Settings() {
       </Typography>
 
       {msg && <Alert severity={msg.type} sx={{ mb: 2 }} onClose={() => setMsg(null)}>{msg.text}</Alert>}
+
+      {/* === Phase 11.2: OKX 綁定 (per-user) === */}
+      <OkxBindingCard />
 
       {/* === Trading Mode === */}
       <Card sx={{ mb: 3 }}>
