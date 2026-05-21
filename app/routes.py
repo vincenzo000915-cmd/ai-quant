@@ -435,6 +435,53 @@ def explain_strategy_route(id):
     return jsonify(r)
 
 
+@api_bp.route('/me/weekly-review', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_weekly_review():
+    """Phase 11.5.6: 過去 7 日復盤"""
+    from app.services.llm_prompts.weekly_review import weekly_review
+    r = weekly_review(current_user_id() or 1)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    return jsonify(r)
+
+
+@api_bp.route('/me/personal-advice', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_personal_advice():
+    """Phase 11.5.7: 個性化建議"""
+    from app.services.llm_prompts.personal_advice import personal_advice
+    from app.services.exchange_service import fetch_balance, _resolve_creds
+    uid = current_user_id() or 1
+    # 拉 account info
+    try:
+        creds = None if is_admin_actor() else _resolve_creds(uid)
+        balances = fetch_balance(creds=creds) if (is_admin_actor() or creds) else {}
+        usd_total = sum(v.get('total', 0) for v in balances.values())
+        free_usdt = balances.get('USDT', {}).get('free', 0)
+        account_info = {'balance': usd_total, 'free_margin': free_usdt, 'unrealized_pnl': 0}
+    except Exception:
+        account_info = {'balance': 0, 'free_margin': 0, 'unrealized_pnl': 0}
+    r = personal_advice(uid, account_info)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    return jsonify(r)
+
+
+@api_bp.route('/me/diagnose', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_diagnose():
+    """Phase 11.5.8: 故障診斷 agent"""
+    from app.services.llm_prompts.diagnose import diagnose
+    r = diagnose(current_user_id() or 1)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    return jsonify(r)
+
+
 @api_bp.route('/regime/ai-explain', methods=['POST'])
 @require_actor
 @require_pro_tier

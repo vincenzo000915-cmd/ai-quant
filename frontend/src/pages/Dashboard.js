@@ -22,6 +22,7 @@ import BTCChart from '../components/BTCChart';
 import RegimePanel from '../components/RegimePanel';
 import MTFConsensusPanel from '../components/MTFConsensusPanel';
 import AdvisorPanel from '../components/AdvisorPanel';
+import AiInsightsCard from '../components/AiInsightsCard';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -960,6 +961,9 @@ export default function Dashboard() {
           </Box>
         </Grid>
       </Grid>
+
+      {/* === Phase 11.5.6-8: AI 洞察（週復盤 / 個性化建議 / 故障診斷） === */}
+      <AiInsightsCard />
 
       {/* === Phase 10.7: 综合操作建议（放最显眼） === */}
       <AdvisorPanel />
