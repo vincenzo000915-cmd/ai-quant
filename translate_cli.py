@@ -20,7 +20,7 @@ import time
 
 CONTAINER = 'quant-web-1'
 CLAUDE_MODEL = 'sonnet'   # 速度 / 訂閱額度友善
-CLAUDE_TIMEOUT = 120
+CLAUDE_TIMEOUT = 300   # Phase 12.13: 大 prompt 实测 105s，120s 边缘；给 5 min buffer
 
 
 def _docker_python(code: str, stdin: str | None = None, timeout: int = 60) -> str:
