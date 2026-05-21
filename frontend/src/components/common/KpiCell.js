@@ -64,10 +64,11 @@ export default function KpiCell({
 
   const isHero = size === 'hero';
   const isCompact = size === 'compact';
+  // 12.15.7.1: compact 字号加大让数据「跳出来」(Bybit/Robinhood 风)
   const metricFontSize = isHero
     ? { xs: '2rem', sm: '2.4rem', md: '2.8rem' }
     : isCompact
-    ? { xs: '1rem', md: '1.15rem' }
+    ? { xs: '1.25rem', md: '1.5rem' }
     : { xs: '1.25rem', md: '1.5rem' };
 
   // 對應 accent color 給 hero 加 subtle radial glow 在右上角
@@ -148,8 +149,12 @@ export default function KpiCell({
           lineHeight: 1.05,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: '-0.03em',
+          // 12.15.7.1: compact 数字也加微 glow 让它「跳出」（PnL 红绿才有）
           ...(isHero && {
             textShadow: `0 0 28px ${accentColor}55, 0 2px 4px rgba(0,0,0,0.3)`,
+          }),
+          ...(isCompact && accent && (accent === 'success' || accent === 'error') && {
+            textShadow: `0 0 14px ${accentColor}66`,
           }),
         }}>
           {loading ? '—' : value}
