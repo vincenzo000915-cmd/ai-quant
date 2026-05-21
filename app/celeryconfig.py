@@ -120,4 +120,11 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.cleanup_old_rejected_candidates',
         'schedule': crontab(hour='6', minute='0', day_of_week='sun'),
     },
+
+    # === Phase 11.5.11: 每週一 04:00 UTC AI 改進顧問自動跑（admin claude_cli 免費）===
+    # 與爬蟲翻譯同等待遇 — 自動產生補完性候選進候選池等回測 promote
+    'weekly-auto-ai-improve': {
+        'task': 'app.tasks.strategy_tasks.auto_ai_improve_strategies',
+        'schedule': crontab(hour='4', minute='0', day_of_week='mon'),
+    },
 }

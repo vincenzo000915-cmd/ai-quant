@@ -1136,3 +1136,49 @@ def cleanup_old_rejected_candidates(retention_days: int | None = None):
 
     return (f'cleanup: 刪 {cand_to_delete} candidates (rejected/error, > {days}d) '
             f'+ {bt_to_delete} candidate-stage backtests')
+
+
+@celery_app.task
+def auto_ai_improve_strategies():
+    """Phase 11.5.11: 每週自動跑 AI 改進顧問 — admin (user_id=1) 走 claude_cli 訂閱免費。
+
+    跟爬蟲翻譯同等待遇：自動生成候選 → 自然進候選池 → 接 candidate_pipeline 回測 →
+    qualified → auto_promote → strategies(stopped) → user 手動 ▶️ 啟動 → LIVE。
+
+    僅 admin 跑：普通 user BYO API key 自動跑會燒 token；他們仍在 UI 手動觸發。
+    """
+    from app.services.llm_prompts.strategy_improve import improve_strategies
+    from app.services.audit import log as audit
+    try:
+        r = improve_strategies(user_id=1)
+    except Exception as e:
+        audit('auto_ai_improve_error', actor='auto:weekly_ai_improve',
+              error=f'{type(e).__name__}: {e}')
+        return f'auto-ai-improve error: {type(e).__name__}: {e}'
+    if not r.get('ok'):
+        audit('auto_ai_improve_skipped', actor='auto:weekly_ai_improve',
+              reason=r.get('error'))
+        return f'auto-ai-improve skipped: {r.get("error")}'
+
+    audit('auto_ai_improve_done', actor='auto:weekly_ai_improve',
+          generated_count=len(r.get('generated', [])),
+          rejected_count=len(r.get('rejected', [])),
+          provider=r.get('llm_meta', {}).get('provider_used'),
+          analysis=(r.get('analysis') or '')[:300])
+
+    # Telegram 提示（admin 看了知道有新 AI 候選）
+    try:
+        from app.services.telegram_service import send as _tg
+        n = len(r.get('generated', []))
+        if n > 0:
+            names = ', '.join(g.get('candidate_type', '?') for g in r.get('generated', [])[:3])
+            _tg(
+                f'🤖 <b>AI 改進顧問週度結果</b>\n'
+                f'生成 {n} 個補完性候選：{names}\n'
+                f'已寫入候選池待回測。OOS Sharpe ≥ 1.5 才會 promote。',
+                event_key='ai_improve_weekly',
+            )
+    except Exception:
+        pass
+
+    return f'auto-ai-improve: 生成 {len(r.get("generated", []))} candidates, rejected {len(r.get("rejected", []))}'
