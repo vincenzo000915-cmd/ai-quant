@@ -22,24 +22,28 @@ export const palette = {
   textFaint: '#64748b',
   textDim: '#475569',
 
-  // 主 accent — cyan 不太刺眼，作為 hero 主色
+  // 主 accent — cyan 系統色（system chrome 用，不過度搶眼）
   accent: '#06b6d4',
   accentDim: '#0891b2',
   accentGlow: 'rgba(6,182,212,0.18)',
 
-  // 暖 accent — 給「人情味」 dashboard 用 (Phase 12.15.3 user 反饋太冷)
-  warmAccent: '#fb923c',    // 暖橙
-  warmAccentDim: '#ea580c',
+  // Phase 12.15.3.4: 金融科技混合風 — 取 Robinhood + Bybit 配色
+  // 暖 accent — 高亮 / 注意 / live mode
+  warmAccent: '#f7a600',        // Bybit 金黃 (give 交易產品「金錢」感)
+  warmAccentDim: '#d68900',
+  warmAccentGlow: 'rgba(247,166,0,0.2)',
 
-  // 狀態色 — 採柔和飽和度而非霓虹
-  success: '#10b981',     // 暗綠 (比 #22c55e 柔和)
-  error: '#f43f5e',       // 玫瑰紅 (比 #ef4444 暖)
-  warning: '#f59e0b',     // 琥珀
+  // 狀態色 — 金融科技風偏鮮明對比（不再柔和暗綠）
+  success: '#00d4aa',     // Robinhood teal-green
+  successGlow: 'rgba(0,212,170,0.25)',
+  error: '#ff4757',       // 鮮艳紅但不刺眼
+  errorGlow: 'rgba(255,71,87,0.25)',
+  warning: '#f7a600',
   info: '#6366f1',
 
-  // PnL 專用
-  pnlPositive: '#10b981',
-  pnlNegative: '#f43f5e',
+  // PnL 專用 — 強對比，這是交易工具最重要的數據
+  pnlPositive: '#00d4aa',
+  pnlNegative: '#ff4757',
   pnlNeutral: '#94a3b8',
 };
 
@@ -83,21 +87,21 @@ export const pnlColor = (v) => {
   return v > 0 ? palette.pnlPositive : palette.pnlNegative;
 };
 
-// 狀態 chip 顏色 map（StatusChip 用）
+// 狀態 chip 顏色 map（StatusChip 用）— 沿用新金融科技色
 export const statusColors = {
-  running:  { bg: 'rgba(34,197,94,0.12)',  fg: palette.success, label: '运行中' },
-  stopped:  { bg: 'rgba(148,163,184,0.1)', fg: palette.textMuted, label: '已停止' },
-  paused:   { bg: 'rgba(245,158,11,0.12)', fg: palette.warning, label: '已暂停' },
-  retired:  { bg: 'rgba(100,116,139,0.1)', fg: palette.textFaint, label: '已退役' },
-  pending:  { bg: 'rgba(99,102,241,0.1)',  fg: palette.info, label: '待处理' },
-  qualified:{ bg: 'rgba(6,182,212,0.12)',  fg: palette.accent, label: '已合格' },
-  rejected: { bg: 'rgba(239,68,68,0.1)',   fg: palette.error, label: '已拒绝' },
-  error:    { bg: 'rgba(239,68,68,0.12)',  fg: palette.error, label: '错误' },
+  running:  { bg: 'rgba(0,212,170,0.12)',   fg: palette.success, label: '运行中' },
+  stopped:  { bg: 'rgba(148,163,184,0.1)',  fg: palette.textMuted, label: '已停止' },
+  paused:   { bg: 'rgba(247,166,0,0.12)',   fg: palette.warning, label: '已暂停' },
+  retired:  { bg: 'rgba(100,116,139,0.1)',  fg: palette.textFaint, label: '已退役' },
+  pending:  { bg: 'rgba(99,102,241,0.1)',   fg: palette.info, label: '待处理' },
+  qualified:{ bg: 'rgba(6,182,212,0.12)',   fg: palette.accent, label: '已合格' },
+  rejected: { bg: 'rgba(255,71,87,0.1)',    fg: palette.error, label: '已拒绝' },
+  error:    { bg: 'rgba(255,71,87,0.12)',   fg: palette.error, label: '错误' },
   translated:{ bg: 'rgba(168,85,247,0.12)', fg: '#a855f7', label: '已翻译' },
-  backtesting:{ bg: 'rgba(245,158,11,0.12)', fg: palette.warning, label: '回测中' },
-  promoted: { bg: 'rgba(34,197,94,0.1)',   fg: palette.success, label: '已上线' },
-  open:     { bg: 'rgba(34,197,94,0.1)',   fg: palette.success, label: '开仓中' },
-  closed:   { bg: 'rgba(148,163,184,0.1)', fg: palette.textMuted, label: '已平' },
+  backtesting:{ bg: 'rgba(247,166,0,0.12)', fg: palette.warning, label: '回测中' },
+  promoted: { bg: 'rgba(0,212,170,0.1)',    fg: palette.success, label: '已上线' },
+  open:     { bg: 'rgba(0,212,170,0.1)',    fg: palette.success, label: '开仓中' },
+  closed:   { bg: 'rgba(148,163,184,0.1)',  fg: palette.textMuted, label: '已平' },
 };
 
 export default { palette, radii, spacing, typo, pnlColor, statusColors };

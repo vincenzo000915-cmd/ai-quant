@@ -104,9 +104,12 @@ export default function KpiCell({
           fontSize: metricFontSize,
           fontWeight: 700,
           lineHeight: 1.05,
+          // 金融科技風：tabular-nums + 緊湊 letter-spacing 給「數據終端」感
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.03em',
           // hero 數字加微 text-shadow 給「重量 + 發光」感
           ...(isHero && {
-            textShadow: `0 0 24px ${accentColor}44, 0 2px 4px rgba(0,0,0,0.3)`,
+            textShadow: `0 0 28px ${accentColor}55, 0 2px 4px rgba(0,0,0,0.3)`,
           }),
         }}>
           {loading ? '—' : value}
