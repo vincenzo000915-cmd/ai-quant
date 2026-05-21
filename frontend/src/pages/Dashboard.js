@@ -25,6 +25,11 @@ const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
 const AdvisorPanel = lazy(() => import('../components/AdvisorPanel'));
 const AiInsightsCard = lazy(() => import('../components/AiInsightsCard'));
 import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
+// Phase 12.15.3: 新 design system
+import { palette, typo, pnlColor } from '../theme';
+import PageHeader from '../components/common/PageHeader';
+import KpiCell from '../components/common/KpiCell';
+import StatusChip from '../components/common/StatusChip';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -440,125 +445,83 @@ export default function Dashboard() {
     );
   };
 
+  // Phase 12.15.3: 新 hero — 刪 Ticker + 刪 SysStatBlock strip + 刪 cyberpunk title
+  // 統一 5 個 KPI cell（左到右）+ 主標 + 副標 + 風險灯
+  const liveMode = cfg?.trading_mode === 'live';
+  const halted = cfg?.halted;
+  const todayPnl = pnlSummary?.today_pnl ?? 0;
+  const todayTrades = pnlSummary?.today_trades ?? 0;
+  const openPositions = pnlSummary?.open_positions ?? 0;
+  const runningStrats = pnlSummary?.running_strategies ?? 0;
+
   return (
     <Box sx={{ position: 'relative', zIndex: 1 }}>
-      {/* === Live Ticker === */}
-      <Ticker btcPrice={btcPrice} account={account} pnlSummary={pnlSummary} />
+      {/* === 統一頁頭 === */}
+      <PageHeader
+        title="儀表板"
+        subtitle={`OKX · ${liveMode ? '实盘 LIVE' : '模拟 PAPER'} · 杠杆 ${cfg?.leverage || 15}x · ${utcTime}`}
+        actions={[
+          <StatusChip key="mode" status={liveMode ? 'error' : 'success'} label={liveMode ? 'LIVE' : 'PAPER'} solid />,
+          halted && <StatusChip key="halt" status="error" label="已 HALT" solid />,
+          <Tooltip key="refresh" title="立即刷新">
+            <IconButton onClick={() => fetchData(false)} size="small" sx={{ border: `1px solid ${palette.border}`, color: palette.textMuted, '&:hover': { borderColor: palette.borderHot } }}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>,
+        ].filter(Boolean)}
+      />
 
-      {/* === System Status Strip === */}
-      <Box sx={{
-        display: 'grid',
-        gridTemplateColumns: { xs: 'repeat(3, 1fr)', sm: 'repeat(6, 1fr)' },
-        gap: 1,
-        mb: 2.5,
-        border: `1px solid ${C.border}`,
-        borderRadius: 1.5,
-        overflow: 'hidden',
-        background: 'rgba(8, 10, 24, 0.3)',
-        backdropFilter: 'blur(12px)',
-      }}>
-        {/* === Phase 7.3: 真實系統狀態 === */}
-        <SysStatBlock
-          label={cfg?.trading_mode === 'live' ? '🔴 LIVE' : '🟢 PAPER'}
-          value={cfg?.trading_mode === 'live' ? '實盤' : '模擬'}
-          accent={cfg?.trading_mode === 'live' ? C.error : C.success}
-          icon={<BoltIcon />}
-        />
-        <SysStatBlock
-          label="BALANCE"
-          value={account?.balance != null ? account.balance.toFixed(2) : '—'}
-          suffix={account ? ' USDT' : ''}
-          accent={C.gold}
-          icon={<MemoryIcon />}
-        />
-        <SysStatBlock
-          label="TODAY P&L"
-          value={pnlSummary?.today_pnl != null ? (pnlSummary.today_pnl >= 0 ? '+' : '') + pnlSummary.today_pnl.toFixed(2) : '0.00'}
-          accent={(pnlSummary?.today_pnl || 0) >= 0 ? C.success : C.error}
-          icon={<BoltIcon />}
-        />
-        <SysStatBlock
-          label="TODAY TRADES"
-          value={pnlSummary?.today_trades ?? 0}
-          suffix={pnlSummary?.today_trades ? ` (${pnlSummary.today_wins}W/${pnlSummary.today_losses}L)` : ''}
-          accent={C.primary}
-          icon={<SpeedIcon />}
-        />
-        <SysStatBlock
-          label="OPEN POS"
-          value={pnlSummary?.open_positions ?? 0}
-          suffix={pnlSummary ? `/${pnlSummary.running_strategies}` : ''}
-          accent={(pnlSummary?.open_positions || 0) > 0 ? C.accent : C.textDim}
-          icon={<MemoryIcon />}
-        />
-        <SysStatBlock
-          label={cfg?.halted ? '🛑 HALTED' : '✅ OK'}
-          value={cfg?.halted ? '阻新單' : '正常'}
-          accent={cfg?.halted ? C.error : C.success}
-          icon={<BoltIcon />}
-        />
-      </Box>
-
-      {/* === Tactical Header === */}
-      <Box sx={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        mb: 2.5, pb: 2, borderBottom: `1px solid ${C.border}`,
-        position: 'relative',
-      }}>
-        <Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
-            <PulseDot color={C.success} />
-            <Typography variant="overline" sx={{ color: C.success }}>
-              LIVE · SIMULATION ACTIVE
-            </Typography>
-            <Box sx={{
-              ml: 1, px: 1, py: 0.25, borderRadius: 0.5,
-              fontSize: '0.6rem', fontWeight: 700, letterSpacing: 1,
-              color: '#000',
-              background: 'linear-gradient(135deg, #facc15, #f59e0b)',
-              boxShadow: '0 0 12px rgba(250, 204, 21, 0.5)',
-            }}>
-              ⚠ HIGH RISK · 15× LEV
-            </Box>
-          </Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 800,
-              background: `linear-gradient(135deg, ${C.primary} 0%, ${C.accent} 50%, ${C.purple} 100%)`,
-              backgroundClip: 'text',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              fontSize: { xs: '1.4rem', sm: '2rem' },
-              letterSpacing: -0.5,
-              display: 'inline-flex',
-              alignItems: 'baseline',
-            }}
-          >
-            QUANT_TERMINAL
-            <Box component="span" className="caret" sx={{ height: '0.85em' }} />
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontFamily: 'JetBrains Mono, monospace', fontSize: '0.7rem' }}>
-            OKX · BTC/USDT · ENGINE v0.1.0 · {utcTime}
-          </Typography>
-        </Box>
-        <Tooltip title="立即刷新">
-          <IconButton
-            onClick={fetchData}
-            sx={{
-              border: `1px solid ${C.border}`,
-              color: C.primary,
-              boxShadow: '0 0 16px rgba(99,102,241,0.2)',
-              '&:hover': { background: 'rgba(99,102,241,0.15)', borderColor: 'rgba(99,102,241,0.6)' },
-            }}
-          >
-            <RefreshIcon />
-          </IconButton>
-        </Tooltip>
-      </Box>
+      {/* === Hero KPI Bar === */}
+      <Grid container spacing={1.5} sx={{ mb: 3 }}>
+        <Grid item xs={6} md={2.4}>
+          <KpiCell
+            label="账户余额"
+            value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
+            sub={account ? `${(account.free_margin || 0).toFixed(2)} 可用` : ''}
+            loading={!account}
+          />
+        </Grid>
+        <Grid item xs={6} md={2.4}>
+          <KpiCell
+            label="今日 PnL"
+            value={`${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}`}
+            sub={todayTrades ? `${todayTrades} trades · ${pnlSummary.today_wins}W/${pnlSummary.today_losses}L` : '今日 0 trades'}
+            accent={todayPnl > 0 ? 'success' : todayPnl < 0 ? 'error' : null}
+            trendValue={todayPnl}
+            loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={6} md={2.4}>
+          <KpiCell
+            label="持仓 / 运行策略"
+            value={`${openPositions} / ${runningStrats}`}
+            sub={openPositions > 0 ? `${openPositions} 个开仓中` : '无开仓'}
+            accent={openPositions > 0 ? 'accent' : null}
+            loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={6} md={2.4}>
+          <KpiCell
+            label="总 PnL"
+            value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
+            sub={pnlSummary ? `${pnlSummary.total_trades} trades · ${pnlSummary.win_rate}% 胜率` : ''}
+            accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
+            loading={!pnlSummary}
+          />
+        </Grid>
+        <Grid item xs={12} md={2.4}>
+          <KpiCell
+            label="BTC/USDT"
+            value={btcPrice?.price ? `$${btcPrice.price.toLocaleString()}` : '—'}
+            sub={btcPrice?.change_24h != null ? `24h ${btcPrice.change_24h >= 0 ? '+' : ''}${btcPrice.change_24h.toFixed(2)}%` : ''}
+            trendValue={btcPrice?.change_24h}
+            loading={!btcPrice}
+          />
+        </Grid>
+      </Grid>
 
       {/* 細條 LinearProgress 取代閃整頁 — refresh 時只顯示頂部 2px */}
-      {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1 }} />}
+      {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1, bgcolor: palette.border, '& .MuiLinearProgress-bar': { bgcolor: palette.accent } }} />}
 
       {/* 首次加載：用 skeleton 顯示結構 */}
       {loading && !account && (
