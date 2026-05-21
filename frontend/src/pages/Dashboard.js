@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   Box, Grid, Typography, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, LinearProgress,
@@ -19,11 +19,12 @@ import {
   ReferenceLine,
 } from 'recharts';
 import BTCChart from '../components/BTCChart';
-import RegimePanel from '../components/RegimePanel';
-import MTFConsensusPanel from '../components/MTFConsensusPanel';
-import AdvisorPanel from '../components/AdvisorPanel';
-import AiInsightsCard from '../components/AiInsightsCard';
-import { PageSkeleton, KpiBarSkeleton } from '../components/Skeleton';
+// Phase 12.15.2: secondary panel lazy load — 減小 main bundle，首屏加快
+const RegimePanel = lazy(() => import('../components/RegimePanel'));
+const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
+const AdvisorPanel = lazy(() => import('../components/AdvisorPanel'));
+const AiInsightsCard = lazy(() => import('../components/AiInsightsCard'));
+import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -971,16 +972,24 @@ export default function Dashboard() {
       </Grid>
 
       {/* === Phase 11.5.6-8: AI 洞察（週復盤 / 個性化建議 / 故障診斷） === */}
-      <AiInsightsCard />
+      <Suspense fallback={<CardSkeleton height={180} headerWidth="30%" rows={2} />}>
+        <AiInsightsCard />
+      </Suspense>
 
       {/* === Phase 10.7: 综合操作建议（放最显眼） === */}
-      <AdvisorPanel />
+      <Suspense fallback={<CardSkeleton height={280} headerWidth="35%" rows={4} />}>
+        <AdvisorPanel />
+      </Suspense>
 
       {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
-      <RegimePanel />
+      <Suspense fallback={<CardSkeleton height={240} headerWidth="40%" rows={3} />}>
+        <RegimePanel />
+      </Suspense>
 
       {/* === Phase 10.4: 多時框一致性檢查 === */}
-      <MTFConsensusPanel />
+      <Suspense fallback={<CardSkeleton height={200} headerWidth="40%" rows={3} />}>
+        <MTFConsensusPanel />
+      </Suspense>
 
       {/* === Phase 7.2: STRATEGY LIVE STATE — 每策略指標卡 === */}
       <StrategyLiveStateGrid C={C} />
