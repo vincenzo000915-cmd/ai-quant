@@ -34,30 +34,30 @@ import StatusChip from '../components/common/StatusChip';
 const API = process.env.REACT_APP_API_URL || '';
 
 const C = {
-  primary: '#6366f1',
-  primaryGlow: 'rgba(99, 102, 241, 0.6)',
+  primary: '#06b6d4',
+  primaryGlow: 'rgba(6, 182, 212, 0.6)',
   accent: '#06b6d4',
   accentGlow: 'rgba(6, 182, 212, 0.55)',
   pink: '#ec4899',
-  purple: '#a855f7',
-  gold: '#fbbf24',
+  purple: '#06b6d4',
+  gold: '#f7a600',
   goldDeep: '#f59e0b',
-  warnYellow: '#facc15',
-  success: '#22c55e',
-  error: '#ef4444',
+  warnYellow: '#f7a600',
+  success: '#00d4aa',
+  error: '#ff4757',
   errorBright: '#ff3355',
   warning: '#f59e0b',
   text: '#e2e8f0',
   textDim: '#94a3b8',
   textFaint: '#475569',
-  border: 'rgba(99, 102, 241, 0.2)',
+  border: 'rgba(6, 182, 212, 0.2)',
 };
 
 const CATEGORY_META = {
-  ultra: { label: '◢ ULTRA',  color: C.purple, bg: 'rgba(168, 85, 247, 0.15)' },
-  short: { label: '◤ SHORT',  color: C.error,  bg: 'rgba(239, 68, 68, 0.15)' },
+  ultra: { label: '◢ ULTRA',  color: C.purple, bg: 'rgba(6, 182, 212, 0.15)' },
+  short: { label: '◤ SHORT',  color: C.error,  bg: 'rgba(255, 71, 87, 0.15)' },
   swing: { label: '◇ SWING',  color: C.gold,   bg: 'rgba(251, 191, 36, 0.15)' },
-  long:  { label: '◆ LONG',   color: C.success,bg: 'rgba(34, 197, 94, 0.15)' },
+  long:  { label: '◆ LONG',   color: C.success,bg: 'rgba(0, 212, 170, 0.15)' },
 };
 
 // 戰術角裝飾
@@ -380,9 +380,9 @@ export default function Dashboard() {
   const KPICard = ({ label, value, sublabel, icon, accent = 'primary', glow = false, highlight = false, sparkData, sparkColor }) => {
     const accentMap = {
       primary: { color: C.primary, glow: C.primaryGlow, glowClass: 'glow-text-primary' },
-      success: { color: C.success, glow: 'rgba(34,197,94,0.55)', glowClass: 'glow-text-success' },
-      error:   { color: C.error,   glow: 'rgba(239,68,68,0.55)', glowClass: 'glow-text-error' },
-      warning: { color: C.warning, glow: 'rgba(245,158,11,0.55)', glowClass: 'glow-text-gold' },
+      success: { color: C.success, glow: 'rgba(0,212,170,0.55)', glowClass: 'glow-text-success' },
+      error:   { color: C.error,   glow: 'rgba(255,71,87,0.55)', glowClass: 'glow-text-error' },
+      warning: { color: C.warning, glow: 'rgba(247,166,0,0.55)', glowClass: 'glow-text-gold' },
       accent:  { color: C.accent,  glow: C.accentGlow, glowClass: 'glow-text-accent' },
       gold:    { color: C.gold,    glow: 'rgba(251,191,36,0.55)', glowClass: 'glow-text-gold' },
     };
@@ -525,82 +525,50 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* === KPI bar — 6 cells，加 emoji icon + sparkline + badge 让数据跳出 === */}
+      {/* === KPI bar — 6 cells，无 emoji 无 sparkline 高度统一（专业 trader 风）=== */}
       <Grid container spacing={1} sx={{ mb: 2.5 }}>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon="💰"
-            label="账户余额"
+          <KpiCell size="compact" label="账户余额"
             value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
             sub={account ? `$${(account.free_margin || 0).toFixed(2)} 可用` : ''}
-            sparkData={pnlData.length ? pnlData.map(p => (account?.balance || 75) + (p.cumulative || 0)) : null}
-            accent="accent"
-            loading={!account}
-          />
+            accent="accent" loading={!account} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon={todayPnl > 0 ? '📈' : todayPnl < 0 ? '📉' : '⚖️'}
-            label="今日 PnL"
+          <KpiCell size="compact" label="今日 PnL"
             value={`${todayPnl >= 0 ? '+' : ''}$${todayPnl.toFixed(2)}`}
             sub={todayTrades ? `${pnlSummary.today_wins}W / ${pnlSummary.today_losses}L` : '0 trades'}
             accent={todayPnl > 0 ? 'success' : todayPnl < 0 ? 'error' : null}
-            trendValue={todayPnl}
-            loading={!pnlSummary}
-            badge={todayTrades > 0 ? { text: `${todayTrades}笔`, color: '#94a3b8' } : null}
-          />
+            trendValue={todayPnl} loading={!pnlSummary}
+            badge={todayTrades > 0 ? { text: `${todayTrades}笔`, color: '#94a3b8' } : null} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon="💹"
-            label="累计 PnL"
+          <KpiCell size="compact" label="累计 PnL"
             value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
             sub={pnlSummary ? `${pnlSummary.win_rate}% 胜率` : ''}
-            sparkData={pnlData.length ? pnlData.map(p => p.cumulative || 0) : null}
             accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
-            trendValue={pnlSummary?.total_pnl}
-            loading={!pnlSummary}
-            badge={pnlSummary ? { text: `${pnlSummary.total_trades}笔`, color: '#94a3b8' } : null}
-          />
+            trendValue={pnlSummary?.total_pnl} loading={!pnlSummary}
+            badge={pnlSummary ? { text: `${pnlSummary.total_trades}笔`, color: '#94a3b8' } : null} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon="🎯"
-            label="持仓 / 运行"
+          <KpiCell size="compact" label="持仓 / 运行"
             value={`${openPositions} / ${runningStrats}`}
             sub={openPositions > 0 ? `${openPositions} 开仓中` : '无开仓'}
-            accent={openPositions > 0 ? 'accent' : null}
-            loading={!pnlSummary}
-            badge={openPositions > 0 ? { text: 'LIVE', color: '#00d4aa', bg: 'rgba(0,212,170,0.15)' } : null}
-          />
+            accent={openPositions > 0 ? 'accent' : null} loading={!pnlSummary}
+            badge={openPositions > 0 ? { text: 'LIVE', color: '#00d4aa', bg: 'rgba(0,212,170,0.15)' } : null} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon="⚡"
-            label="未实现"
+          <KpiCell size="compact" label="未实现"
             value={pnlSummary ? `${pnlSummary.unrealized_pnl >= 0 ? '+' : ''}$${pnlSummary.unrealized_pnl?.toFixed(2)}` : '$0.00'}
             sub={openPositions > 0 ? `${openPositions} 持仓` : '无浮动'}
             accent={pnlSummary?.unrealized_pnl > 0 ? 'success' : pnlSummary?.unrealized_pnl < 0 ? 'error' : null}
-            trendValue={pnlSummary?.unrealized_pnl}
-            loading={!pnlSummary}
-          />
+            trendValue={pnlSummary?.unrealized_pnl} loading={!pnlSummary} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell
-            size="compact"
-            icon="📊"
-            label="最大回撤"
+          <KpiCell size="compact" label="最大回撤"
             value={pnlSummary?.max_drawdown != null ? `-$${Math.abs(pnlSummary.max_drawdown).toFixed(2)}` : '—'}
             sub={pnlSummary?.max_drawdown_pct ? `-${pnlSummary.max_drawdown_pct.toFixed(1)}%` : '90 天'}
             accent={(pnlSummary?.max_drawdown_pct || 0) > 30 ? 'error' : (pnlSummary?.max_drawdown_pct || 0) > 10 ? 'warning' : null}
-            loading={!pnlSummary}
-            badge={{ text: '90D', color: '#94a3b8' }}
-          />
+            loading={!pnlSummary} badge={{ text: '90D', color: '#94a3b8' }} />
         </Grid>
       </Grid>
 
@@ -823,7 +791,7 @@ export default function Dashboard() {
                     fontWeight: 700,
                     color: pnlSummary?.total_pnl >= 0 ? C.success : C.error,
                     textShadow: pnlSummary?.total_pnl !== 0
-                      ? `0 0 28px ${pnlSummary?.total_pnl >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'}`
+                      ? `0 0 28px ${pnlSummary?.total_pnl >= 0 ? 'rgba(0,212,170,0.5)' : 'rgba(255,71,87,0.5)'}`
                       : 'none',
                     fontSize: '1.6rem',
                   }}
@@ -853,7 +821,7 @@ export default function Dashboard() {
                       <stop offset="100%" stopColor={C.accent} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(99,102,241,0.1)" />
+                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(6,182,212,0.1)" />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
                   <ReTooltip />
@@ -940,10 +908,10 @@ export default function Dashboard() {
                 const cat = CATEGORY_META[s.category] || { label: s.category, color: C.textDim, bg: 'transparent' };
                 const bt = s.backtest;
                 const ratingMeta = {
-                  excellent:  { label: '⭐ EXCEL', color: '#fbbf24' },
-                  good:       { label: '✅ GOOD',  color: '#22c55e' },
+                  excellent:  { label: '⭐ EXCEL', color: '#f7a600' },
+                  good:       { label: '✅ GOOD',  color: '#00d4aa' },
                   marginal:   { label: '⚠ MARG',  color: '#94a3b8' },
-                  negative:   { label: '❌ NEG',   color: '#ef4444' },
+                  negative:   { label: '❌ NEG',   color: '#ff4757' },
                   liquidated: { label: '💀 LIQD',  color: '#f87171' },
                 }[s.rating] || null;
                 return (
@@ -951,7 +919,7 @@ export default function Dashboard() {
                     key={s.id}
                     hover
                     sx={{
-                      '&:hover': { background: 'rgba(99,102,241,0.05)' },
+                      '&:hover': { background: 'rgba(6,182,212,0.05)' },
                       borderLeft: s.has_open_position ? `3px solid ${C.success}` : '3px solid transparent',
                       transition: 'all 200ms',
                     }}
@@ -1009,7 +977,7 @@ export default function Dashboard() {
                     <TableCell align="right" className="num-mono" sx={{ fontSize: '0.78rem' }}>
                       {bt && bt.sharpe_ratio != null ? (
                         <span style={{
-                          color: bt.sharpe_ratio >= 3 ? '#fbbf24' : bt.sharpe_ratio >= 1.5 ? C.success : bt.sharpe_ratio >= 0 ? C.textDim : C.error,
+                          color: bt.sharpe_ratio >= 3 ? '#f7a600' : bt.sharpe_ratio >= 1.5 ? C.success : bt.sharpe_ratio >= 0 ? C.textDim : C.error,
                           fontWeight: 600,
                         }}>{bt.sharpe_ratio.toFixed(2)}</span>
                       ) : <span style={{ color: C.textFaint }}>—</span>}
@@ -1099,7 +1067,7 @@ export default function Dashboard() {
                     ? ((pos.current_price - pos.entry_price) / pos.entry_price * 100)
                     : 0;
                   return (
-                    <TableRow key={pos.id} hover sx={{ '&:hover': { background: 'rgba(99,102,241,0.04)' } }}>
+                    <TableRow key={pos.id} hover sx={{ '&:hover': { background: 'rgba(6,182,212,0.04)' } }}>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                           <PulseDot color={pos.side === 'long' ? C.success : C.error} size={6} />
@@ -1111,7 +1079,7 @@ export default function Dashboard() {
                         <Box sx={{
                           display: 'inline-flex',
                           px: 0.75, py: 0.15, borderRadius: 0.75,
-                          bgcolor: pos.side === 'long' ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                          bgcolor: pos.side === 'long' ? 'rgba(0,212,170,0.15)' : 'rgba(255,71,87,0.15)',
                           color: pos.side === 'long' ? C.success : C.error,
                           fontSize: 9, fontWeight: 700, letterSpacing: 0.8,
                           border: `1px solid ${pos.side === 'long' ? C.success : C.error}40`,
@@ -1131,7 +1099,7 @@ export default function Dashboard() {
                         fontWeight: 700,
                         fontSize: '0.85rem',
                         textShadow: Math.abs(pos.unrealized_pnl || 0) > 0.5
-                          ? `0 0 12px ${(pos.unrealized_pnl || 0) >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)'}`
+                          ? `0 0 12px ${(pos.unrealized_pnl || 0) >= 0 ? 'rgba(0,212,170,0.5)' : 'rgba(255,71,87,0.5)'}`
                           : 'none',
                       }}>
                         {(pos.unrealized_pnl || 0) >= 0 ? '+' : ''}${(pos.unrealized_pnl || 0).toFixed(2)}
@@ -1172,7 +1140,7 @@ function CustomChartTooltip({ active, payload, label, C }) {
   return (
     <Box sx={{
       bgcolor: 'rgba(8,10,24,0.94)',
-      border: '1px solid rgba(99,102,241,0.35)',
+      border: '1px solid rgba(6,182,212,0.35)',
       borderRadius: 1,
       px: 1.25, py: 1,
       fontFamily: 'JetBrains Mono, monospace',
@@ -1278,8 +1246,8 @@ function StrategyLiveStateGrid({ C }) {
                   {(s.indicators || []).map((ind, i) => (
                     <Box key={i} sx={{
                       px: 0.6, py: 0.15, borderRadius: 0.5,
-                      bgcolor: 'rgba(99,102,241,0.08)',
-                      border: '1px solid rgba(99,102,241,0.18)',
+                      bgcolor: 'rgba(6,182,212,0.08)',
+                      border: '1px solid rgba(6,182,212,0.18)',
                       fontFamily: 'JetBrains Mono, monospace',
                       fontSize: '0.68rem',
                     }}>

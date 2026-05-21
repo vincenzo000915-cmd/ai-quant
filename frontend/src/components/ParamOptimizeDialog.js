@@ -119,7 +119,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <TuneIcon sx={{ color: '#22d3ee' }} />
+        <TuneIcon sx={{ color: '#06b6d4' }} />
         參數網格搜尋
         {strategy && (
           <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
@@ -145,7 +145,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
               startIcon={<PlayArrowIcon />}
               onClick={startOptimize}
               disabled={starting}
-              sx={{ bgcolor: '#22d3ee', '&:hover': { bgcolor: '#0891b2' } }}
+              sx={{ bgcolor: '#06b6d4', '&:hover': { bgcolor: '#0891b2' } }}
             >
               {starting ? '啟動中…' : '開始優化（背景跑數分鐘）'}
             </Button>
@@ -177,7 +177,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
                   </Typography>
                 )}
                 {latest.best_oos_sharpe !== null && latest.best_oos_sharpe !== undefined && (
-                  <Typography variant="caption" sx={{ color: '#22d3ee' }}>
+                  <Typography variant="caption" sx={{ color: '#06b6d4' }}>
                     · 最佳 OOS Sharpe = <strong>{fmtNum(latest.best_oos_sharpe)}</strong>
                   </Typography>
                 )}
@@ -229,7 +229,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
                     return (
                       <TableRow key={idx} sx={{ bgcolor: idx === 0 ? 'rgba(34,211,238,0.08)' : 'transparent' }}>
                         <TableCell>
-                          {idx === 0 ? <CheckCircleIcon sx={{ color: '#22d3ee', fontSize: 16, verticalAlign: 'middle' }} /> : (idx + 1)}
+                          {idx === 0 ? <CheckCircleIcon sx={{ color: '#06b6d4', fontSize: 16, verticalAlign: 'middle' }} /> : (idx + 1)}
                         </TableCell>
                         <TableCell>
                           <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
@@ -237,7 +237,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
                           </Typography>
                           {isBaseline && <Chip label="目前" size="small" sx={{ ml: 0.5, height: 16, fontSize: 9 }} />}
                         </TableCell>
-                        <TableCell align="right" sx={{ fontWeight: 600, color: oos > 1 ? '#22c55e' : oos < 0 ? '#ef4444' : 'text.primary' }}>
+                        <TableCell align="right" sx={{ fontWeight: 600, color: oos > 1 ? '#00d4aa' : oos < 0 ? '#ff4757' : 'text.primary' }}>
                           {fmtNum(oos)}
                         </TableCell>
                         <TableCell align="right">{fmtNum(r.is_sharpe)}</TableCell>

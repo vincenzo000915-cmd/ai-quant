@@ -8,17 +8,17 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 const API = process.env.REACT_APP_API_URL || '';
 
 const SIGNAL_META = {
-  buy:          { label: '買',  color: '#22c55e' },
-  sell:         { label: '賣',  color: '#ef4444' },
+  buy:          { label: '買',  color: '#00d4aa' },
+  sell:         { label: '賣',  color: '#ff4757' },
   hold:         { label: '觀望', color: '#64748b' },
   insufficient: { label: '不足', color: '#475569' },
   error:        { label: '錯',  color: '#f59e0b' },
 };
 
 const CONSENSUS_META = {
-  strong_buy:   { label: '一致買入',  color: '#22c55e', emoji: '🟢' },
+  strong_buy:   { label: '一致買入',  color: '#00d4aa', emoji: '🟢' },
   lean_buy:     { label: '偏多',      color: '#86efac', emoji: '↗️' },
-  strong_sell:  { label: '一致賣出',  color: '#ef4444', emoji: '🔴' },
+  strong_sell:  { label: '一致賣出',  color: '#ff4757', emoji: '🔴' },
   lean_sell:    { label: '偏空',      color: '#fca5a5', emoji: '↘️' },
   mixed:        { label: '衝突',      color: '#f59e0b', emoji: '⚠️' },
   hold_all:     { label: '全部觀望',  color: '#64748b', emoji: '⏸️' },

@@ -525,7 +525,7 @@ export default function Candidates() {
       {/* Phase 10.5: Pine Script paste modal */}
       <Dialog open={pineOpen} onClose={() => setPineOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <ContentPasteIcon sx={{ color: '#22d3ee' }} />
+          <ContentPasteIcon sx={{ color: '#06b6d4' }} />
           貼入 TradingView Pine Script
         </DialogTitle>
         <DialogContent dividers>
@@ -610,7 +610,7 @@ export default function Candidates() {
             variant="contained"
             onClick={submitPine}
             disabled={pineSubmitting || !pineForm.raw_code.trim()}
-            sx={{ bgcolor: '#22d3ee', '&:hover': { bgcolor: '#0891b2' } }}
+            sx={{ bgcolor: '#06b6d4', '&:hover': { bgcolor: '#0891b2' } }}
           >
             {pineSubmitting ? '提交中…' : '送入候選池'}
           </Button>

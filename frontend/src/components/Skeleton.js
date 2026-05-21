@@ -11,7 +11,7 @@ export function KpiBarSkeleton() {
       {[0, 1, 2, 3].map(i => (
         <Grid item xs={6} md={3} key={i}>
           <Box sx={{
-            p: 1.5, border: '1px solid rgba(99,102,241,0.1)',
+            p: 1.5, border: '1px solid rgba(6,182,212,0.1)',
             borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)',
             position: 'relative', overflow: 'hidden',
           }}>
@@ -46,7 +46,7 @@ export function ChartSkeleton({ height = 320 }) {
   return (
     <Box sx={{
       width: '100%', height, position: 'relative',
-      border: '1px solid rgba(99,102,241,0.12)',
+      border: '1px solid rgba(6,182,212,0.12)',
       borderRadius: 1, bgcolor: 'rgba(8,10,24,0.4)',
       overflow: 'hidden',
     }}>
@@ -59,7 +59,7 @@ export function ChartSkeleton({ height = 320 }) {
               key={i} variant="rectangular"
               sx={{
                 flexGrow: 1, height: `${h}%`,
-                bgcolor: i % 2 === 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                bgcolor: i % 2 === 0 ? 'rgba(0,212,170,0.08)' : 'rgba(255,71,87,0.08)',
                 borderRadius: 0.5, opacity: 0.6,
               }}
             />

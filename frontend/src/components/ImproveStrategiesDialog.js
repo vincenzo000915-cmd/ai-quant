@@ -38,7 +38,7 @@ export default function ImproveStrategiesDialog({ open, onClose, onCreated }) {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <LightbulbIcon sx={{ color: '#fbbf24' }} />
+          <LightbulbIcon sx={{ color: '#f7a600' }} />
           <Typography variant="h6">AI 策略改进建议</Typography>
           <Chip label="PRO · 闭环" size="small" color="warning" variant="outlined" />
         </Stack>
@@ -87,8 +87,8 @@ export default function ImproveStrategiesDialog({ open, onClose, onCreated }) {
                     <ListItem
                       key={g.candidate_id}
                       sx={{
-                        bgcolor: 'rgba(34,197,94,0.06)',
-                        border: '1px solid rgba(34,197,94,0.2)',
+                        bgcolor: 'rgba(0,212,170,0.06)',
+                        border: '1px solid rgba(0,212,170,0.2)',
                         borderRadius: 1, mb: 1, py: 1.5, alignItems: 'flex-start',
                       }}
                     >

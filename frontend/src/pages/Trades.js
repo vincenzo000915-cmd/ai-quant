@@ -315,7 +315,7 @@ export default function Trades() {
                   trades.map((trade) => {
                     const pnl = Number(trade.pnl ?? 0);
                     const pnlPct = Number(trade.pnl_percent ?? 0);
-                    const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#94a3b8';
+                    const pnlColor = pnl > 0 ? '#00d4aa' : pnl < 0 ? '#ff4757' : '#94a3b8';
                     const sideZh = trade.side === 'long' ? '多' : trade.side === 'short' ? '空' : trade.side;
                     const reasonZh = {
                       stop_loss: '🛑 止損',

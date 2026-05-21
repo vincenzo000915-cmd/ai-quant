@@ -16,9 +16,9 @@ import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 const API = process.env.REACT_APP_API_URL || '';
 
 const SEVERITY_META = {
-  critical: { color: '#ef4444', label: '緊急', bg: 'rgba(239,68,68,0.10)' },
-  warn:     { color: '#f59e0b', label: '建議', bg: 'rgba(245,158,11,0.10)' },
-  info:     { color: '#22d3ee', label: '機會', bg: 'rgba(34,211,238,0.08)' },
+  critical: { color: '#ff4757', label: '緊急', bg: 'rgba(255,71,87,0.10)' },
+  warn:     { color: '#f59e0b', label: '建議', bg: 'rgba(247,166,0,0.10)' },
+  info:     { color: '#06b6d4', label: '機會', bg: 'rgba(34,211,238,0.08)' },
 };
 
 const ACTION_META = {
@@ -200,9 +200,9 @@ function AdvisorPanelInner() {
             <Typography variant="h6" fontWeight={700}>🎯 操作建議</Typography>
             {summary.total > 0 && (
               <Stack direction="row" spacing={0.5}>
-                {summary.critical > 0 && <Chip size="small" label={`緊急 ${summary.critical}`} sx={{ bgcolor: '#ef4444', color: '#fff', fontWeight: 700 }} />}
+                {summary.critical > 0 && <Chip size="small" label={`緊急 ${summary.critical}`} sx={{ bgcolor: '#ff4757', color: '#fff', fontWeight: 700 }} />}
                 {summary.warn > 0 && <Chip size="small" label={`建議 ${summary.warn}`} sx={{ bgcolor: '#f59e0b', color: '#000', fontWeight: 700 }} />}
-                {summary.info > 0 && <Chip size="small" label={`機會 ${summary.info}`} variant="outlined" sx={{ borderColor: '#22d3ee', color: '#22d3ee' }} />}
+                {summary.info > 0 && <Chip size="small" label={`機會 ${summary.info}`} variant="outlined" sx={{ borderColor: '#06b6d4', color: '#06b6d4' }} />}
               </Stack>
             )}
           </Box>
@@ -215,14 +215,14 @@ function AdvisorPanelInner() {
                   checked={!!config?.auto_apply_enabled}
                   onChange={(e) => saveAutoConfig({ auto_apply_enabled: e.target.checked })}
                   sx={{
-                    '& .MuiSwitch-thumb': { bgcolor: config?.auto_apply_enabled ? '#22c55e' : undefined },
-                    '& .MuiSwitch-track': { bgcolor: config?.auto_apply_enabled ? '#22c55e !important' : undefined },
+                    '& .MuiSwitch-thumb': { bgcolor: config?.auto_apply_enabled ? '#00d4aa' : undefined },
+                    '& .MuiSwitch-track': { bgcolor: config?.auto_apply_enabled ? '#00d4aa !important' : undefined },
                   }}
                 />
               }
               label={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <SmartToyIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#22c55e' : 'text.secondary' }} />
+                  <SmartToyIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#00d4aa' : 'text.secondary' }} />
                   <Typography variant="caption" sx={{ fontWeight: 700 }}>
                     智能托管
                   </Typography>
@@ -230,7 +230,7 @@ function AdvisorPanelInner() {
                     <Chip
                       size="small"
                       label={`${config.auto_apply_actions.length} 項`}
-                      sx={{ height: 16, fontSize: 9, bgcolor: '#22c55e', color: '#000', ml: 0.5 }}
+                      sx={{ height: 16, fontSize: 9, bgcolor: '#00d4aa', color: '#000', ml: 0.5 }}
                     />
                   )}
                 </Box>
@@ -249,7 +249,7 @@ function AdvisorPanelInner() {
                   onClick={runAutoNow}
                   disabled={autoRunning || !config?.auto_apply_enabled}
                 >
-                  <PlayCircleIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#22c55e' : undefined }} />
+                  <PlayCircleIcon fontSize="small" sx={{ color: config?.auto_apply_enabled ? '#00d4aa' : undefined }} />
                 </IconButton>
               </span>
             </Tooltip>
@@ -308,7 +308,7 @@ function AdvisorPanelInner() {
                       <Chip
                         label={sev.label}
                         size="small"
-                        sx={{ bgcolor: sev.color, color: sev.color === '#22d3ee' ? '#000' : '#fff', fontWeight: 700, height: 20 }}
+                        sx={{ bgcolor: sev.color, color: sev.color === '#06b6d4' ? '#000' : '#fff', fontWeight: 700, height: 20 }}
                       />
                       <Typography variant="body2" fontWeight={700}>
                         {act.emoji} {act.label}
@@ -332,7 +332,7 @@ function AdvisorPanelInner() {
                       sx={{
                         flexShrink: 0,
                         bgcolor: sev.color,
-                        color: sev.color === '#22d3ee' ? '#000' : '#fff',
+                        color: sev.color === '#06b6d4' ? '#000' : '#fff',
                         fontWeight: 700,
                         fontSize: 11,
                         whiteSpace: 'nowrap',
@@ -351,7 +351,7 @@ function AdvisorPanelInner() {
         {/* 智能托管設定 Dialog */}
         <Dialog open={autoSettingsOpen} onClose={() => setAutoSettingsOpen(false)} maxWidth="sm" fullWidth>
           <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <SmartToyIcon sx={{ color: '#22c55e' }} />
+            <SmartToyIcon sx={{ color: '#00d4aa' }} />
             智能托管設定
           </DialogTitle>
           <DialogContent dividers>

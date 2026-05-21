@@ -53,7 +53,7 @@ export default function GenerateStrategyDialog({ open, onClose, onCreated }) {
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <AutoAwesomeIcon sx={{ color: '#fbbf24' }} />
+          <AutoAwesomeIcon sx={{ color: '#f7a600' }} />
           <Typography variant="h6">AI 生成策略</Typography>
           <Chip label="PRO" size="small" color="warning" variant="outlined" />
         </Stack>

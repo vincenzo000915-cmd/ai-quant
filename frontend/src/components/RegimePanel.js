@@ -9,16 +9,16 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 const API = process.env.REACT_APP_API_URL || '';
 
 const REGIME_META = {
-  strong_trend: { label: '強趨勢', color: '#22c55e', emoji: '📈' },
+  strong_trend: { label: '強趨勢', color: '#00d4aa', emoji: '📈' },
   weak_trend:   { label: '弱趨勢', color: '#84cc16', emoji: '↗️' },
   range:        { label: '盤整',   color: '#f59e0b', emoji: '🔄' },
   unknown:      { label: '未知',   color: '#64748b', emoji: '❓' },
 };
 
 const FIT_META = {
-  good:    { label: '匹配',   color: '#22c55e' },
+  good:    { label: '匹配',   color: '#00d4aa' },
   ok:      { label: '尚可',   color: '#84cc16' },
-  bad:     { label: '不匹配', color: '#ef4444' },
+  bad:     { label: '不匹配', color: '#ff4757' },
   unknown: { label: '—',     color: '#64748b' },
 };
 
@@ -92,7 +92,7 @@ function RegimePanelInner() {
                 startIcon={aiLoading ? <CircularProgress size={14} /> : <AutoAwesomeIcon />}
                 onClick={fetchAi}
                 disabled={aiLoading || !data}
-                sx={{ color: '#fbbf24', borderColor: '#fbbf2466', textTransform: 'none' }}
+                sx={{ color: '#f7a600', borderColor: '#f7a60066', textTransform: 'none' }}
               >
                 {aiLoading ? '思考中…' : 'AI 解讀'}
               </Button>

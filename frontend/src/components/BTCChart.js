@@ -87,18 +87,18 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
     });
 
     const candleSeries = chart.addCandlestickSeries({
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      upColor: '#00d4aa',
+      downColor: '#ff4757',
+      borderUpColor: '#00d4aa',
+      borderDownColor: '#ff4757',
+      wickUpColor: '#00d4aa',
+      wickDownColor: '#ff4757',
     });
 
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
       priceScaleId: '',   // 獨立比例，不跟價格混
-      color: 'rgba(99,102,241,0.4)',
+      color: 'rgba(6,182,212,0.4)',
       lastValueVisible: false,
     });
     volumeSeries.priceScale().applyOptions({
@@ -138,7 +138,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       .map(d => ({
         time: Math.floor(d.timestamp / 1000),
         value: d.volume,
-        color: d.close >= d.open ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)',
+        color: d.close >= d.open ? 'rgba(0,212,170,0.4)' : 'rgba(255,71,87,0.4)',
       }));
     volumeSeriesRef.current.setData(vols);
     chartRef.current?.timeScale().fitContent();
@@ -165,7 +165,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         return slice.reduce((s, v) => s + v, 0) / 20;
       });
       const s = chartRef.current.addLineSeries({
-        color: 'rgba(99,102,241,0.85)',
+        color: 'rgba(6,182,212,0.85)',
         lineWidth: 1.5,
         priceLineVisible: false,
         lastValueVisible: false,
@@ -207,7 +207,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         lower.push(mean - 2 * std);
       }
       const su = chartRef.current.addLineSeries({
-        color: 'rgba(168,85,247,0.6)',
+        color: 'rgba(6,182,212,0.6)',
         lineWidth: 1,
         lineStyle: 2,   // dashed
         priceLineVisible: false,
@@ -218,7 +218,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       bbUpperRef.current = su;
 
       const sl = chartRef.current.addLineSeries({
-        color: 'rgba(168,85,247,0.6)',
+        color: 'rgba(6,182,212,0.6)',
         lineWidth: 1,
         lineStyle: 2,
         priceLineVisible: false,
@@ -245,7 +245,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         markers.push({
           time: Math.floor(new Date(t.entry_time).getTime() / 1000),
           position: 'belowBar',
-          color: '#22c55e',
+          color: '#00d4aa',
           shape: 'arrowUp',
           text: `BUY $${t.entry_price?.toFixed(0) || ''}`,
         });
@@ -255,7 +255,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         markers.push({
           time: Math.floor(new Date(t.exit_time).getTime() / 1000),
           position: 'aboveBar',
-          color: pnlOk ? '#22c55e' : '#ef4444',
+          color: pnlOk ? '#00d4aa' : '#ff4757',
           shape: 'arrowDown',
           text: `${pnlOk ? '+' : ''}${(t.pnl || 0).toFixed(2)}`,
         });
@@ -268,7 +268,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         markers.push({
           time: Math.floor(new Date(p.opened_at).getTime() / 1000),
           position: 'belowBar',
-          color: '#facc15',
+          color: '#f7a600',
           shape: 'circle',
           text: `HOLD ${p.unrealized_pnl >= 0 ? '+' : ''}${(p.unrealized_pnl || 0).toFixed(2)}`,
         });
@@ -298,7 +298,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
           <Typography variant="caption" sx={{ color: 'rgba(148,163,184,0.7)', fontSize: '0.6rem', mr: 0.5 }}>
             下一根{timeframe}
           </Typography>
-          <Typography component="span" sx={{ color: '#facc15', fontWeight: 700, fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace' }}>
+          <Typography component="span" sx={{ color: '#f7a600', fontWeight: 700, fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace' }}>
             {fmtCountdown(remaining)}
           </Typography>
         </Box>
@@ -311,15 +311,15 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
             borderRadius: 0.5,
           }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-              <Box sx={{ width: 0, height: 0, borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderBottom: '6px solid #22c55e' }} />
+              <Box sx={{ width: 0, height: 0, borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderBottom: '6px solid #00d4aa' }} />
               <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'rgba(148,163,184,0.8)' }}>BUY</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-              <Box sx={{ width: 0, height: 0, borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderTop: '6px solid #ef4444' }} />
+              <Box sx={{ width: 0, height: 0, borderLeft: '4px solid transparent', borderRight: '4px solid transparent', borderTop: '6px solid #ff4757' }} />
               <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'rgba(148,163,184,0.8)' }}>SELL</Typography>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-              <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#facc15' }} />
+              <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#f7a600' }} />
               <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'rgba(148,163,184,0.8)' }}>HOLD</Typography>
             </Box>
           </Box>

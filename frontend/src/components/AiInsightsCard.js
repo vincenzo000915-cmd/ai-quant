@@ -48,7 +48,7 @@ export default function AiInsightsCard() {
     <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(251,191,36,0.2)' }}>
       <CardContent sx={{ px: 2.5, py: 2 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <AutoAwesomeIcon sx={{ color: '#fbbf24' }} />
+          <AutoAwesomeIcon sx={{ color: '#f7a600' }} />
           <Typography variant="h6" fontWeight={700}>AI 洞察</Typography>
           <Chip label="PRO" size="small" color="warning" variant="outlined" />
         </Stack>
@@ -68,7 +68,7 @@ export default function AiInsightsCard() {
             variant="outlined"
             startIcon={<AutoAwesomeIcon />}
             onClick={() => fetchFor(tab)}
-            sx={{ color: '#fbbf24', borderColor: '#fbbf24', textTransform: 'none' }}
+            sx={{ color: '#f7a600', borderColor: '#f7a600', textTransform: 'none' }}
           >
             ✨ 生成 {current.label}
           </Button>

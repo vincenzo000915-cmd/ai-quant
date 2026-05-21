@@ -409,13 +409,13 @@ export default function Strategies() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="AI 解读策略（Pro）">
-                          <IconButton size="small" sx={{ color: '#fbbf24' }} onClick={() => { setExplainTarget(strategy); setExplainOpen(true); }}>
+                          <IconButton size="small" sx={{ color: '#f7a600' }} onClick={() => { setExplainTarget(strategy); setExplainOpen(true); }}>
                             <AutoAwesomeIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         {strategy.status !== 'retired' && (
                           <Tooltip title="參數網格搜尋（walk-forward）">
-                            <IconButton size="small" sx={{ color: '#22d3ee' }} onClick={() => { setOptimizeTarget(strategy); setOptimizeOpen(true); }}>
+                            <IconButton size="small" sx={{ color: '#06b6d4' }} onClick={() => { setOptimizeTarget(strategy); setOptimizeOpen(true); }}>
                               <TuneIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
@@ -659,7 +659,7 @@ export default function Strategies() {
             const r = backtestData.result;
             const profitable = r.total_pnl > 0;
             const liquidated = r.max_drawdown_pct >= 100;
-            const ratingColor = liquidated ? '#ef4444' : profitable && r.sharpe_ratio >= 1.5 ? '#22c55e' : profitable ? '#fbbf24' : '#ef4444';
+            const ratingColor = liquidated ? '#ff4757' : profitable && r.sharpe_ratio >= 1.5 ? '#00d4aa' : profitable ? '#f7a600' : '#ff4757';
             const ratingLabel = liquidated ? '💀 LIQUIDATED' : r.sharpe_ratio >= 3 ? '⭐ EXCELLENT' : r.sharpe_ratio >= 1.5 ? '✅ GOOD' : r.sharpe_ratio >= 0 ? '⚠️ MARGINAL' : '❌ NEGATIVE';
 
             return (
@@ -674,13 +674,13 @@ export default function Strategies() {
 
                 <Grid container spacing={2} sx={{ mb: 2 }}>
                   {[
-                    { label: '累積 PnL', value: `${profitable ? '+' : ''}$${(r.total_pnl||0).toFixed(2)}`, color: profitable ? '#22c55e' : '#ef4444' },
-                    { label: '年化收益', value: `${(r.annual_return_pct||0).toFixed(1)}%`, color: r.annual_return_pct >= 0 ? '#22c55e' : '#ef4444' },
-                    { label: 'Sharpe', value: r.sharpe_ratio == null ? '—' : r.sharpe_ratio.toFixed(2), color: r.sharpe_ratio >= 1.5 ? '#22c55e' : r.sharpe_ratio >= 0 ? '#fbbf24' : '#ef4444' },
-                    { label: '最大回撤', value: `-${(r.max_drawdown_pct||0).toFixed(1)}%`, color: r.max_drawdown_pct < 30 ? '#22c55e' : r.max_drawdown_pct < 60 ? '#fbbf24' : '#ef4444' },
+                    { label: '累積 PnL', value: `${profitable ? '+' : ''}$${(r.total_pnl||0).toFixed(2)}`, color: profitable ? '#00d4aa' : '#ff4757' },
+                    { label: '年化收益', value: `${(r.annual_return_pct||0).toFixed(1)}%`, color: r.annual_return_pct >= 0 ? '#00d4aa' : '#ff4757' },
+                    { label: 'Sharpe', value: r.sharpe_ratio == null ? '—' : r.sharpe_ratio.toFixed(2), color: r.sharpe_ratio >= 1.5 ? '#00d4aa' : r.sharpe_ratio >= 0 ? '#f7a600' : '#ff4757' },
+                    { label: '最大回撤', value: `-${(r.max_drawdown_pct||0).toFixed(1)}%`, color: r.max_drawdown_pct < 30 ? '#00d4aa' : r.max_drawdown_pct < 60 ? '#f7a600' : '#ff4757' },
                   ].map((k, i) => (
                     <Grid item xs={6} md={3} key={i}>
-                      <Box sx={{ p: 1.5, border: '1px solid rgba(99,102,241,0.2)', borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)' }}>
+                      <Box sx={{ p: 1.5, border: '1px solid rgba(6,182,212,0.2)', borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)' }}>
                         <Typography variant="caption" sx={{ color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.label}</Typography>
                         <Typography className="num-mono" sx={{ fontSize: '1.3rem', fontWeight: 700, color: k.color }}>{k.value}</Typography>
                       </Box>
@@ -691,14 +691,14 @@ export default function Strategies() {
                 {/* 次要指標 */}
                 <Box sx={{
                   display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 1.5, mb: 2,
-                  p: 1.5, border: '1px solid rgba(99,102,241,0.15)', borderRadius: 1, bgcolor: 'rgba(8,10,24,0.3)',
+                  p: 1.5, border: '1px solid rgba(6,182,212,0.15)', borderRadius: 1, bgcolor: 'rgba(8,10,24,0.3)',
                   fontFamily: 'JetBrains Mono, monospace',
                 }}>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>總交易</Typography><Typography sx={{ fontWeight: 600 }}>{r.total_trades}</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝率</Typography><Typography sx={{ fontWeight: 600 }}>{r.win_rate}%</Typography></Box>
-                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝/敗</Typography><Typography sx={{ fontWeight: 600 }}><span style={{color:'#22c55e'}}>{r.winning_trades}</span> / <span style={{color:'#ef4444'}}>{r.losing_trades}</span></Typography></Box>
-                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均盈</Typography><Typography sx={{ fontWeight: 600, color: '#22c55e' }}>+${r.avg_win}</Typography></Box>
-                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均虧</Typography><Typography sx={{ fontWeight: 600, color: '#ef4444' }}>${r.avg_loss}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝/敗</Typography><Typography sx={{ fontWeight: 600 }}><span style={{color:'#00d4aa'}}>{r.winning_trades}</span> / <span style={{color:'#ff4757'}}>{r.losing_trades}</span></Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均盈</Typography><Typography sx={{ fontWeight: 600, color: '#00d4aa' }}>+${r.avg_win}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均虧</Typography><Typography sx={{ fontWeight: 600, color: '#ff4757' }}>${r.avg_loss}</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>Profit Factor</Typography><Typography sx={{ fontWeight: 600 }}>{r.profit_factor ?? '—'}</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>K 線數</Typography><Typography sx={{ fontWeight: 600 }}>{r.candle_count}</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>耗時</Typography><Typography sx={{ fontWeight: 600 }}>{r.duration_ms}ms</Typography></Box>
@@ -713,15 +713,15 @@ export default function Strategies() {
                         <AreaChart data={r.equity_curve.map(p => ({ ts: new Date(p.ts*1000).toISOString().slice(0,10), equity: p.equity }))}>
                           <defs>
                             <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={profitable ? '#22c55e' : '#ef4444'} stopOpacity={0.4} />
-                              <stop offset="100%" stopColor={profitable ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+                              <stop offset="0%" stopColor={profitable ? '#00d4aa' : '#ff4757'} stopOpacity={0.4} />
+                              <stop offset="100%" stopColor={profitable ? '#00d4aa' : '#ff4757'} stopOpacity={0} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid strokeDasharray="2 6" stroke="rgba(99,102,241,0.1)" />
+                          <CartesianGrid strokeDasharray="2 6" stroke="rgba(6,182,212,0.1)" />
                           <XAxis dataKey="ts" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                           <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                           <ReTooltip />
-                          <Area type="monotone" dataKey="equity" stroke={profitable ? '#22c55e' : '#ef4444'} fill="url(#eqGrad)" strokeWidth={2} />
+                          <Area type="monotone" dataKey="equity" stroke={profitable ? '#00d4aa' : '#ff4757'} fill="url(#eqGrad)" strokeWidth={2} />
                         </AreaChart>
                       </ResponsiveContainer>
                     </Box>
