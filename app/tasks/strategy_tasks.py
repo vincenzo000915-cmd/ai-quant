@@ -38,13 +38,29 @@ def _simulated_order(symbol, side, amount_usdt, price):
 
 
 def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0,
-                 pos_side: str | None = None):
-    """Phase 6.5: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
+                 pos_side: str | None = None, user_id: int | None = None):
+    """Phase 6.5 + 11.1.4: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
     失敗時 fallback 寫 telegram，return None。
 
     pos_side: 'long' | 'short' — 平倉時 caller 必須顯式傳；開倉若不傳會由 side 推。
+
+    Phase 11.1.4: user_id != 1 (非 admin) 即使 mode=live 也強制 paper。
+    原因：env OKX key 是 admin 私人帳號；其他 user 沒綁 key 之前不該動 admin 帳號。
+    Phase 11.2 引入 per-user OKX key 後 guard 改成「沒綁 key 才強制 paper」。
     """
-    if mode == 'live':
+    effective_mode = mode
+    if mode == 'live' and user_id is not None and user_id != 1:
+        effective_mode = 'paper'
+        try:
+            from app.services.audit import log as _audit
+            _audit('live_order_blocked_non_admin', actor='system',
+                   user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
+                   reason='Phase 11.1.4 — user has no OKX key, forced to paper')
+        except Exception:
+            pass
+        print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — Phase 11.2 開放 BYO OKX key')
+
+    if effective_mode == 'live':
         try:
             from app.services.exchange_service import place_order_live
             res = place_order_live(symbol, side, amount_usdt, leverage=leverage, pos_side=pos_side)
@@ -219,7 +235,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         continue
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side)
+                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side, user_id=s.user_id)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -268,7 +284,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side, user_id=s.user_id)
 
                 # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order:
@@ -377,7 +393,7 @@ def check_stop_loss():
                 tp_hit = pnl_pct >= tp_pct
 
             if sl_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 # Phase 12.10: live 用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order:
@@ -415,7 +431,7 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif tp_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side)
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 if mode == 'live' and order:
                     try:
