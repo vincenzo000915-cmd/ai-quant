@@ -8,6 +8,13 @@ class Config:
     # Flask
     SECRET_KEY = os.getenv('SECRET_KEY', 'quant-secret-key-change-me')
 
+    # Phase 11.1: JWT — fallback 到 SECRET_KEY 但鼓勵單獨設
+    JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', SECRET_KEY)
+    JWT_ACCESS_TOKEN_EXPIRES = 60 * 60 * 24 * 30  # 30 天
+    JWT_TOKEN_LOCATION = ['headers']
+    JWT_HEADER_NAME = 'Authorization'
+    JWT_HEADER_TYPE = 'Bearer'
+
     # Database
     DB_HOST = os.getenv('DB_HOST', 'postgres')
     DB_PORT = os.getenv('DB_PORT', '5432')

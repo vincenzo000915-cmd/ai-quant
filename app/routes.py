@@ -988,14 +988,26 @@ def list_audit():
 
 @api_bp.route('/auth/check', methods=['GET', 'POST'])
 def auth_check():
-    """Phase 8.1: 驗 Bearer token 有效性。GET 給未鉴权頁面用、POST 給登入頁用"""
-    from app.services.auth import check_token, _expected_token
-    if not _expected_token():
-        return jsonify({'enabled': False, 'note': '未設定 API_AUTH_TOKEN'})
-    ok, reason = check_token()
-    if ok:
-        return jsonify({'enabled': True, 'ok': True})
-    return jsonify({'enabled': True, 'ok': False, 'detail': reason}), 401
+    """Phase 8.1 + 11.1: 驗鉴权狀態 — 支持 system token / user JWT 雙軌
+
+    回傳：
+    - enabled: API_AUTH_TOKEN 是否啟用
+    - ok: 當前 request 是否有有效 actor (system token 或 user JWT)
+    - is_system: 是否 system token 通過
+    - user_id: 若 user JWT 通過則回 user.id；否則 None
+    """
+    from flask import g
+    from app.services.auth import _expected_token
+    enabled = bool(_expected_token())
+    is_system = bool(getattr(g, 'is_system', False))
+    user_id = getattr(g, 'current_user_id', None)
+    ok = is_system or user_id is not None
+    return jsonify({
+        'enabled': enabled,
+        'ok': ok,
+        'is_system': is_system,
+        'user_id': user_id,
+    }), (200 if ok or not enabled else 401)
 
 
 @api_bp.route('/preflight', methods=['GET'])
@@ -1382,3 +1394,41 @@ def get_candles():
     ).order_by(Candle.timestamp.desc()).limit(limit).all()
 
     return jsonify([c.to_dict() for c in reversed(candles)])
+
+
+# ===== Phase 11.1: User 認證 =====
+
+@api_bp.route('/auth/register', methods=['POST'])
+def auth_register():
+    """註冊新 user — email + password (>=8)。回傳 user + access_token"""
+    from app.services.auth_user import register_user
+    data = request.get_json(silent=True) or {}
+    ok, payload = register_user(data.get('email', ''), data.get('password', ''))
+    if not ok:
+        return jsonify({'error': payload}), 400
+    return jsonify(payload), 201
+
+
+@api_bp.route('/auth/login', methods=['POST'])
+def auth_login():
+    """登入 — 回傳 user + access_token"""
+    from app.services.auth_user import login_user
+    data = request.get_json(silent=True) or {}
+    ok, payload = login_user(data.get('email', ''), data.get('password', ''))
+    if not ok:
+        return jsonify({'error': payload}), 401
+    return jsonify(payload), 200
+
+
+@api_bp.route('/auth/me', methods=['GET'])
+def auth_me():
+    """回傳當前登入 user 資訊。system token 回 {is_system: True}；無鉴权回 401。"""
+    from flask import g
+    if getattr(g, 'is_system', False):
+        return jsonify({'is_system': True, 'user': None}), 200
+    user = getattr(g, 'current_user', None)
+    if not user:
+        return jsonify({'error': '未登入'}), 401
+    return jsonify({'is_system': False, 'user': user.to_dict()}), 200
+
+

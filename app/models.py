@@ -2,6 +2,35 @@ import datetime
 from app.extensions import db
 
 
+class User(db.Model):
+    """Phase 11.1: SaaS 用戶 — bcrypt 密碼，每 user 有自己的 strategies / positions / trades
+
+    user_id=1 = 系統管理員（vincenzo000915@gmail.com），承接 11.1 之前的所有單用戶數據。
+    其他 user 預設 free tier + paper-only（LIVE 模式 11.1 階段仅限 user_id=1）。
+    """
+    __tablename__ = 'users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)        # bcrypt
+    role = db.Column(db.String(20), default='user')                  # 'admin' | 'user'
+    subscription_tier = db.Column(db.String(20), default='free')     # 'free' | 'basic' | 'pro' | 'team'
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    last_login_at = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'email': self.email,
+            'role': self.role,
+            'subscription_tier': self.subscription_tier,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
+        }
+
+
 class Strategy(db.Model):
     """策略配置"""
     __tablename__ = 'strategies'

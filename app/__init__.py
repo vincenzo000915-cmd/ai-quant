@@ -1,6 +1,9 @@
 from flask import Flask
+from flask_jwt_extended import JWTManager
 from .extensions import db, socketio, celery_app
 from .config import Config
+
+jwt = JWTManager()
 
 
 def create_app(config_class=Config):
@@ -10,6 +13,7 @@ def create_app(config_class=Config):
     # 初始化擴展
     db.init_app(app)
     socketio.init_app(app)
+    jwt.init_app(app)
 
     # 更新 Celery 配置
     celery_app.conf.update(
