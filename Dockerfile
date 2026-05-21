@@ -2,8 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# git: required by Phase 4 GitHub crawler (clones strategy repos)
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+# Phase 4: git for GitHub crawler (clones strategy repos)
+# Phase 11.5.3.1: nodejs + npm + @anthropic-ai/claude-code
+#   admin 走 host /root/.claude OAuth (Claude Pro/Max 訂閱)，免 API token 費
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

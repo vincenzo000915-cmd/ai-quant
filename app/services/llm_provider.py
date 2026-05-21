@@ -1,4 +1,4 @@
-"""Phase 11.5.2: model-agnostic LLM adapter
+"""Phase 11.5.2 + 11.5.3.1: model-agnostic LLM adapter
 
 統一接口讓 Claude / GPT / Gemini 同樣調用方式：
 
@@ -15,6 +15,10 @@
 Fallback 順序：按 user 綁的 provider priority（小優先）依序試。前一個 rate
 limit / API error → 自動換下一個。所有 active provider 都失敗 → 返回最後一個錯誤。
 
+Phase 11.5.3.1: admin (user_id=1) 預設走 'claude_cli' provider — 用 container 內
+的 claude CLI + mount 的 host /root/.claude OAuth (你的 Claude Pro/Max 訂閱)，
+免 API token 費。普通 user 仍 BYO API key（SaaS 賣的就是這權限）。
+
 支援 cache_key — 重複輸入直接返回快取（30 分鐘）；用 redis 已有的 cache 模塊。
 
 每次成功 call 後寫 monthly_input_tokens / monthly_output_tokens（給 user 看用量）。
@@ -22,6 +26,8 @@ limit / API error → 自動換下一個。所有 active provider 都失敗 → 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import time
 
 from app.services.llm_creds import (
@@ -36,7 +42,10 @@ DEFAULT_MODELS = {
     'anthropic': 'claude-sonnet-4-6',
     'openai': 'gpt-4o-mini',
     'gemini': 'gemini-2.0-flash',
+    'claude_cli': 'sonnet',   # claude CLI 的 model 名（不是 API model id）
 }
+
+ADMIN_USER_ID = 1
 
 # Provider 不支援 rate-limit fallback 的錯誤（永久性 — 直接 raise，不重試下個）
 PERMANENT_ERROR_KEYWORDS = {
@@ -161,10 +170,57 @@ def _call_gemini(api_key: str, prompt: str, system: str | None,
     }
 
 
+# ===== Claude CLI (admin 走訂閱免費路徑) =====
+
+CLAUDE_CLI_TIMEOUT = int(os.environ.get('CLAUDE_CLI_TIMEOUT', '120'))
+
+
+def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
+                     max_tokens: int, model: str) -> dict:
+    """Phase 11.5.3.1: 用 container 內 claude CLI + host mount 的 ~/.claude OAuth。
+
+    不需要 api_key（OAuth 在 mount 的配置裡）；max_tokens 也 claude CLI 不直接控制
+    （由訂閱方使用 fairness 限），但 prompt 可以引導長度。
+
+    用 --print 非互動模式 + --output-format json 拿結構化結果（含 model/usage）。
+    """
+    # --permission-mode default：root 下 --dangerously-skip-permissions 被禁，但 default + --print 已夠 non-interactive
+    args = ['claude', '--print', '--output-format', 'json', '--permission-mode', 'default']
+    if model:
+        args.extend(['--model', model])
+    if system:
+        args.extend(['--append-system-prompt', system])
+    proc = subprocess.run(
+        args,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=CLAUDE_CLI_TIMEOUT,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f'claude CLI exited {proc.returncode}: {(proc.stderr or "").strip()[:300]}')
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        # 退而求其次：把整個 stdout 當 text 回
+        return {'text': proc.stdout.strip(), 'model_used': model or 'claude-cli', 'usage': {'input_tokens': 0, 'output_tokens': 0}}
+    text = data.get('result') or data.get('response') or ''
+    usage = data.get('usage') or {}
+    return {
+        'text': text,
+        'model_used': data.get('model', model or 'claude-cli'),
+        'usage': {
+            'input_tokens': usage.get('input_tokens', 0),
+            'output_tokens': usage.get('output_tokens', 0),
+        },
+    }
+
+
 _DISPATCH = {
     'anthropic': _call_anthropic,
     'openai': _call_openai,
     'gemini': _call_gemini,
+    'claude_cli': _call_claude_cli,
 }
 
 
@@ -190,43 +246,54 @@ def call_llm(
         except Exception:
             pass
 
-    providers = list_for_user(user_id, only_active=True)
-    if not providers:
-        return {'ok': False, 'error': '尚未綁定任何 LLM provider（去 設定 頁綁定）',
-                'text': '', 'provider_used': None}
+    # Phase 11.5.3.1: 構建嘗試清單 — admin 預設 claude_cli (免費)，其他 user BYO API
+    attempts: list[tuple[str, str | None, str]] = []   # (provider, api_key_or_None, model)
+
+    user_providers = list_for_user(user_id, only_active=True)
+    if user_id == ADMIN_USER_ID and not user_providers:
+        # admin 沒綁任何 API → 走 claude_cli (host /root/.claude OAuth via 訂閱)
+        attempts.append(('claude_cli', None, DEFAULT_MODELS['claude_cli']))
+    else:
+        for rec in user_providers:
+            api_key = get_decrypted(user_id, rec.provider)
+            if not api_key:
+                continue
+            attempts.append((rec.provider, api_key, rec.default_model or DEFAULT_MODELS.get(rec.provider)))
 
     # provider_pref 指定 → 把它移到隊頭
     if provider_pref:
-        providers = sorted(providers,
-                           key=lambda p: (0 if p.provider == provider_pref else 1, p.priority, p.id))
+        attempts = sorted(attempts, key=lambda a: 0 if a[0] == provider_pref else 1)
+
+    if not attempts:
+        if user_id == ADMIN_USER_ID:
+            err = 'claude CLI 不可用（檢查 /root/.claude mount 與容器內 claude binary）'
+        else:
+            err = '尚未綁定任何 LLM provider（去 設定 頁綁定）'
+        return {'ok': False, 'error': err, 'text': '', 'provider_used': None}
 
     last_error = None
-    for rec in providers:
-        api_key = get_decrypted(user_id, rec.provider)
-        if not api_key:
-            last_error = f'{rec.provider}: decrypt failed'
-            continue
-        model = rec.default_model or DEFAULT_MODELS.get(rec.provider)
-        fn = _DISPATCH.get(rec.provider)
+    for provider, api_key, model in attempts:
+        fn = _DISPATCH.get(provider)
         if not fn:
-            last_error = f'{rec.provider}: dispatch missing'
+            last_error = f'{provider}: dispatch missing'
             continue
         t0 = time.time()
         try:
             res = fn(api_key, prompt, system, max_tokens, model)
             latency_ms = int((time.time() - t0) * 1000)
-            # 寫用量
-            try:
-                record_usage(user_id, rec.provider,
-                             res['usage'].get('input_tokens', 0),
-                             res['usage'].get('output_tokens', 0))
-            except Exception:
-                pass
+            # 寫用量（claude_cli 不記，因走訂閱沒 API token 帳）
+            if provider != 'claude_cli':
+                try:
+                    record_usage(user_id, provider,
+                                 res['usage'].get('input_tokens', 0),
+                                 res['usage'].get('output_tokens', 0))
+                except Exception:
+                    pass
             result = {
                 'ok': True,
                 'text': res['text'],
                 'model_used': res['model_used'],
-                'provider_used': rec.provider,
+                'provider_used': provider,
                 'usage': res['usage'],
                 'latency_ms': latency_ms,
                 'cached': False,
@@ -235,16 +302,15 @@ def call_llm(
             if cache_key:
                 try:
                     from app.services.cache import cache_set
-                    cache_set(cache_key, result, ttl=1800)   # 30 分鐘
+                    cache_set(cache_key, result, ttl=1800)
                 except Exception:
                     pass
             return result
         except Exception as e:
             err = f'{type(e).__name__}: {e}'
-            last_error = f'{rec.provider}: {err}'
+            last_error = f'{provider}: {err}'
             print(f'[llm] {last_error}')
             if _is_permanent_error(err):
-                # 永久錯不 fallback 到下個（key 是壞的，不是 rate limit）
                 break
 
     return {'ok': False, 'error': last_error or '所有 provider 都失敗',

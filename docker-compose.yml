@@ -47,6 +47,9 @@ services:
       - ./app:/app/app
       - ./run.py:/app/run.py
       - ./frontend/build:/app/frontend/build
+      # Phase 11.5.3.1: mount host claude OAuth + 主配置 → admin LLM 走訂閱免費路徑
+      - /root/.claude:/root/.claude:ro
+      - /root/.claude.json:/root/.claude.json:ro
     command: >
       sh -c "sleep 3 && gunicorn -k sync -w 2 -t 30 --reload -b 0.0.0.0:5000 run:app"
 
@@ -62,6 +65,9 @@ services:
       - .env
     volumes:
       - ./app:/app/app
+      # Phase 11.5.3.1: admin LLM 任務走訂閱
+      - /root/.claude:/root/.claude:ro
+      - /root/.claude.json:/root/.claude.json:ro
     command: >
       sh -c "sleep 5 && celery -A app.celery_app worker --loglevel=info --concurrency=4"
 
