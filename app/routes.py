@@ -5,7 +5,7 @@ from app.services.rate_limit import rate_limit
 from app.services.cache import cached_response
 from app.services.user_scope import (
     apply_user_filter, assign_user_id, current_user_id, get_owned,
-    is_admin_actor, require_actor, scoped_query,
+    has_ai_access, is_admin_actor, require_actor, require_pro_tier, scoped_query,
 )
 from app.tasks.strategy_tasks import run_strategy_signals
 
@@ -415,6 +415,24 @@ def strategies_health_check():
         'task_id': task.id,
         'note': '已排入 Celery worker 跑（每策略 ~14s，9 個約 2 分鐘）。完成後重新整理頁面看結果。',
     }), 202
+
+
+@api_bp.route('/strategies/<int:id>/explain', methods=['POST'])
+@require_actor
+@require_pro_tier
+def explain_strategy_route(id):
+    """Phase 11.5.3: AI 解釋策略 — Pro 層獨享。
+
+    回 {ok, text, model_used, provider_used, cached, usage, latency_ms, strategy_id, error?}
+    """
+    from app.services.llm_prompts.strategy_explain import explain_strategy
+    s = _owned_strategy(id)
+    r = explain_strategy(current_user_id() or 1, s.to_dict())
+    r['strategy_id'] = id
+    if not r.get('ok'):
+        # 403 / 402 path 已被 decorator 處理；這裡是 LLM 自己失敗
+        return jsonify(r), 502
+    return jsonify(r)
 
 
 @api_bp.route('/strategies/<int:id>/retire', methods=['POST'])

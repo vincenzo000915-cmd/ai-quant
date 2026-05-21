@@ -27,6 +27,33 @@ def current_user_id() -> int | None:
     return getattr(g, 'current_user_id', None)
 
 
+def has_ai_access() -> bool:
+    """Phase 11.5: AI features 訪問權 — admin 或 Pro/Team tier"""
+    if not has_request_context():
+        return True  # Celery / system context 默認允許
+    if getattr(g, 'is_system', False):
+        return True
+    u = getattr(g, 'current_user', None)
+    if not u:
+        return False
+    if u.role == 'admin':
+        return True
+    return u.subscription_tier in ('pro', 'team')
+
+
+def require_pro_tier(view):
+    """Decorator: AI 功能 gate — 非 Pro/admin 回 402 Payment Required"""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not has_ai_access():
+            return jsonify({
+                'error': '此功能需 Pro 訂閱',
+                'upgrade_hint': '到 設定 頁綁定 LLM key 並升級到 Pro 層',
+            }), 402
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def is_admin_actor() -> bool:
     """system token 通過 或 user.role='admin' 都視為 admin（看所有 user 數據）。
 

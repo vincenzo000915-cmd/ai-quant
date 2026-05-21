@@ -8,7 +8,9 @@ import {
 } from '@mui/material';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import TuneIcon from '@mui/icons-material/Tune';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ParamOptimizeDialog from '../components/ParamOptimizeDialog';
+import ExplainStrategyDialog from '../components/ExplainStrategyDialog';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
@@ -94,6 +96,8 @@ export default function Strategies() {
   // Phase 10.2: optimize modal
   const [optimizeOpen, setOptimizeOpen] = useState(false);
   const [optimizeTarget, setOptimizeTarget] = useState(null);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [explainTarget, setExplainTarget] = useState(null);
 
   const handleOpenFanOut = (strategy) => {
     setFanOutSource(strategy);
@@ -395,6 +399,11 @@ export default function Strategies() {
                         <Tooltip title="編輯">
                           <IconButton size="small" color="primary" onClick={() => handleOpenDialog(strategy)}>
                             <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="AI 解读策略（Pro）">
+                          <IconButton size="small" sx={{ color: '#fbbf24' }} onClick={() => { setExplainTarget(strategy); setExplainOpen(true); }}>
+                            <AutoAwesomeIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         {strategy.status !== 'retired' && (
@@ -727,6 +736,13 @@ export default function Strategies() {
           setSnackbar({ open: true, severity: 'success', message: '已套用新參數，建議到健康檢查或單獨跑回測重新驗證' });
           fetchStrategies();
         }}
+      />
+
+      {/* Phase 11.5.3: AI 解读策略 */}
+      <ExplainStrategyDialog
+        open={explainOpen}
+        strategy={explainTarget}
+        onClose={() => setExplainOpen(false)}
       />
 
       {/* Phase 10.6: Fan-out Modal */}
