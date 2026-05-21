@@ -7,17 +7,17 @@ import { palette, typo } from '../../theme';
 export default function PageHeader({ title, subtitle, actions = null }) {
   return (
     <Box sx={{
-      display: 'flex', alignItems: 'flex-start',
+      display: 'flex', alignItems: 'center',
       justifyContent: 'space-between',
-      mb: 3, pb: 2,
+      mb: 2, pb: 1.5,
       borderBottom: `1px solid ${palette.border}`,
       gap: 2, flexWrap: 'wrap',
     }}>
       <Box sx={{ minWidth: 0 }}>
         <Typography component="h1" sx={{
-          ...typo.display,
-          color: palette.text, mb: 0.5,
-          fontSize: { xs: '1.5rem', md: '2rem' },
+          ...typo.h1,
+          color: palette.text, mb: 0.25,
+          fontSize: { xs: '1.25rem', md: '1.5rem' },
         }}>
           {title}
         </Typography>

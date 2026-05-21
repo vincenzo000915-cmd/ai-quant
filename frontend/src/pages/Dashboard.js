@@ -533,7 +533,6 @@ export default function Dashboard() {
             label="账户余额"
             value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
             sub={account ? `${(account.free_margin || 0).toFixed(2)} 可用` : ''}
-            sparkData={pnlData.length ? pnlData.map(p => (account?.balance || 75) + (p.cumulative || 0)) : null}
             accent="accent"
             loading={!account}
           />
@@ -555,7 +554,6 @@ export default function Dashboard() {
             label="累计 PnL"
             value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
             sub={pnlSummary ? `${pnlSummary.total_trades} 笔 · ${pnlSummary.win_rate}% 胜率` : ''}
-            sparkData={pnlData.length ? pnlData.map(p => p.cumulative || 0) : null}
             accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
             trendValue={pnlSummary?.total_pnl}
             loading={!pnlSummary}

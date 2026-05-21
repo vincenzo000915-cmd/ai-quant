@@ -213,7 +213,7 @@ export default function Layout() {
         {/* AppBar */}
         <AppBar position="static" elevation={0}
           sx={{ bgcolor: palette.bg, borderBottom: `1px solid ${palette.border}` }}>
-          <Toolbar sx={{ justifyContent: 'space-between', minHeight: { xs: 48, sm: 56 } }}>
+          <Toolbar sx={{ justifyContent: 'space-between', minHeight: { xs: 40, sm: 44 }, '@media (min-width: 600px)': { minHeight: 44 } }}>
             {isMobile && (
               <IconButton edge="start" onClick={() => setMobileOpen(true)} size="small" sx={{ mr: 1, color: palette.textMuted }}>
                 <MenuIcon />

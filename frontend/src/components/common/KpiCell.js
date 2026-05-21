@@ -80,12 +80,13 @@ export default function KpiCell({
   return (
     <Box sx={{
       position: 'relative',
-      p: isHero ? 2.5 : isCompact ? 1.25 : 2,
+      p: isHero ? 2.5 : isCompact ? 1.5 : 2,
       bgcolor: isHero ? palette.surface2 : palette.surface,
       border: `1px solid ${palette.border}`,
       borderRadius: isCompact ? 1 : 1.5,
       height: '100%',
-      minHeight: isHero ? 132 : isCompact ? 72 : 90,
+      // compact 统一 96px（有/无 sparkline 都同高，6 cell 底部对齐）
+      minHeight: isHero ? 132 : isCompact ? 96 : 90,
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
       overflow: 'hidden',
       cursor: 'default',
