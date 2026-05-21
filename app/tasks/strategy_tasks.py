@@ -1079,3 +1079,60 @@ def auto_revive_retired_strategies():
             skipped += 1
 
     return f'auto-revive: 復活 {revived} 個，跳過 {skipped} 個（OOS 未過或樣本不足）'
+
+
+@celery_app.task
+def cleanup_old_rejected_candidates(retention_days: int | None = None):
+    """Phase 12.14: 每週清理 candidates 表的 rejected/error 行 + candidate-stage backtest_results。
+
+    保留 retention_days 天（預設 90）內的；之前的刪除。
+    保留：pending / translated / backtesting / qualified / promoted 所有狀態 — 只清 rejected + error。
+    一併清 backtest_results.strategy_id IS NULL 且超期的（candidate-stage 結果，不屬任何 user 的 system resource）。
+
+    回 dict {candidates_deleted, backtests_deleted, kept_status}。
+    """
+    import datetime as _dt
+    import os
+    from sqlalchemy import func
+    from app.models import StrategyCandidate, BacktestResult
+    from app.services.audit import log as audit
+
+    days = int(retention_days or os.environ.get('CANDIDATE_CLEANUP_DAYS', '90'))
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+
+    # 候選自身 (rejected / error)
+    cand_q = StrategyCandidate.query.filter(
+        StrategyCandidate.status.in_(['rejected', 'error']),
+        StrategyCandidate.created_at < cutoff,
+    )
+    cand_to_delete = cand_q.count()
+
+    # candidate-stage backtest (strategy_id IS NULL 且超期)
+    bt_q = BacktestResult.query.filter(
+        BacktestResult.strategy_id.is_(None),
+        BacktestResult.created_at < cutoff,
+    )
+    bt_to_delete = bt_q.count()
+
+    # 留一個 status 計數快照（給 audit context）
+    status_counts = dict(
+        db.session.query(StrategyCandidate.status, func.count(StrategyCandidate.id))
+        .group_by(StrategyCandidate.status).all()
+    )
+
+    if cand_to_delete == 0 and bt_to_delete == 0:
+        return f'cleanup: nothing to delete (retention={days}d, status snapshot={status_counts})'
+
+    # 先刪 backtest（candidates 可能 FK→backtest_result_id）
+    bt_q.delete(synchronize_session=False)
+    cand_q.delete(synchronize_session=False)
+    db.session.commit()
+
+    audit('cleanup_candidates', actor='auto:weekly_cleanup',
+          candidates_deleted=cand_to_delete,
+          backtests_deleted=bt_to_delete,
+          retention_days=days,
+          status_snapshot=status_counts)
+
+    return (f'cleanup: 刪 {cand_to_delete} candidates (rejected/error, > {days}d) '
+            f'+ {bt_to_delete} candidate-stage backtests')

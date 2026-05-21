@@ -114,4 +114,10 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',
         'schedule': 90.0,
     },
+
+    # === Phase 12.14: 每週日 06:00 UTC 清 candidates 表 rejected/error + candidate-stage backtest ===
+    'weekly-cleanup-candidates': {
+        'task': 'app.tasks.strategy_tasks.cleanup_old_rejected_candidates',
+        'schedule': crontab(hour='6', minute='0', day_of_week='sun'),
+    },
 }
