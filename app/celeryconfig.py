@@ -127,4 +127,11 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.auto_ai_improve_strategies',
         'schedule': crontab(hour='7', minute='0'),
     },
+
+    # === Phase 12.24.2: USDT 链上付款监听（每 60s）===
+    # 4 链轮询 (TRC/ERC/BEP/SOL) 自动 confirm pending invoices + 开通订阅
+    'check-onchain-payments': {
+        'task': 'app.tasks.strategy_tasks.check_onchain_payments',
+        'schedule': 60.0,   # 每 60s
+    },
 }

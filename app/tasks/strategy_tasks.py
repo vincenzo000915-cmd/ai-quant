@@ -1182,3 +1182,24 @@ def auto_ai_improve_strategies():
         pass
 
     return f'auto-ai-improve: 生成 {len(r.get("generated", []))} candidates, rejected {len(r.get("rejected", []))}'
+
+
+# ============================================================
+# Phase 12.24.2: USDT 链上付款监听 (60s interval)
+# ============================================================
+@celery_app.task(name='app.tasks.strategy_tasks.check_onchain_payments')
+def check_onchain_payments():
+    """每 60s 跑：4 条 USDT 链上 polling，匹配 pending invoices 自动 confirm"""
+    from app.services.onchain_monitor import check_all_chains
+    from app.services.subscription_service import expire_old_invoices
+    try:
+        n_expired = expire_old_invoices()
+    except Exception:
+        n_expired = 0
+    results = check_all_chains()
+    total_confirmed = sum(r.get('confirmed', 0) for r in results if r.get('ok'))
+    return {
+        'expired': n_expired,
+        'confirmed': total_confirmed,
+        'chains': results,
+    }

@@ -2008,3 +2008,16 @@ def admin_invoice_reject(invoice_id):
     audit('invoice_admin_rejected', actor='admin', user_id=user.id,
           invoice_id=invoice_id, target_user_id=inv.user_id, note=inv.review_note)
     return jsonify({'ok': True})
+
+
+@api_bp.route('/admin/billing/check-now', methods=['POST'])
+@require_actor
+def admin_billing_check_now():
+    """admin: 手动触发一次链上 polling（不等 60s cron）"""
+    from app.models import User
+    from app.services.onchain_monitor import check_all_chains
+    user = User.query.get(_me_user_id())
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'admin only'}), 403
+    results = check_all_chains()
+    return jsonify({'ok': True, 'results': results})
