@@ -9,7 +9,7 @@
 //   6. 5min 后启用 tx hash 备用通道
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Container, Typography, Button, Chip, Stack, Alert, IconButton, TextField, Snackbar } from '@mui/material';
+import { Box, Container, Typography, Button, Chip, Stack, Alert, IconButton, TextField, Snackbar, LinearProgress } from '@mui/material';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -40,6 +40,8 @@ export default function Checkout() {
   const [copied, setCopied] = useState(false);
   const [showTxHashForm, setShowTxHashForm] = useState(false);
   const [txHashInput, setTxHashInput] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState(null);
 
   // 拉 chain 配置
   useEffect(() => {
@@ -108,8 +110,11 @@ export default function Checkout() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  // Phase 12.24.4: 自动链上验证（不走人工审核）
   const submitTxHash = async () => {
     if (!txHashInput.trim()) return;
+    setVerifying(true);
+    setVerifyError(null);
     try {
       const r = await fetch(`${API}/api/billing/invoice/${invoice.id}/submit-tx`, {
         method: 'POST',
@@ -117,10 +122,26 @@ export default function Checkout() {
         body: JSON.stringify({ tx_hash: txHashInput.trim() }),
       });
       const data = await r.json();
-      if (!r.ok) { setError(data.error || '提交失败'); return; }
-      setInvoice(data);
+      if (!r.ok || !data.ok) {
+        // 详细错误显示给用户
+        setVerifyError({
+          msg: data.error || '验证失败',
+          hint: data.hint,
+          expected: data.expected_amount,
+          actual: data.actual_amount,
+        });
+        setVerifying(false);
+        return;
+      }
+      // 自动 confirm 成功
+      setInvoice(data.invoice);
       setShowTxHashForm(false);
-    } catch (e) { setError('网络错误'); }
+      setVerifying(false);
+      // status='confirmed' 会被外层成功 UI 接住，触发 3s 后跳转
+    } catch (e) {
+      setVerifyError({ msg: '网络错误，请稍后重试' });
+      setVerifying(false);
+    }
   };
 
   // 计算预览金额 (生成 invoice 前展示)
@@ -338,17 +359,43 @@ export default function Checkout() {
             )}
             {showTxHashForm && (
               <Box sx={{ p: 2, border: `1px solid ${palette.border}`, borderRadius: 1, mb: 1 }}>
+                <Typography sx={{ color: palette.text, fontSize: 12, fontWeight: 600, mb: 0.3 }}>
+                  链上 tx hash 自动验证
+                </Typography>
                 <Typography sx={{ color: palette.textMuted, fontSize: 11, mb: 1 }}>
-                  你的链上 tx hash（admin 1-2 工作日内审核）
+                  系统会立即查链上验证（收款地址 + 金额）；通过则自动开通订阅，无需人工审核
                 </Typography>
                 <TextField fullWidth size="small" value={txHashInput}
                   onChange={e => setTxHashInput(e.target.value)}
-                  placeholder="0x... 或 ..."
+                  placeholder="0x... 或 Tron tx hash"
+                  disabled={verifying}
                   sx={{ mb: 1, '& .MuiInputBase-input': { fontFamily: typo.mono, fontSize: 11 } }} />
-                <Button onClick={submitTxHash} variant="contained" disabled={!txHashInput.trim()}
-                  sx={{ bgcolor: palette.ai, color: palette.bg, fontWeight: 700 }}>
-                  提交审核
+                <Button onClick={submitTxHash} variant="contained"
+                  disabled={!txHashInput.trim() || verifying}
+                  sx={{ bgcolor: palette.ai, color: palette.bg, fontWeight: 700,
+                        '&.Mui-disabled': { bgcolor: 'rgba(167,139,250,0.3)', color: 'rgba(255,255,255,0.5)' } }}>
+                  {verifying ? '链上验证中…' : '立即验证'}
                 </Button>
+                {verifying && (
+                  <LinearProgress sx={{
+                    mt: 1, height: 2,
+                    bgcolor: 'rgba(167,139,250,0.1)',
+                    '& .MuiLinearProgress-bar': { bgcolor: palette.ai },
+                  }} />
+                )}
+                {verifyError && (
+                  <Alert severity="error" sx={{ mt: 1.5, fontSize: 11 }}>
+                    <Box sx={{ fontWeight: 700, mb: 0.3 }}>{verifyError.msg}</Box>
+                    {verifyError.hint && (
+                      <Box sx={{ fontSize: 10, opacity: 0.85 }}>{verifyError.hint}</Box>
+                    )}
+                    {verifyError.expected != null && verifyError.actual != null && (
+                      <Box sx={{ fontSize: 10, mt: 0.5, fontFamily: typo.mono }}>
+                        应付: {verifyError.expected} · 实际: {verifyError.actual}
+                      </Box>
+                    )}
+                  </Alert>
+                )}
               </Box>
             )}
 
@@ -390,10 +437,11 @@ export default function Checkout() {
           </Box>
         )}
 
-        {/* === Pending review === */}
+        {/* pending_review 状态已 deprecated（Phase 12.24.4 改成全自动验证）
+            但保留兼容：早期可能还有此状态的 invoice */}
         {invoice && invoice.status === 'pending_review' && (
           <Alert severity="info" sx={{ mt: 2 }}>
-            tx hash 已提交，admin 将在 1-2 工作日内审核。审核通过后自动开通。
+            tx hash 已提交，将在下次链上 polling 自动验证。
           </Alert>
         )}
       </Box>

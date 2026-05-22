@@ -224,21 +224,24 @@ def check_bep20_payments() -> dict:
 # Solana (placeholder — 用 Helius API)
 # ============================================================
 
-def check_sol_payments() -> dict:
-    """Solana SPL USDT 监听 — Helius API + getSignaturesForAddress 解析
-
-    暂用简化版：如果有 HELIUS_API_KEY 就走 Helius，否则跳过提示。
-    Solana RPC + SPL parsing 较复杂，下次完善。
+def check_sol_payments(limit: int = 30) -> dict:
+    """Solana SPL USDT 监听
+    优先 Helius（更快 + 解析好），无 key 则 fallback public RPC
+      (getSignaturesForAddress + getTransaction)
     """
     addr = _admin_address('sol')
-    helius_key = (os.environ.get('HELIUS_API_KEY') or '').strip()
     if not addr:
         return {'ok': False, 'error': 'SOL 地址未配置'}
-    if not helius_key:
-        return {'ok': False, 'error': 'HELIUS_API_KEY 未配置（SOL 监听需 Helius free key — helius.dev）'}
 
+    helius_key = (os.environ.get('HELIUS_API_KEY') or '').strip()
+    if helius_key:
+        return _check_sol_via_helius(addr, helius_key, limit)
+    return _check_sol_via_rpc(addr, limit)
+
+
+def _check_sol_via_helius(addr: str, key: str, limit: int) -> dict:
     url = f'https://api.helius.xyz/v0/addresses/{addr}/transactions'
-    params = {'api-key': helius_key, 'limit': 50, 'type': 'TRANSFER'}
+    params = {'api-key': key, 'limit': limit, 'type': 'TRANSFER'}
     try:
         r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
@@ -248,18 +251,16 @@ def check_sol_payments() -> dict:
 
     usdt_mint = USDT_CONTRACTS['sol']
     confirmed = 0
-    for tx in txs[:50]:
+    for tx in txs[:limit]:
         try:
             sig = tx.get('signature')
             block_time = tx.get('timestamp')
-            # 解析 token transfers
             for transfer in (tx.get('tokenTransfers') or []):
                 if transfer.get('mint') != usdt_mint:
                     continue
                 if transfer.get('toUserAccount') != addr:
                     continue
-                amount = decimal.Decimal(str(transfer.get('tokenAmount', 0)))
-                amount = amount.quantize(decimal.Decimal('0.000001'))
+                amount = decimal.Decimal(str(transfer.get('tokenAmount', 0))).quantize(decimal.Decimal('0.000001'))
                 from_addr = transfer.get('fromUserAccount', '')
                 inv = _match_invoice('sol', amount, sig)
                 if inv:
@@ -267,15 +268,270 @@ def check_sol_payments() -> dict:
                     confirmed += 1
                     break
         except Exception as e:
-            logger.warning(f'[onchain sol] parse tx fail: {e}')
+            logger.warning(f'[onchain sol helius] parse tx fail: {e}')
+    return {'ok': True, 'chain': 'sol', 'fetched': len(txs), 'confirmed': confirmed, 'source': 'helius'}
+
+
+def _check_sol_via_rpc(addr: str, limit: int) -> dict:
+    """无 Helius key fallback — 公共 Solana mainnet RPC
+    流程：getSignaturesForAddress → 对每个 sig 调 getTransaction → 解析 SPL transfer
+    限速：公共 RPC 每秒 < 5 次，所以 limit 调小（30）。Helius free quota 更高。
+    """
+    rpc = 'https://api.mainnet-beta.solana.com'
+    headers = {'Content-Type': 'application/json'}
+
+    # 1. 拉最近签名
+    try:
+        r = requests.post(rpc, headers=headers, json={
+            'jsonrpc': '2.0', 'id': 1,
+            'method': 'getSignaturesForAddress',
+            'params': [addr, {'limit': limit}],
+        }, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        sigs_data = r.json().get('result', [])
+    except Exception as e:
+        return {'ok': False, 'error': f'Solana RPC getSignatures 失败: {e}'}
+
+    usdt_mint = USDT_CONTRACTS['sol']
+    confirmed = 0
+    fetched = 0
+
+    for sig_info in sigs_data:
+        sig = sig_info.get('signature')
+        if not sig:
+            continue
+        # 已 confirmed 过的 tx hash 跳过节省 RPC
+        if PaymentInvoice.query.filter_by(tx_hash=sig).first():
+            continue
+        # 2. 拉 tx 详情
+        try:
+            r = requests.post(rpc, headers=headers, json={
+                'jsonrpc': '2.0', 'id': 1,
+                'method': 'getTransaction',
+                'params': [sig, {'encoding': 'jsonParsed', 'maxSupportedTransactionVersion': 0}],
+            }, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            tx_data = (r.json() or {}).get('result')
+            fetched += 1
+        except Exception as e:
+            logger.warning(f'[onchain sol rpc] getTx {sig[:8]}.. failed: {e}')
+            continue
+        if not tx_data:
+            continue
+        # 3. 解析 instructions
+        try:
+            block_time = tx_data.get('blockTime')
+            instructions = (tx_data.get('transaction', {}).get('message', {}).get('instructions') or [])
+            for ix in instructions:
+                if ix.get('program') != 'spl-token':
+                    continue
+                parsed = ix.get('parsed') or {}
+                if parsed.get('type') not in ('transfer', 'transferChecked'):
+                    continue
+                info = parsed.get('info', {})
+                # transfer 不含 mint；transferChecked 含 mint
+                if info.get('mint') and info.get('mint') != usdt_mint:
+                    continue
+                if info.get('destination') and info.get('destination') != addr:
+                    continue
+                token_amount = info.get('tokenAmount') or {}
+                ui_amount = token_amount.get('uiAmountString')
+                if ui_amount is None and 'amount' in info:
+                    decimals = int(token_amount.get('decimals', 6))
+                    ui_amount = decimal.Decimal(info['amount']) / decimal.Decimal(10 ** decimals)
+                if ui_amount is None:
+                    continue
+                amount = decimal.Decimal(str(ui_amount)).quantize(decimal.Decimal('0.000001'))
+                from_addr = info.get('source') or info.get('authority')
+
+                inv = _match_invoice('sol', amount, sig)
+                if inv:
+                    _confirm(inv, sig, from_addr, amount, block_number=block_time)
+                    confirmed += 1
+                    break
+        except Exception as e:
+            logger.warning(f'[onchain sol rpc] parse {sig[:8]}.. failed: {e}')
             continue
 
-    return {'ok': True, 'chain': 'sol', 'fetched': len(txs), 'confirmed': confirmed}
+    return {'ok': True, 'chain': 'sol', 'fetched': fetched, 'confirmed': confirmed, 'source': 'public_rpc'}
 
 
 # ============================================================
 # All chains
 # ============================================================
+
+# ============================================================
+# Phase 12.24.4: 单 tx 验证 — 给「用户手动上传 tx hash」走自动验证
+# ============================================================
+
+def verify_tx_hash(chain: str, tx_hash: str) -> dict:
+    """查链上拿到指定 tx 详情。返回 {ok, to, amount, from, confirmations, error?}
+
+    用于：用户付款后 polling 5min 没识别，手动上传 tx hash 时立即验证。
+    """
+    if chain == 'trc20':
+        return _verify_tron_tx(tx_hash)
+    if chain in ('erc20', 'bep20'):
+        return _verify_evm_tx(chain, tx_hash)
+    if chain == 'sol':
+        return _verify_sol_tx(tx_hash)
+    return {'ok': False, 'error': f'unknown chain: {chain}'}
+
+
+def _verify_tron_tx(tx_hash: str) -> dict:
+    headers = {}
+    api_key = (os.environ.get('TRONGRID_API_KEY') or '').strip()
+    if api_key:
+        headers['TRON-PRO-API-KEY'] = api_key
+    # 用 trongrid /v1/transactions/{hash}/events 拿 TRC20 transfer event
+    url = f'https://api.trongrid.io/v1/transactions/{tx_hash}/events'
+    try:
+        r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return {'ok': False, 'error': f'TronGrid 查询失败: {e}'}
+
+    events = data.get('data', [])
+    usdt_contract = USDT_CONTRACTS['trc20']
+    for ev in events:
+        if ev.get('contract_address') != usdt_contract:
+            continue
+        if ev.get('event_name') != 'Transfer':
+            continue
+        result = ev.get('result', {})
+        to_addr = result.get('to', '')
+        from_addr = result.get('from', '')
+        # value is integer string in token wei (6 decimals)
+        value_raw = result.get('value', '0')
+        try:
+            amount = decimal.Decimal(value_raw) / decimal.Decimal(1_000_000)
+            amount = amount.quantize(decimal.Decimal('0.000001'))
+        except Exception:
+            continue
+        return {
+            'ok': True, 'chain': 'trc20',
+            'to': to_addr, 'from': from_addr,
+            'amount': amount, 'confirmations': 1,  # TronGrid 不直接给 confirmations
+        }
+    return {'ok': False, 'error': 'tx 不是 USDT-TRC20 transfer 或 tx 不存在'}
+
+
+def _verify_evm_tx(chain: str, tx_hash: str) -> dict:
+    """ETH / BSC: tokentx API 直接查 tx hash"""
+    if chain == 'erc20':
+        api_url = 'https://api.etherscan.io/api'
+        api_key = (os.environ.get('ETHERSCAN_API_KEY') or '').strip()
+        contract = USDT_CONTRACTS['erc20']
+    else:  # bep20
+        api_url = 'https://api.bscscan.com/api'
+        api_key = (os.environ.get('BSCSCAN_API_KEY') or '').strip()
+        contract = USDT_CONTRACTS['bep20']
+
+    # tokentx by tx hash 不直接支持，需要先 eth_getTransactionByHash 看 to / from
+    # Etherscan: action=transaction&txhash=...
+    params = {
+        'module': 'proxy',
+        'action': 'eth_getTransactionByHash',
+        'txhash': tx_hash,
+    }
+    if api_key:
+        params['apikey'] = api_key
+    try:
+        r = requests.get(api_url, params=params, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return {'ok': False, 'error': f'{chain} 查询失败: {e}'}
+
+    result = data.get('result') or {}
+    if not result:
+        return {'ok': False, 'error': 'tx hash 不存在或链上未确认'}
+
+    # 检查 to 是否 USDT contract
+    if (result.get('to') or '').lower() != contract.lower():
+        return {'ok': False, 'error': 'tx 不是 USDT 转账（contract 不匹配）'}
+
+    # 解析 input data: USDT transfer(address,uint256) 的 selector 是 0xa9059cbb
+    # input = 0xa9059cbb + 32 bytes to + 32 bytes amount
+    input_data = result.get('input', '')
+    if not input_data.lower().startswith('0xa9059cbb'):
+        return {'ok': False, 'error': 'tx 不是 ERC20 transfer 调用'}
+    try:
+        to_addr = '0x' + input_data[34:74]   # 取 32-byte 后 20 byte
+        value_hex = input_data[74:138]
+        amount_raw = int(value_hex, 16)
+        amount = decimal.Decimal(amount_raw) / decimal.Decimal(10 ** 6)  # USDT 6 decimals
+        amount = amount.quantize(decimal.Decimal('0.000001'))
+    except Exception as e:
+        return {'ok': False, 'error': f'解析 transfer input 失败: {e}'}
+
+    return {
+        'ok': True, 'chain': chain,
+        'to': to_addr, 'from': result.get('from'),
+        'amount': amount,
+        'confirmations': 1,
+        'block_number': int(result.get('blockNumber', '0x0'), 16),
+    }
+
+
+def _verify_sol_tx(tx_hash: str) -> dict:
+    """Solana: 用 public RPC getTransaction 解析 SPL transfer
+
+    无需 Helius key，公共 RPC 也能用（限速但够单次查询）。
+    """
+    rpc = 'https://api.mainnet-beta.solana.com'
+    try:
+        r = requests.post(rpc, json={
+            'jsonrpc': '2.0', 'id': 1, 'method': 'getTransaction',
+            'params': [tx_hash, {'encoding': 'jsonParsed', 'maxSupportedTransactionVersion': 0}],
+        }, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return {'ok': False, 'error': f'Solana RPC 查询失败: {e}'}
+
+    result = data.get('result')
+    if not result:
+        return {'ok': False, 'error': 'Solana tx 不存在或未确认'}
+
+    # 找 SPL transfer instruction
+    usdt_mint = USDT_CONTRACTS['sol']
+    instructions = (result.get('transaction', {}).get('message', {}).get('instructions') or [])
+    for ix in instructions:
+        if ix.get('program') != 'spl-token':
+            continue
+        info = (ix.get('parsed') or {}).get('info', {})
+        if info.get('mint') != usdt_mint:
+            # 有些 transfer 不含 mint 字段，看是否 transferChecked
+            pass
+        ix_type = (ix.get('parsed') or {}).get('type', '')
+        if ix_type not in ('transfer', 'transferChecked'):
+            continue
+        token_amount = info.get('tokenAmount') or {}
+        ui_amount = token_amount.get('uiAmountString')
+        if ui_amount is None and 'amount' in info:
+            decimals = int(token_amount.get('decimals', 6))
+            try:
+                ui_amount = decimal.Decimal(info['amount']) / decimal.Decimal(10 ** decimals)
+            except Exception:
+                continue
+        try:
+            amount = decimal.Decimal(str(ui_amount))
+            amount = amount.quantize(decimal.Decimal('0.000001'))
+        except Exception:
+            continue
+        return {
+            'ok': True, 'chain': 'sol',
+            'to': info.get('destination'),
+            'from': info.get('source') or info.get('authority'),
+            'amount': amount,
+            'confirmations': 1,
+            'block_time': result.get('blockTime'),
+        }
+
+    return {'ok': False, 'error': '未找到 SPL USDT transfer instruction'}
+
 
 def check_all_chains() -> list[dict]:
     """跑所有链。返回每链结果列表。

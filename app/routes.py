@@ -1920,25 +1920,101 @@ def billing_get_invoice(invoice_id):
 @api_bp.route('/billing/invoice/<int:invoice_id>/submit-tx', methods=['POST'])
 @require_actor
 def billing_submit_tx(invoice_id):
-    """备用通道：用户付款后 5min 未识别，自己提交 tx hash 让 admin 审核"""
+    """Phase 12.24.4: 备用通道全自动 — 用户上传 tx hash 立即链上验证 → 自动 confirm
+
+    流程：
+    1. 验证 tx 存在 + 是 USDT transfer + to == invoice.address
+    2. 比对 amount（容差 0.000002 USDT dust）
+    3. 全部 ok → 自动 confirm + 开通订阅
+    4. 任一不符 → reject 并返回具体原因（user 自查，不走人工审核）
+    """
+    import decimal
     from app.models import PaymentInvoice
     from app.services.audit import log as audit
+    from app.services.onchain_monitor import verify_tx_hash
+    from app.services.subscription_service import activate_subscription_from_invoice
+
     uid = _me_user_id()
     data = request.get_json(silent=True) or {}
     tx_hash = (data.get('tx_hash') or '').strip()
     if not tx_hash:
         return jsonify({'error': '请提供 tx_hash'}), 400
+
     inv = PaymentInvoice.query.filter_by(id=invoice_id, user_id=uid).first()
     if not inv:
         return jsonify({'error': 'invoice 不存在或不属于你'}), 404
     if inv.status != 'pending':
-        return jsonify({'error': f'invoice 当前状态: {inv.status}'}), 400
+        return jsonify({'error': f'invoice 当前状态 {inv.status}，无法验证'}), 400
+
+    # 防重：同 tx_hash 已被其他 invoice 用过 → 拒
+    dup = PaymentInvoice.query.filter(
+        PaymentInvoice.tx_hash == tx_hash,
+        PaymentInvoice.id != invoice_id,
+    ).first()
+    if dup:
+        return jsonify({'ok': False, 'error': '此 tx hash 已被其他订单使用'}), 400
+
+    # 链上验证
+    verify = verify_tx_hash(inv.chain, tx_hash)
+    if not verify.get('ok'):
+        audit('invoice_tx_verify_failed', actor='user', user_id=uid,
+              invoice_id=invoice_id, tx_hash=tx_hash, error=verify.get('error'))
+        return jsonify({'ok': False, 'error': verify.get('error'),
+                        'hint': '请确认 tx hash 正确 + 链上已确认 + 是 USDT 转账'}), 400
+
+    # 检查 to address (case insensitive for EVM)
+    if inv.chain in ('erc20', 'bep20'):
+        expected_to = (inv.address or '').lower()
+        actual_to = (verify.get('to') or '').lower()
+    else:
+        expected_to = inv.address
+        actual_to = verify.get('to')
+    if actual_to != expected_to:
+        audit('invoice_tx_verify_failed', actor='user', user_id=uid,
+              invoice_id=invoice_id, tx_hash=tx_hash,
+              error=f'to address 不匹配 actual={actual_to}')
+        return jsonify({
+            'ok': False,
+            'error': f'tx 收款地址不匹配 — 链上收款方是 {verify.get("to")}，不是我们的 {inv.address}',
+            'hint': '请确认是付给本订单显示的地址；不要复用其他订单的 tx',
+        }), 400
+
+    # 检查金额（容差 0.000002 USDT — 2 个 dust）
+    expected_amount = inv.amount_due
+    actual_amount = verify.get('amount') or decimal.Decimal(0)
+    diff = abs(actual_amount - expected_amount)
+    tolerance = decimal.Decimal('0.000002')
+    if diff > tolerance:
+        audit('invoice_tx_verify_failed', actor='user', user_id=uid,
+              invoice_id=invoice_id, tx_hash=tx_hash,
+              error=f'amount 不匹配 expected={expected_amount} actual={actual_amount}')
+        return jsonify({
+            'ok': False,
+            'error': f'金额不匹配 — 应付 {expected_amount} USDT，链上实际 {actual_amount} USDT',
+            'hint': '末尾 6 位 suffix 用于识别订单，请精确转账。如多付/少付请联系 vincenzo000915@gmail.com',
+            'expected_amount': float(expected_amount),
+            'actual_amount': float(actual_amount),
+        }), 400
+
+    # 全部通过 → 自动 confirm
     inv.tx_hash = tx_hash
-    inv.status = 'pending_review'
-    db.session.commit()
-    audit('invoice_tx_submitted', actor='user', user_id=uid,
-          invoice_id=invoice_id, tx_hash=tx_hash)
-    return jsonify(inv.to_dict())
+    inv.tx_from_address = verify.get('from')
+    inv.tx_received_amount = actual_amount
+    bn = verify.get('block_number') or verify.get('block_time')
+    if bn:
+        try: inv.tx_block_number = int(bn)
+        except Exception: pass
+    sub = activate_subscription_from_invoice(inv)
+    audit('invoice_confirmed_by_tx_submit', actor='user', user_id=uid,
+          invoice_id=invoice_id, tx_hash=tx_hash, plan=sub.plan,
+          subscription_id=sub.id,
+          expires_at=sub.expires_at.isoformat() if sub.expires_at else None)
+    return jsonify({
+        'ok': True,
+        'invoice': inv.to_dict(),
+        'subscription': sub.to_dict(),
+        'message': '链上验证通过，订阅已开通',
+    })
 
 
 @api_bp.route('/me/subscription', methods=['GET'])
