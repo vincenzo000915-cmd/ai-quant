@@ -209,6 +209,24 @@ def _run_signals(strategy_id=None, category_filter=None):
                 side = 'long' if action == 'open_long' else 'short'
                 okx_side = 'buy' if side == 'long' else 'sell'
 
+                # Phase 12.35.1: first-mover gate — 同 (symbol, side) 已有 open Position 则跳过
+                # OKX (instId, posSide) 是唯一键，多策略同方向会被合并 → PnL 归属混乱
+                existing_pos = Position.query.filter_by(
+                    symbol=s.symbol, side=side, status='open'
+                ).first()
+                if existing_pos and existing_pos.strategy_id != s.id:
+                    results.append(
+                        f'⛔ {s.name}: 跳過 — {s.symbol} {side} 已被策略 #{existing_pos.strategy_id} 持倉（first-mover 獨佔）'
+                    )
+                    from app.services.telegram_service import send as _tg
+                    _tg(
+                        f'⚠️ <b>{s.name} 信号跳过</b>\n'
+                        f'{s.symbol} {side} 已被策略 #{existing_pos.strategy_id} 持仓\n'
+                        f'OKX 合并仓位防错，本次 {action} 信号不下单。\n'
+                        f'等持仓策略平仓后才能开新仓。'
+                    )
+                    continue
+
                 # Phase 9.3: 動態倉位（依 sizing_mode）
                 from app.services.position_sizing import compute_size
                 effective_size, sizing_debug = compute_size(s, cfg, trade_size)
@@ -1289,3 +1307,94 @@ def daily_morning_report():
 
     tg_send('\n'.join(msg_lines), parse_mode='HTML')
     return {'sent': True, 'issues': issues, 'pending': pending_now, 'running': running}
+
+
+# ============================================================
+# Phase 12.35: 内部 health monitor — 自己监控不依赖第三方
+# 每 5 分钟跑，发现新 issue 立即 Telegram
+# Redis 去重 — 同一 issue 30 分钟内不重复推
+# ============================================================
+@celery_app.task(name='app.tasks.strategy_tasks.internal_health_monitor')
+def internal_health_monitor():
+    """每 5 min 跑内部业务健康检查 + 异常 Telegram 告警"""
+    import datetime
+    import json
+    from app.models import StrategyCandidate, Strategy
+    from app.extensions import db, redis_client
+    from app.services.telegram_service import send as tg_send
+    from app.services.config_service import get_config
+
+    now = datetime.datetime.utcnow()
+    h48_ago = now - datetime.timedelta(hours=48)
+    issues = []
+
+    # 1) translate 48h 内是否有成功
+    latest_translate = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'translated',
+        StrategyCandidate.updated_at >= h48_ago,
+    ).order_by(StrategyCandidate.updated_at.desc()).first()
+    if not latest_translate or (now - latest_translate.updated_at).total_seconds() > 18 * 3600:
+        issues.append(('translate_stale', '48h 内无成功 translate（claude CLI 可能坏）'))
+
+    # 2) pending 堆积
+    pending = StrategyCandidate.query.filter_by(status='pending').count()
+    if pending > 30:
+        issues.append(('pending_pileup', f'{pending} pending 候选堆积 > 30'))
+
+    # 3) running 策略数
+    running = Strategy.query.filter_by(status='running').count()
+    if running < 3:
+        issues.append(('low_running', f'仅 {running} 策略 running（< 3）'))
+
+    # 4) system halted
+    cfg = get_config()
+    if cfg.get('halted'):
+        issues.append(('halted', f'system halted: {cfg.get("halt_reason", "?")}'))
+
+    # 5) 链上 polling 是否 4 链都未配置
+    import os
+    chains_configured = sum(1 for k in ['USDT_TRC20_ADDRESS', 'USDT_ERC20_ADDRESS', 'USDT_BEP20_ADDRESS', 'USDT_SOL_ADDRESS'] if os.environ.get(k))
+    if chains_configured == 0:
+        issues.append(('chains_unconfigured', 'USDT 4 链地址全未配置（订阅付款无法识别）'))
+
+    # 去重: Redis 存最近 30min 推送过的 issue key
+    DEDUP_TTL = 30 * 60   # 30 min
+    new_alerts = []
+    for key, msg in issues:
+        redis_key = f'health_alert:{key}'
+        if not redis_client.get(redis_key):
+            new_alerts.append((key, msg))
+            redis_client.setex(redis_key, DEDUP_TTL, '1')
+
+    if new_alerts:
+        msg = '🚨 <b>系统异常</b>\n\n' + '\n'.join(f'• {m}' for _, m in new_alerts)
+        msg += f'\n\n<i>{now.strftime("%Y-%m-%d %H:%M")} UTC · 自动监控</i>'
+        try:
+            tg_send(msg, parse_mode='HTML')
+        except Exception as e:
+            print(f'[health monitor] tg send failed: {e}')
+
+    # 顺手记一份「最近恢复」— 之前 unhealthy 现在 healthy → 推恢复通知
+    last_status_key = 'health_last_status'
+    last_status = redis_client.get(last_status_key)
+    last_status = last_status.decode() if isinstance(last_status, bytes) else last_status
+    current_status = 'degraded' if issues else 'healthy'
+    if last_status == 'degraded' and current_status == 'healthy':
+        try:
+            tg_send(f'✅ <b>系统已恢复正常</b>\n\n所有 cron / 业务运转正常\n<i>{now.strftime("%Y-%m-%d %H:%M")} UTC</i>', parse_mode='HTML')
+        except Exception:
+            pass
+    redis_client.setex(last_status_key, 3600, current_status)
+
+    return {
+        'status': current_status,
+        'total_issues': len(issues),
+        'new_alerts': len(new_alerts),
+        'checks': {
+            'translate_stale': not latest_translate,
+            'pending': pending,
+            'running': running,
+            'halted': bool(cfg.get('halted')),
+            'chains_configured': chains_configured,
+        },
+    }

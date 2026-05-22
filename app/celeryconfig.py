@@ -140,4 +140,11 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.daily_morning_report',
         'schedule': crontab(hour='8', minute='0'),
     },
+
+    # === Phase 12.35: 内部 health monitor (每 5 min)
+    # 不依赖 UptimeRobot；自己跑 + Redis 去重 + 异常 Telegram
+    'internal-health-monitor': {
+        'task': 'app.tasks.strategy_tasks.internal_health_monitor',
+        'schedule': 300.0,   # 每 300s = 5 min
+    },
 }

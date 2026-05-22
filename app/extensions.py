@@ -2,9 +2,13 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO
 from celery import Celery
 from celery.signals import task_prerun, task_postrun
+import redis
 
 db = SQLAlchemy()
 socketio = SocketIO(cors_allowed_origins="*")
+
+# Phase 12.35: 共享 Redis client (broker 是 db 0，我们用 db 1 隔开应用状态)
+redis_client = redis.Redis(host='redis', port=6379, db=1, decode_responses=True)
 
 def make_celery(app_name=None):
     c = Celery(
