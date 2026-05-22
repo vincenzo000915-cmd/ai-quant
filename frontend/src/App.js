@@ -99,29 +99,87 @@ globalStyle.textContent = `
     letter-spacing: -0.02em;
   }
 
-  /* === 玻璃卡（性能優化版）=== */
+  /* === Phase 12.15.9: 金融科技 panel — 双层背景 + 顶部细 accent + 角落感 === */
   .glass-card {
-    background: var(--bg-surface);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--border);
-    border-radius: 14px;
+    background: linear-gradient(180deg, #10172b 0%, #0c1424 100%);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 10px;
     box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
-      0 8px 24px -12px rgba(0, 0, 0, 0.6);
-    transition: border-color 200ms, transform 200ms;
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      0 12px 32px -16px rgba(0, 0, 0, 0.7);
     position: relative;
+    transition: border-color 200ms, transform 200ms, box-shadow 200ms;
+  }
+  /* 顶部 accent 细线（默认 cyan，accent 色） */
+  .glass-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 16px; right: 16px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(6,182,212,0.5), transparent);
+    pointer-events: none;
   }
   .glass-card:hover {
-    border-color: var(--border-hot);
+    border-color: rgba(6, 182, 212, 0.3);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+      0 0 0 1px rgba(6, 182, 212, 0.1),
+      0 16px 40px -16px rgba(0, 0, 0, 0.8);
+  }
+  /* 角落 corner cut — Bybit 风格 panel 标识 */
+  .glass-card::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 12px; height: 12px;
+    background: linear-gradient(225deg, rgba(6,182,212,0.18) 0%, transparent 50%);
+    pointer-events: none;
+    border-top-right-radius: 10px;
   }
 
-  /* === 深層玻璃（卡中卡）=== */
+  /* === 深層 panel（卡中卡）=== */
   .glass-inner {
-    background: rgba(8, 10, 22, 0.5);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(99, 102, 241, 0.1);
-    border-radius: 8px;
+    background: rgba(7, 10, 19, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.08);
+    border-radius: 6px;
+  }
+
+  /* === 数据行 — table-like 紧凑 row === */
+  .data-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    transition: background-color 120ms;
+  }
+  .data-row:hover {
+    background-color: rgba(6, 182, 212, 0.04);
+  }
+  .data-row:last-child {
+    border-bottom: none;
+  }
+
+  /* === Section label — 给 panel 内部分组用 === */
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .section-label::before {
+    content: '';
+    width: 2px;
+    height: 12px;
+    background: #06b6d4;
+    box-shadow: 0 0 6px rgba(6,182,212,0.6);
   }
 
   /* === 脈衝點 === */
@@ -349,10 +407,32 @@ const darkTheme = createTheme({
     MuiCard: {
       styleOverrides: {
         root: {
-          backgroundImage: 'none',
+          backgroundImage: 'linear-gradient(180deg, #10172b 0%, #0c1424 100%)',
           backgroundColor: '#10172b',
           border: '1px solid rgba(148, 163, 184, 0.12)',
-          boxShadow: '0 1px 0 rgba(255,255,255,0.02) inset, 0 4px 12px -8px rgba(0,0,0,0.5)',
+          borderRadius: 10,
+          boxShadow:
+            '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 0 1px rgba(0,0,0,0.2), 0 12px 32px -16px rgba(0,0,0,0.7)',
+          position: 'relative',
+          // 顶部 accent 细线
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 0, left: 16, right: 16,
+            height: 1,
+            background: 'linear-gradient(90deg, transparent, rgba(6,182,212,0.5), transparent)',
+            pointerEvents: 'none',
+          },
+          // 右上角 corner glow
+          '&::after': {
+            content: '""',
+            position: 'absolute',
+            top: 0, right: 0,
+            width: 12, height: 12,
+            background: 'linear-gradient(225deg, rgba(6,182,212,0.18) 0%, transparent 50%)',
+            pointerEvents: 'none',
+            borderTopRightRadius: 10,
+          },
         },
       },
     },
