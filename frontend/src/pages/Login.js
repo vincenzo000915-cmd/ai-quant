@@ -199,7 +199,7 @@ export default function Login({ onLoggedIn }) {
           </Box>
 
           <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: 'text.disabled', mt: 3, fontSize: 11 }}>
-            Phase 11.1 SaaS 基建 · 仅 admin 可走 LIVE 模式
+            Quant Pro · AI 量化驾驶舱
           </Typography>
         </CardContent>
       </Card>
