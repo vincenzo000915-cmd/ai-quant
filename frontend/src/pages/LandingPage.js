@@ -102,26 +102,32 @@ function Hero() {
             fontWeight: 800, lineHeight: 1.05, letterSpacing: '-0.03em',
             color: palette.text, mb: 2,
           }}>
-            AI 量化交易工具<br />
+            你自己的<br />
             <Box component="span" sx={{
               background: `linear-gradient(135deg, ${palette.ai} 0%, ${palette.accentBright} 100%)`,
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}>
-              你自己的 OKX 驾驶舱
+              AI 量化驾驶舱
             </Box>
           </Typography>
         </Reveal>
 
         <Reveal delay={240}>
           <Typography sx={{
-            fontSize: { xs: '1rem', md: '1.2rem' }, color: palette.textMuted,
-            maxWidth: 680, mx: 'auto', mb: 5, lineHeight: 1.6,
+            fontSize: { xs: '1.05rem', md: '1.25rem' }, color: palette.text,
+            maxWidth: 680, mx: 'auto', mb: 1.5, lineHeight: 1.5, fontWeight: 600,
+          }}>
+            OKX 实盘接入，AI 为你闭环策略改进
+          </Typography>
+          <Typography sx={{
+            fontSize: { xs: '0.92rem', md: '1rem' }, color: palette.textMuted,
+            maxWidth: 680, mx: 'auto', mb: 5, lineHeight: 1.7,
           }}>
             软件工具租赁 · 不替你下单 · 不持有资金 · USDT 4 链订阅 · 链上自动结算
             <br />
-            <Box component="span" sx={{ color: palette.text, fontWeight: 600 }}>
-              22 个策略 · AI 改进顾问 · TradingView 专业 K 线 · 全自动智能托管
+            <Box component="span" sx={{ color: palette.textMuted, fontSize: '0.85rem' }}>
+              22 策略 · AI 改进顾问 · TradingView 专业 K 线 · 全自动智能托管
             </Box>
           </Typography>
         </Reveal>
