@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import Layout from './components/Layout';
 import AuthGate from './components/AuthGate';
+import AiStream from './components/AiStream';
 import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';
 import Candidates from './pages/Candidates';
@@ -514,6 +515,7 @@ export default function App() {
       <div className="global-scanline" />
       <BrowserRouter>
         <AuthGate>
+          <AiStream />
           <Routes>
             <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />
