@@ -92,7 +92,7 @@ function RegimePanelInner() {
                 startIcon={aiLoading ? <CircularProgress size={14} /> : <AutoAwesomeIcon />}
                 onClick={fetchAi}
                 disabled={aiLoading || !data}
-                sx={{ color: '#f7a600', borderColor: '#f7a60066', textTransform: 'none' }}
+                sx={{ color: '#a78bfa', borderColor: '#a78bfa66', textTransform: 'none' }}
               >
                 {aiLoading ? '思考中…' : 'AI 解讀'}
               </Button>

@@ -53,9 +53,9 @@ export default function GenerateStrategyDialog({ open, onClose, onCreated }) {
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <AutoAwesomeIcon sx={{ color: '#f7a600' }} />
+          <AutoAwesomeIcon sx={{ color: '#a78bfa' }} />
           <Typography variant="h6">AI 生成策略</Typography>
-          <Chip label="PRO" size="small" color="warning" variant="outlined" />
+          <Chip label="PRO" size="small" color="primary" variant="outlined" />
         </Stack>
         <Typography variant="caption" color="text.secondary">
           用自然語言描述你想要的策略邏輯，LLM 會生成 signal function 並沙箱驗證

@@ -45,12 +45,12 @@ export default function AiInsightsCard() {
   const isBusy = busy[current.id];
 
   return (
-    <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(251,191,36,0.2)' }}>
+    <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(167,139,250,0.2)' }}>
       <CardContent sx={{ px: 2.5, py: 2 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-          <AutoAwesomeIcon sx={{ color: '#f7a600' }} />
+          <AutoAwesomeIcon sx={{ color: '#a78bfa' }} />
           <Typography variant="h6" fontWeight={700}>AI 洞察</Typography>
-          <Chip label="PRO" size="small" color="warning" variant="outlined" />
+          <Chip label="PRO" size="small" color="primary" variant="outlined" />
         </Stack>
 
         <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="fullWidth" sx={{ mb: 2, minHeight: 36 }}>
@@ -68,7 +68,7 @@ export default function AiInsightsCard() {
             variant="outlined"
             startIcon={<AutoAwesomeIcon />}
             onClick={() => fetchFor(tab)}
-            sx={{ color: '#f7a600', borderColor: '#f7a600', textTransform: 'none' }}
+            sx={{ color: '#a78bfa', borderColor: '#a78bfa', textTransform: 'none' }}
           >
             ✨ 生成 {current.label}
           </Button>

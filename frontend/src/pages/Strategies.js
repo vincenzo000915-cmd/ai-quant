@@ -409,7 +409,7 @@ export default function Strategies() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="AI 解读策略（Pro）">
-                          <IconButton size="small" sx={{ color: '#f7a600' }} onClick={() => { setExplainTarget(strategy); setExplainOpen(true); }}>
+                          <IconButton size="small" sx={{ color: '#a78bfa' }} onClick={() => { setExplainTarget(strategy); setExplainOpen(true); }}>
                             <AutoAwesomeIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>

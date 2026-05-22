@@ -44,7 +44,7 @@ const C = {
   primaryGlow: 'rgba(167, 139, 250, 0.55)',
   accent: '#a78bfa',
   accentGlow: 'rgba(167, 139, 250, 0.45)',
-  pink: '#ec4899',
+  // Phase 12.25: pink 已删（unused）
   purple: '#a78bfa',
   gold: '#f7a600',
   goldDeep: '#f59e0b',

@@ -35,8 +35,8 @@ globalStyle.textContent = `
     --primary-glow: rgba(167, 139, 250, 0.5);
     --accent: #a78bfa;
     --accent-glow: rgba(167, 139, 250, 0.4);
-    --neon-pink: #ec4899;
-    --neon-purple: #a855f7;
+    /* Phase 12.25: 删 neon-pink (unused) — 留 neon-purple alias 给 brand 紫 */
+    --neon-purple: #a78bfa;
     --gold: #f7a600;
     --gold-deep: #d68900;
     --warn-yellow: #f7a600;

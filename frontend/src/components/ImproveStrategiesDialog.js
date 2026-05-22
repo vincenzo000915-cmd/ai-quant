@@ -38,7 +38,7 @@ export default function ImproveStrategiesDialog({ open, onClose, onCreated }) {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <LightbulbIcon sx={{ color: '#f7a600' }} />
+          <LightbulbIcon sx={{ color: '#a78bfa' }} />
           <Typography variant="h6">AI 策略改进建议</Typography>
           <Chip label="PRO · 闭环" size="small" color="warning" variant="outlined" />
         </Stack>

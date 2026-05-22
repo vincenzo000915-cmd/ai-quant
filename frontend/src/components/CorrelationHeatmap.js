@@ -10,20 +10,22 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 
 const API = process.env.REACT_APP_API_URL || '';
 
-// 红 (高正相关) → 灰 (无关) → 绿 (高负相关，等同分散效益)
+// Phase 12.25: 紫主调 — 红 (高正相关=警告) → slate (无关) → 紫 (高负相关=分散效益跟 brand 一致)
 function corrColor(c) {
   if (c === null || c === undefined) return '#1e293b';
   const v = Math.max(-1, Math.min(1, c));
   if (v >= 0) {
+    // 正相关 → 红色（高相关 = 警告，保留红色语义）
     const r = Math.round(40 + v * 200);
     const g = Math.round(40 + (1 - v) * 80);
     const b = Math.round(60 + (1 - v) * 60);
     return `rgb(${r},${g},${b})`;
   }
+  // 负相关 → 紫色（分散效益 = 跟 AI brand 紫一致）
   const t = -v;
-  const r = Math.round(40 + (1 - t) * 80);
-  const g = Math.round(80 + t * 160);
-  const b = Math.round(60 + (1 - t) * 60);
+  const r = Math.round(30 + t * 137);
+  const g = Math.round(41 + t * 98);
+  const b = Math.round(59 + t * 191);
   return `rgb(${r},${g},${b})`;
 }
 
@@ -193,7 +195,7 @@ function CorrelationHeatmapInner() {
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            border: isFlagged ? '2px solid #f59e0b' : '1px solid rgba(255,255,255,0.05)',
+                            border: isFlagged ? '2px solid #a78bfa' : '1px solid rgba(255,255,255,0.05)',
                             cursor: 'pointer',
                           }}
                         >
