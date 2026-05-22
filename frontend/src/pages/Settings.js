@@ -10,6 +10,7 @@ import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
 import LlmBindingCard from '../components/LlmBindingCard';
+import SizingAdvisorCard from '../components/SizingAdvisorCard';
 import { PageSkeleton } from '../components/Skeleton';
 import PageHeader from '../components/common/PageHeader';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -112,6 +113,9 @@ export default function Settings() {
 
       {/* === Phase 11.5: LLM key 綁定 (BYO) === */}
       <LlmBindingCard />
+
+      {/* === Phase 11.5.12: AI 推荐仓位 === */}
+      <SizingAdvisorCard onApplied={load} />
 
       {/* === Trading Mode === */}
       <Card sx={{ mb: 3 }}>

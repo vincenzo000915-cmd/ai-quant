@@ -488,6 +488,28 @@ def ai_improve_strategies():
     return jsonify(r), 201
 
 
+@api_bp.route('/me/sizing-advice', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_sizing_advice():
+    """Phase 11.5.12: AI 推荐仓位/杠杆/SL/TP 一键 apply 准备"""
+    from app.services.llm_prompts.sizing_advisor import recommend_sizing
+    from app.services.exchange_service import fetch_balance, _resolve_creds
+    uid = current_user_id() or 1
+    try:
+        creds = None if is_admin_actor() else _resolve_creds(uid)
+        balances = fetch_balance(creds=creds) if (is_admin_actor() or creds) else {}
+        usd_total = sum(v.get('total', 0) for v in balances.values())
+        free_usdt = balances.get('USDT', {}).get('free', 0)
+        account_info = {'balance': usd_total, 'free_margin': free_usdt, 'unrealized_pnl': 0}
+    except Exception:
+        account_info = {'balance': 0, 'free_margin': 0, 'unrealized_pnl': 0}
+    r = recommend_sizing(uid, account_info)
+    if not r.get('ok'):
+        return jsonify(r), 502
+    return jsonify(r)
+
+
 @api_bp.route('/me/diagnose', methods=['POST'])
 @require_actor
 @require_pro_tier
