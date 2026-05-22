@@ -172,7 +172,7 @@ def _call_gemini(api_key: str, prompt: str, system: str | None,
 
 # ===== Claude CLI (admin 走訂閱免費路徑) =====
 
-CLAUDE_CLI_TIMEOUT = int(os.environ.get('CLAUDE_CLI_TIMEOUT', '120'))
+CLAUDE_CLI_TIMEOUT = int(os.environ.get('CLAUDE_CLI_TIMEOUT', '300'))   # 12.17: 大 prompt 需要 5min
 
 
 def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,

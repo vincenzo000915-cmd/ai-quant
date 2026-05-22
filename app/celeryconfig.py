@@ -55,16 +55,16 @@ beat_schedule = {
         'schedule': crontab(minute='30'),
     },
 
-    # === Phase 5.1: 每日爬蟲（02:00 UTC，先爬再翻譯）===
+    # === Phase 12.17: 爬蟲提速 1次/日 → 4次/日 (00:00 / 06:00 / 12:00 / 18:00 UTC) ===
     'auto-crawl-github': {
         'task': 'app.tasks.strategy_tasks.auto_crawl_github',
-        'schedule': crontab(hour='2', minute='0'),
+        'schedule': crontab(hour='*/6', minute='0'),
     },
 
-    # === Phase 5.1: 每天 02:30 翻譯 pending（需要 ANTHROPIC_API_KEY，沒 key 自動跳過）===
+    # === Phase 12.17: 翻譯提速 1次/日 → 6次/日 (每 4 小時 30 分) ===
     'auto-translate-pending': {
         'task': 'app.tasks.strategy_tasks.auto_translate_pending',
-        'schedule': crontab(hour='2', minute='30'),
+        'schedule': crontab(hour='*/4', minute='30'),
     },
 
     # === Phase 6.1: 每 5 分鐘檢查當日虧損 → 觸發 halt ===
@@ -121,10 +121,10 @@ beat_schedule = {
         'schedule': crontab(hour='6', minute='0', day_of_week='sun'),
     },
 
-    # === Phase 11.5.11: 每週一 04:00 UTC AI 改進顧問自動跑（admin claude_cli 免費）===
-    # 與爬蟲翻譯同等待遇 — 自動產生補完性候選進候選池等回測 promote
-    'weekly-auto-ai-improve': {
+    # === Phase 12.17: AI 改進提速 1次/週 → 1次/日 (07:00 UTC = 北京 15:00)
+    # admin 走 claude_cli 訂閱免費，加速生成候選不燒 API token
+    'daily-auto-ai-improve': {
         'task': 'app.tasks.strategy_tasks.auto_ai_improve_strategies',
-        'schedule': crontab(hour='4', minute='0', day_of_week='mon'),
+        'schedule': crontab(hour='7', minute='0'),
     },
 }
