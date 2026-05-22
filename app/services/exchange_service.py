@@ -638,20 +638,30 @@ def get_historical_prices(symbol='BTC-USDT', timeframe='1h', limit=None):
 
 
 def get_ticker(symbol='BTC-USDT'):
-    """獲取即時價格（OKX 公開 API，無需簽名）"""
+    """獲取即時價格（OKX 公開 API，無需簽名）
+
+    OKX V5 ticker 真實字段：last / open24h / high24h / low24h / vol24h / volCcy24h
+    （沒有 change24h 字段 — 需從 (last - open24h) / open24h 自算）
+    """
     inst_id = _okx_symbol(symbol) if '/' in symbol else symbol
     try:
         data = _okx_get('/api/v5/market/ticker', {'instId': inst_id})
         if not data:
             raise Exception('No ticker data')
         t = data[0]
+        last = float(t.get('last', 0))
+        open24h = float(t.get('open24h', 0))
+        change_pct = ((last - open24h) / open24h * 100) if open24h else 0.0
         return {
             'symbol': symbol,
-            'price': float(t.get('last', 0)),
-            'change_24h': float(t.get('change24h', t.get('change24h', 0))),
-            'high_24h': float(t.get('high24h', t.get('high24h', 0))),
-            'low_24h': float(t.get('low24h', t.get('low24h', 0))),
-            'volume': float(t.get('vol24h', t.get('vol24h', 0))),
+            'price': last,
+            'open_24h': open24h,
+            'change_24h': change_pct,
+            'change_24h_abs': last - open24h,
+            'high_24h': float(t.get('high24h', 0)),
+            'low_24h': float(t.get('low24h', 0)),
+            'volume': float(t.get('vol24h', 0)),
+            'volume_ccy_24h': float(t.get('volCcy24h', 0)),
         }
     except Exception as e:
         raise Exception(f'獲取價格失敗: {str(e)}')

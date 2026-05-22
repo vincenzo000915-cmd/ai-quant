@@ -203,7 +203,7 @@ export default function Dashboard() {
   const [tfBtc, setTfBtc] = useState('1h');
   const [chartSymbol, setChartSymbol] = useState('BTC/USDT');
   const [supportedSymbols, setSupportedSymbols] = useState([]);
-  const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, signals: true });
+  const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, macd: false, rsi: false, signals: true });
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -723,6 +723,8 @@ export default function Dashboard() {
                 { key: 'sma20', label: 'SMA20', col: C.primary },
                 { key: 'ema50', label: 'EMA50', col: C.accent },
                 { key: 'bb', label: 'BB', col: C.purple },
+                { key: 'macd', label: 'MACD', col: C.gold },
+                { key: 'rsi', label: 'RSI', col: C.purple },
                 { key: 'signals', label: '信號', col: C.success },
               ].map(ind => (
                 <Box
@@ -753,6 +755,7 @@ export default function Dashboard() {
               positions={positions}
               indicators={indicators}
               timeframe={tfBtc}
+              ticker={btcPrice}
               height={340}
             />
 

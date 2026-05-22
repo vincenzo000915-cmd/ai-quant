@@ -48,7 +48,7 @@ function fmtCountdown(sec) {
  *   timeframe  : '15m' | '30m' | '1h' | '4h' | '1d' | '1w'
  *   height     : number, default 360
  */
-export default function BTCChart({ data, trades, positions, indicators, timeframe = '1h', height = 360 }) {
+export default function BTCChart({ data, trades, positions, indicators, timeframe = '1h', ticker = null, height = 360 }) {
   const remaining = useCandleCountdown(timeframe);
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -58,12 +58,32 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
   const ema50Ref = useRef(null);
   const bbUpperRef = useRef(null);
   const bbLowerRef = useRef(null);
+  // Phase 12.18.3: MACD + RSI 副圖（time-scale 跟主圖同步）
+  const macdContainerRef = useRef(null);
+  const macdChartRef = useRef(null);
+  const macdLineRef = useRef(null);
+  const macdSignalRef = useRef(null);
+  const macdHistRef = useRef(null);
+  const rsiContainerRef = useRef(null);
+  const rsiChartRef = useRef(null);
+  const rsiLineRef = useRef(null);
   // Phase 12.16: hover OHLC 数据 + fullscreen
   const [hoverData, setHoverData] = useState(null);   // {o, h, l, c, vol, time}
   const [fullscreen, setFullscreen] = useState(false);
   const effectiveHeight = fullscreen ? 'calc(100vh - 200px)' : height;
-  // 24h 变化（拿最近 + 最早算）
+  // Phase 12.18.3: 24h 变化优先用 OKX 真实 ticker (open24h / high24h / low24h)，
+  // fallback 才从 chart data 自算 — 避免「同页两个 24% 不一致」拼装感
   const stat24h = (() => {
+    if (ticker && ticker.price != null && ticker.change_24h != null) {
+      return {
+        change: ticker.change_24h_abs ?? 0,
+        changePct: ticker.change_24h,
+        high24: ticker.high_24h,
+        low24: ticker.low_24h,
+        last: ticker.price,
+        source: 'okx',
+      };
+    }
     if (!data || data.length < 2) return null;
     const last = data[data.length - 1];
     const dayAgo = data.find(d => d.timestamp >= last.timestamp - 86400_000) || data[0];
@@ -72,7 +92,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
     const changePct = (change / dayAgo.close) * 100;
     const high24 = Math.max(...data.slice(-Math.min(24, data.length)).map(d => d.high || 0));
     const low24 = Math.min(...data.slice(-Math.min(24, data.length)).map(d => d.low || Infinity));
-    return { change, changePct, high24, low24, last: last.close };
+    return { change, changePct, high24, low24, last: last.close, source: 'chart' };
   })();
 
   // 初始化 chart（只跑一次）
@@ -98,7 +118,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       },
       rightPriceScale: {
         borderColor: 'rgba(255,255,255,0.06)',
-        scaleMargins: { top: 0.1, bottom: 0.2 },   // 留下面 20% 給 volume
+        scaleMargins: { top: 0.05, bottom: 0.28 },   // 留下面 28% 給 volume / MACD
       },
       timeScale: {
         borderColor: 'rgba(255,255,255,0.06)',
@@ -118,12 +138,14 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
 
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
-      priceScaleId: '',   // 獨立比例，不跟價格混
-      color: 'rgba(6,182,212,0.4)',
-      lastValueVisible: false,
+      priceScaleId: 'volume',
+      color: 'rgba(6,182,212,0.55)',
+      lastValueVisible: true,
     });
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.82, bottom: 0 },     // 只佔底部 ~18%
+    chart.priceScale('volume').applyOptions({
+      visible: true,
+      borderColor: 'rgba(255,255,255,0.06)',
+      scaleMargins: { top: 0.74, bottom: 0 },   // 底部 ~26%
     });
 
     chartRef.current = chart;
@@ -146,6 +168,17 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       }
     });
 
+    // Phase 12.18.3: 主圖 time-scale 變化時同步副圖（MACD / RSI）
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range) return;
+      if (macdChartRef.current) {
+        try { macdChartRef.current.timeScale().setVisibleLogicalRange(range); } catch {/* */}
+      }
+      if (rsiChartRef.current) {
+        try { rsiChartRef.current.timeScale().setVisibleLogicalRange(range); } catch {/* */}
+      }
+    });
+
     const onResize = () => {
       if (containerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
@@ -158,6 +191,103 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       chartRef.current = null;
     };
   }, [height]);
+
+  // Phase 12.18.3: MACD 副圖 — 只在啟用時 createChart，禁用時 remove
+  useEffect(() => {
+    if (!indicators?.macd) {
+      if (macdChartRef.current) {
+        try { macdChartRef.current.remove(); } catch {/* */}
+        macdChartRef.current = null;
+        macdLineRef.current = null;
+        macdSignalRef.current = null;
+        macdHistRef.current = null;
+      }
+      return;
+    }
+    if (!macdContainerRef.current) return;
+    const chart = createChart(macdContainerRef.current, {
+      width: macdContainerRef.current.clientWidth,
+      height: 110,
+      layout: { background: { color: 'transparent' }, textColor: 'rgba(203,213,225,0.6)', fontFamily: 'JetBrains Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.06)' },
+      timeScale: { borderColor: 'rgba(255,255,255,0.06)', timeVisible: true, secondsVisible: false },
+    });
+    const hist = chart.addHistogramSeries({ priceFormat: { type: 'price', precision: 4, minMove: 0.0001 }, color: 'rgba(0,212,170,0.5)', priceLineVisible: false, lastValueVisible: false });
+    const macdL = chart.addLineSeries({ color: '#06b6d4', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: 'MACD' });
+    const sigL = chart.addLineSeries({ color: '#f7a600', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: 'Signal' });
+    macdChartRef.current = chart;
+    macdHistRef.current = hist;
+    macdLineRef.current = macdL;
+    macdSignalRef.current = sigL;
+    // sync 当前主图范围
+    const mainTs = chartRef.current?.timeScale?.();
+    if (mainTs) {
+      const range = mainTs.getVisibleLogicalRange?.();
+      if (range) { try { chart.timeScale().setVisibleLogicalRange(range); } catch {/* */} }
+    }
+    const onResize = () => {
+      if (macdContainerRef.current && macdChartRef.current) {
+        macdChartRef.current.applyOptions({ width: macdContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      try { chart.remove(); } catch {/* */}
+      macdChartRef.current = null;
+      macdLineRef.current = null;
+      macdSignalRef.current = null;
+      macdHistRef.current = null;
+    };
+  }, [indicators?.macd]);
+
+  // Phase 12.18.3: RSI(14) 副圖 — 同 MACD 模式
+  useEffect(() => {
+    if (!indicators?.rsi) {
+      if (rsiChartRef.current) {
+        try { rsiChartRef.current.remove(); } catch {/* */}
+        rsiChartRef.current = null;
+        rsiLineRef.current = null;
+      }
+      return;
+    }
+    if (!rsiContainerRef.current) return;
+    const chart = createChart(rsiContainerRef.current, {
+      width: rsiContainerRef.current.clientWidth,
+      height: 110,
+      layout: { background: { color: 'transparent' }, textColor: 'rgba(203,213,225,0.6)', fontFamily: 'JetBrains Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.06)' },
+      timeScale: { borderColor: 'rgba(255,255,255,0.06)', timeVisible: true, secondsVisible: false },
+    });
+    const rsiL = chart.addLineSeries({ color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true, title: 'RSI(14)' });
+    // 70 / 30 / 50 參考線
+    rsiL.createPriceLine({ price: 70, color: 'rgba(255,71,87,0.35)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '70' });
+    rsiL.createPriceLine({ price: 30, color: 'rgba(0,212,170,0.35)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '30' });
+    rsiL.createPriceLine({ price: 50, color: 'rgba(255,255,255,0.1)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
+    rsiChartRef.current = chart;
+    rsiLineRef.current = rsiL;
+    const mainTs = chartRef.current?.timeScale?.();
+    if (mainTs) {
+      const range = mainTs.getVisibleLogicalRange?.();
+      if (range) { try { chart.timeScale().setVisibleLogicalRange(range); } catch {/* */} }
+    }
+    const onResize = () => {
+      if (rsiContainerRef.current && rsiChartRef.current) {
+        rsiChartRef.current.applyOptions({ width: rsiContainerRef.current.clientWidth });
+      }
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      try { chart.remove(); } catch {/* */}
+      rsiChartRef.current = null;
+      rsiLineRef.current = null;
+    };
+  }, [indicators?.rsi]);
 
   // Phase 12.16.1: 增量更新主 K 線 + volume — 5s polling 不重置 zoom / crosshair
   //   首次 / symbol/tf 切换 → setData() 全量
@@ -177,7 +307,7 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       .map(d => ({
         time: Math.floor(d.timestamp / 1000),
         value: d.volume,
-        color: d.close >= d.open ? 'rgba(0,212,170,0.4)' : 'rgba(255,71,87,0.4)',
+        color: d.close >= d.open ? 'rgba(0,212,170,0.6)' : 'rgba(255,71,87,0.6)',
       }));
     if (candles.length === 0) return;
 
@@ -292,6 +422,64 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       });
       sl.setData(lower.map((v, i) => v != null ? { time: times[i], value: v } : null).filter(Boolean));
       bbLowerRef.current = sl;
+    }
+
+    // Phase 12.18.3: MACD(12,26,9) — 寫進已建好的副圖 series
+    if (indicators?.macd && macdLineRef.current && macdSignalRef.current && macdHistRef.current) {
+      const emaCalc = (arr, period) => {
+        const k = 2 / (period + 1);
+        let prev = arr[0];
+        return arr.map((p, i) => {
+          if (i === 0) { prev = p; return p; }
+          prev = p * k + prev * (1 - k);
+          return prev;
+        });
+      };
+      const e12 = emaCalc(closes, 12);
+      const e26 = emaCalc(closes, 26);
+      const macd = closes.map((_, i) => e12[i] - e26[i]);
+      const signal = emaCalc(macd, 9);
+      const hist = macd.map((v, i) => v - signal[i]);
+      // EMA26 需 25 點 warmup；signal 多 9 → 34 點 warmup
+      const macdData = macd.map((v, i) => i >= 25 ? { time: times[i], value: v } : null).filter(Boolean);
+      const signalData = signal.map((v, i) => i >= 33 ? { time: times[i], value: v } : null).filter(Boolean);
+      const histData = hist.map((v, i) => i >= 33 ? {
+        time: times[i],
+        value: v,
+        color: v >= 0 ? 'rgba(0,212,170,0.55)' : 'rgba(255,71,87,0.55)',
+      } : null).filter(Boolean);
+      try {
+        macdLineRef.current.setData(macdData);
+        macdSignalRef.current.setData(signalData);
+        macdHistRef.current.setData(histData);
+      } catch {/* */}
+    }
+
+    // Phase 12.18.3: RSI(14) — Wilder smoothing
+    if (indicators?.rsi && rsiLineRef.current) {
+      const N = closes.length;
+      const period = 14;
+      const rsiArr = new Array(N).fill(null);
+      if (N > period) {
+        let gain = 0, loss = 0;
+        for (let i = 1; i <= period; i++) {
+          const d = closes[i] - closes[i - 1];
+          if (d > 0) gain += d; else loss -= d;
+        }
+        let avgGain = gain / period;
+        let avgLoss = loss / period;
+        rsiArr[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+        for (let i = period + 1; i < N; i++) {
+          const d = closes[i] - closes[i - 1];
+          const g = d > 0 ? d : 0;
+          const l = d < 0 ? -d : 0;
+          avgGain = (avgGain * (period - 1) + g) / period;
+          avgLoss = (avgLoss * (period - 1) + l) / period;
+          rsiArr[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+        }
+      }
+      const rsiData = rsiArr.map((v, i) => v != null ? { time: times[i], value: v } : null).filter(Boolean);
+      try { rsiLineRef.current.setData(rsiData); } catch {/* */}
     }
   }, [data, indicators]);
 
@@ -446,6 +634,42 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       </Box>
 
       <div ref={containerRef} style={{ width: '100%', height: effectiveHeight, flexGrow: fullscreen ? 1 : 0 }} />
+      {/* Phase 12.18.3: MACD 副圖（time-scale 跟主圖同步） */}
+      {indicators?.macd && (
+        <Box sx={{ mt: 0.5, position: 'relative' }}>
+          <Typography variant="caption" sx={{
+            position: 'absolute', top: 4, left: 8, zIndex: 2,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: '0.62rem', fontWeight: 700,
+            color: 'rgba(148,163,184,0.85)',
+            bgcolor: 'rgba(8,10,24,0.65)',
+            px: 0.6, py: 0.1, borderRadius: 0.4,
+            border: '1px solid rgba(255,255,255,0.06)',
+            pointerEvents: 'none',
+          }}>
+            MACD (12,26,9)
+          </Typography>
+          <div ref={macdContainerRef} style={{ width: '100%', height: 110 }} />
+        </Box>
+      )}
+      {/* Phase 12.18.3: RSI 副圖 */}
+      {indicators?.rsi && (
+        <Box sx={{ mt: 0.5, position: 'relative' }}>
+          <Typography variant="caption" sx={{
+            position: 'absolute', top: 4, left: 8, zIndex: 2,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: '0.62rem', fontWeight: 700,
+            color: 'rgba(167,139,250,0.9)',
+            bgcolor: 'rgba(8,10,24,0.65)',
+            px: 0.6, py: 0.1, borderRadius: 0.4,
+            border: '1px solid rgba(167,139,250,0.2)',
+            pointerEvents: 'none',
+          }}>
+            RSI (14)
+          </Typography>
+          <div ref={rsiContainerRef} style={{ width: '100%', height: 110 }} />
+        </Box>
+      )}
       {/* Phase 12.18.2: 倒計時跟 K 線走 — 移到右側價格軸旁邊，模擬 TradingView 風 */}
       <Box sx={{
         position: 'absolute', top: fullscreen ? 80 : 48, right: 70,
