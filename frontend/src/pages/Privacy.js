@@ -118,7 +118,7 @@ const SECTIONS = [
   {
     heading: '联系方式 · Contact',
     paragraphs: [
-      '隐私问题或数据请求联系：<code>vincenzo000915@gmail.com</code>',
+      '隐私问题或数据请求联系：<code>sales@medias-ai.cloud</code>',
       '邮件主题请注明 <strong>[Privacy Request]</strong>，我们 7 天内回复。',
     ],
   },

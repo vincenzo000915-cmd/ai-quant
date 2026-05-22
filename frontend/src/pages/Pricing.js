@@ -115,7 +115,7 @@ export default function Pricing() {
     if (plan.id === 'preview') {
       navigate('/login?tab=register');
     } else if (plan.id === 'team') {
-      window.location.href = 'mailto:vincenzo000915@gmail.com?subject=Quant Pro Team Plan 询价';
+      window.location.href = 'mailto:sales@medias-ai.cloud?subject=Quant Pro Team Plan 询价';
     } else {
       navigate(`/checkout?plan=${plan.id}&months=${discount.months}`);
     }

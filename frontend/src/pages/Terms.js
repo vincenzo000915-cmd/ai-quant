@@ -106,10 +106,9 @@ const SECTIONS = [
     ],
   },
   {
-    heading: '条款变更 · Changes',
+    heading: '联系方式 · Contact',
     paragraphs: [
-      '我们可能不定期更新本条款。重大变更会在 Dashboard 显著位置通知用户。继续使用服务视为接受新条款。',
-      '联系：<code>vincenzo000915@gmail.com</code>',
+      '联系：<code>sales@medias-ai.cloud</code>',
     ],
   },
 ];

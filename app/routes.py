@@ -2012,7 +2012,7 @@ def billing_submit_tx(invoice_id):
         return jsonify({
             'ok': False,
             'error': f'金额不匹配 — 应付 {expected_amount} USDT，链上实际 {actual_amount} USDT',
-            'hint': '末尾 6 位 suffix 用于识别订单，请精确转账。如多付/少付请联系 vincenzo000915@gmail.com',
+            'hint': '末尾 6 位 suffix 用于识别订单，请精确转账。如多付/少付请联系 sales@medias-ai.cloud',
             'expected_amount': float(expected_amount),
             'actual_amount': float(actual_amount),
         }), 400

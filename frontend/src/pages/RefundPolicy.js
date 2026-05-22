@@ -48,7 +48,7 @@ const SECTIONS = [
       '<strong>双重收费</strong> — 用户因技术故障导致同一周期重复付款，多付部分可退（需提供链上 tx hash）',
       '<strong>付款未到账</strong> — USDT 转账成功但系统未识别（通常发生在错链 / 错地址），我们尽力协助但<strong>不保证</strong>找回',
     ],
-    paragraphs2: ['以上例外情况须用户主动联系 <code>vincenzo000915@gmail.com</code> 并提供完整链上证据。处理周期 7-14 工作日。'],
+    paragraphs2: ['以上例外情况须用户主动联系 <code>sales@medias-ai.cloud</code> 并提供完整链上证据。处理周期 7-14 工作日。'],
   },
   {
     heading: '取消订阅 · Cancellation',
@@ -73,7 +73,7 @@ const SECTIONS = [
   {
     heading: '争议解决 · Disputes',
     paragraphs: [
-      '如对本政策有异议，请优先邮件 <code>vincenzo000915@gmail.com</code> 协商。无法协商解决的，依 <a href="/terms" style="color:#a78bfa">服务条款</a> 走新加坡国际仲裁中心（SIAC）仲裁。',
+      '如对本政策有异议，请优先邮件 <code>sales@medias-ai.cloud</code> 协商。无法协商解决的，依 <a href="/terms" style="color:#a78bfa">服务条款</a> 走新加坡国际仲裁中心（SIAC）仲裁。',
       '<strong>用户不得</strong>通过链上诋毁、社交媒体攻击、虚假投诉等方式施压。此类行为会导致账户立即终止且<strong>不退余款</strong>。',
     ],
   },
