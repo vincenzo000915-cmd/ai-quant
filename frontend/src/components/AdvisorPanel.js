@@ -18,7 +18,7 @@ const API = process.env.REACT_APP_API_URL || '';
 const SEVERITY_META = {
   critical: { color: '#ff4757', label: '緊急', bg: 'rgba(255,71,87,0.10)' },
   warn:     { color: '#f59e0b', label: '建議', bg: 'rgba(247,166,0,0.10)' },
-  info:     { color: '#06b6d4', label: '機會', bg: 'rgba(34,211,238,0.08)' },
+  info:     { color: '#a78bfa', label: '機會', bg: 'rgba(34,211,238,0.08)' },
 };
 
 const ACTION_META = {
@@ -202,7 +202,7 @@ function AdvisorPanelInner() {
               <Stack direction="row" spacing={0.5}>
                 {summary.critical > 0 && <Chip size="small" label={`緊急 ${summary.critical}`} sx={{ bgcolor: '#ff4757', color: '#fff', fontWeight: 700 }} />}
                 {summary.warn > 0 && <Chip size="small" label={`建議 ${summary.warn}`} sx={{ bgcolor: '#f59e0b', color: '#000', fontWeight: 700 }} />}
-                {summary.info > 0 && <Chip size="small" label={`機會 ${summary.info}`} variant="outlined" sx={{ borderColor: '#06b6d4', color: '#06b6d4' }} />}
+                {summary.info > 0 && <Chip size="small" label={`機會 ${summary.info}`} variant="outlined" sx={{ borderColor: '#a78bfa', color: '#a78bfa' }} />}
               </Stack>
             )}
           </Box>
@@ -308,7 +308,7 @@ function AdvisorPanelInner() {
                       <Chip
                         label={sev.label}
                         size="small"
-                        sx={{ bgcolor: sev.color, color: sev.color === '#06b6d4' ? '#000' : '#fff', fontWeight: 700, height: 20 }}
+                        sx={{ bgcolor: sev.color, color: sev.color === '#a78bfa' ? '#000' : '#fff', fontWeight: 700, height: 20 }}
                       />
                       <Typography variant="body2" fontWeight={700}>
                         {act.emoji} {act.label}
@@ -332,7 +332,7 @@ function AdvisorPanelInner() {
                       sx={{
                         flexShrink: 0,
                         bgcolor: sev.color,
-                        color: sev.color === '#06b6d4' ? '#000' : '#fff',
+                        color: sev.color === '#a78bfa' ? '#000' : '#fff',
                         fontWeight: 700,
                         fontSize: 11,
                         whiteSpace: 'nowrap',

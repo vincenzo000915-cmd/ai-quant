@@ -119,7 +119,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <TuneIcon sx={{ color: '#06b6d4' }} />
+        <TuneIcon sx={{ color: '#a78bfa' }} />
         參數網格搜尋
         {strategy && (
           <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
@@ -145,7 +145,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
               startIcon={<PlayArrowIcon />}
               onClick={startOptimize}
               disabled={starting}
-              sx={{ bgcolor: '#06b6d4', '&:hover': { bgcolor: '#0891b2' } }}
+              sx={{ bgcolor: '#a78bfa', '&:hover': { bgcolor: '#7c3aed' } }}
             >
               {starting ? '啟動中…' : '開始優化（背景跑數分鐘）'}
             </Button>
@@ -177,7 +177,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
                   </Typography>
                 )}
                 {latest.best_oos_sharpe !== null && latest.best_oos_sharpe !== undefined && (
-                  <Typography variant="caption" sx={{ color: '#06b6d4' }}>
+                  <Typography variant="caption" sx={{ color: '#a78bfa' }}>
                     · 最佳 OOS Sharpe = <strong>{fmtNum(latest.best_oos_sharpe)}</strong>
                   </Typography>
                 )}
@@ -229,7 +229,7 @@ export default function ParamOptimizeDialog({ open, onClose, strategy, onApplied
                     return (
                       <TableRow key={idx} sx={{ bgcolor: idx === 0 ? 'rgba(34,211,238,0.08)' : 'transparent' }}>
                         <TableCell>
-                          {idx === 0 ? <CheckCircleIcon sx={{ color: '#06b6d4', fontSize: 16, verticalAlign: 'middle' }} /> : (idx + 1)}
+                          {idx === 0 ? <CheckCircleIcon sx={{ color: '#a78bfa', fontSize: 16, verticalAlign: 'middle' }} /> : (idx + 1)}
                         </TableCell>
                         <TableCell>
                           <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>

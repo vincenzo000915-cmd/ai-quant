@@ -76,8 +76,8 @@ export default function Login({ onLoggedIn }) {
           width: '100%',
           maxWidth: 420,
           bgcolor: 'background.paper',
-          border: '1px solid rgba(6,182,212,0.2)',
-          boxShadow: '0 0 40px rgba(6,182,212,0.08)',
+          border: '1px solid rgba(167,139,250,0.2)',
+          boxShadow: '0 0 40px rgba(167,139,250,0.08)',
         }}
       >
         <CardContent sx={{ p: { xs: 3, sm: 4 } }}>

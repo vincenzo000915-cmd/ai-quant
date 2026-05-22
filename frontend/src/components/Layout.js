@@ -248,7 +248,7 @@ export default function Layout() {
                     size="small"
                     clickable
                     onClick={(e) => setUserMenuAnchor(e.currentTarget)}
-                    sx={{ bgcolor: 'rgba(6,182,212,0.12)', color: 'primary.light', borderColor: 'primary.dark', cursor: 'pointer' }}
+                    sx={{ bgcolor: 'rgba(167,139,250,0.12)', color: 'primary.light', borderColor: 'primary.dark', cursor: 'pointer' }}
                   />
                   <Menu
                     anchorEl={userMenuAnchor}

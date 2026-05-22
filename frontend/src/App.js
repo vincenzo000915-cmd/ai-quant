@@ -24,10 +24,10 @@ globalStyle.textContent = `
     --bg-glass: rgba(16, 23, 43, 0.6);
     --border: rgba(148, 163, 184, 0.12);
     --border-hot: rgba(148, 163, 184, 0.24);
-    --primary: #06b6d4;
-    --primary-glow: rgba(6, 182, 212, 0.5);
-    --accent: #06b6d4;
-    --accent-glow: rgba(6, 182, 212, 0.4);
+    --primary: #a78bfa;
+    --primary-glow: rgba(167, 139, 250, 0.5);
+    --accent: #a78bfa;
+    --accent-glow: rgba(167, 139, 250, 0.4);
     --neon-pink: #ec4899;
     --neon-purple: #a855f7;
     --gold: #f7a600;
@@ -53,7 +53,7 @@ globalStyle.textContent = `
   body {
     /* 純 dark navy + subtle 暖 cyan 一道光暈在右上 — 金融科技風 */
     background:
-      radial-gradient(ellipse 50% 30% at 85% -5%, rgba(6,182,212,0.06), transparent 70%),
+      radial-gradient(ellipse 50% 30% at 85% -5%, rgba(167,139,250,0.06), transparent 70%),
       linear-gradient(180deg, #0a0e1a 0%, #070a13 100%);
     background-attachment: fixed;
     font-feature-settings: 'tnum' 1, 'cv11' 1;
@@ -83,7 +83,7 @@ globalStyle.textContent = `
     background: linear-gradient(
       to bottom,
       transparent 0%,
-      rgba(6, 182, 212, 0.08) 50%,
+      rgba(167, 139, 250, 0.08) 50%,
       transparent 100%
     );
     pointer-events: none;
@@ -111,7 +111,7 @@ globalStyle.textContent = `
     transition: border-color 200ms;
   }
   .glass-card:hover {
-    border-color: rgba(6, 182, 212, 0.25);
+    border-color: rgba(167, 139, 250, 0.25);
   }
 
   /* === 深層 panel（卡中卡）=== */
@@ -132,7 +132,7 @@ globalStyle.textContent = `
     transition: background-color 120ms;
   }
   .data-row:hover {
-    background-color: rgba(6, 182, 212, 0.04);
+    background-color: rgba(167, 139, 250, 0.04);
   }
   .data-row:last-child {
     border-bottom: none;
@@ -154,8 +154,8 @@ globalStyle.textContent = `
     content: '';
     width: 2px;
     height: 12px;
-    background: #06b6d4;
-    box-shadow: 0 0 6px rgba(6,182,212,0.6);
+    background: #a78bfa;
+    box-shadow: 0 0 6px rgba(167,139,250,0.6);
   }
 
   /* === 脈衝點 === */
@@ -248,7 +248,7 @@ globalStyle.textContent = `
   /* === 文字光暈 === */
   /* 文字光暈降低 — 從雙層 24/48px 收成單層 12px 0.4 (效能 + 清晰兼顧) */
   .glow-text-primary { text-shadow: 0 0 12px rgba(99, 102, 241, 0.4); }
-  .glow-text-accent  { text-shadow: 0 0 12px rgba(6, 182, 212, 0.4); }
+  .glow-text-accent  { text-shadow: 0 0 12px rgba(167, 139, 250, 0.4); }
   .glow-text-success { text-shadow: 0 0 12px rgba(34, 197, 94, 0.4); }
   .glow-text-error   { text-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
   .glow-text-gold    { text-shadow: 0 0 12px rgba(251, 191, 36, 0.35); }
@@ -307,11 +307,11 @@ globalStyle.textContent = `
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: rgba(99, 102, 241, 0.04); }
   ::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(99, 102, 241, 0.4), rgba(6, 182, 212, 0.4));
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.4), rgba(167, 139, 250, 0.4));
     border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, rgba(99, 102, 241, 0.7), rgba(6, 182, 212, 0.7));
+    background: linear-gradient(180deg, rgba(99, 102, 241, 0.7), rgba(167, 139, 250, 0.7));
   }
 
   ::selection { background: rgba(99, 102, 241, 0.45); color: #fff; }
@@ -339,12 +339,12 @@ document.head.appendChild(globalStyle);
 const darkTheme = createTheme({
   palette: {
     mode: 'dark',
-    primary:   { main: '#06b6d4', light: '#22d3ee', dark: '#0891b2' },    // cyan (system chrome)
+    primary:   { main: '#a78bfa', light: '#c4b5fd', dark: '#7c3aed' },    // cyan (system chrome)
     secondary: { main: '#f7a600', light: '#fbbf24' },                       // Bybit 金黃 (高亮)
     success:   { main: '#00d4aa', light: '#34d399' },                       // Robinhood teal-green
     error:     { main: '#ff4757', light: '#fb7185' },                       // 玫瑰红
     warning:   { main: '#f7a600', light: '#fbbf24' },
-    info:      { main: '#06b6d4' },
+    info:      { main: '#a78bfa' },
     background: {
       default: '#0a0e1a',     // 主背景 dark navy
       paper:   '#10172b',     // panel 表面 — 实色，不再 backdrop-blur cyberpunk 玻璃
@@ -396,11 +396,11 @@ const darkTheme = createTheme({
       styleOverrides: {
         root: { fontWeight: 600, textTransform: 'none', borderRadius: 6 },
         containedPrimary: {
-          backgroundColor: '#06b6d4',
+          backgroundColor: '#a78bfa',
           color: '#0a0e1a',
           '&:hover': {
-            backgroundColor: '#0891b2',
-            boxShadow: '0 0 16px rgba(6, 182, 212, 0.4)',
+            backgroundColor: '#7c3aed',
+            boxShadow: '0 0 16px rgba(167, 139, 250, 0.4)',
           },
         },
         containedSecondary: {
@@ -446,7 +446,7 @@ const darkTheme = createTheme({
     MuiTabs: {
       styleOverrides: {
         indicator: {
-          backgroundColor: '#06b6d4',
+          backgroundColor: '#a78bfa',
           height: 2,
         },
       },
@@ -456,7 +456,7 @@ const darkTheme = createTheme({
         root: {
           textTransform: 'none', fontWeight: 600, fontSize: 13,
           color: '#94a3b8',
-          '&.Mui-selected': { color: '#06b6d4' },
+          '&.Mui-selected': { color: '#a78bfa' },
         },
       },
     },
@@ -481,7 +481,7 @@ const darkTheme = createTheme({
     MuiLinearProgress: {
       styleOverrides: {
         root: { backgroundColor: 'rgba(148, 163, 184, 0.08)' },
-        bar: { backgroundColor: '#06b6d4' },
+        bar: { backgroundColor: '#a78bfa' },
       },
     },
     MuiDivider: {
@@ -495,7 +495,7 @@ const darkTheme = createTheme({
           backgroundColor: '#10172b',
           '& fieldset': { borderColor: 'rgba(148, 163, 184, 0.16)' },
           '&:hover fieldset': { borderColor: 'rgba(148, 163, 184, 0.32) !important' },
-          '&.Mui-focused fieldset': { borderColor: '#06b6d4 !important' },
+          '&.Mui-focused fieldset': { borderColor: '#a78bfa !important' },
         },
       },
     },
@@ -505,7 +505,7 @@ const darkTheme = createTheme({
         standardSuccess: { backgroundColor: 'rgba(0,212,170,0.1)', color: '#34d399', border: '1px solid rgba(0,212,170,0.3)' },
         standardError: { backgroundColor: 'rgba(255,71,87,0.1)', color: '#fb7185', border: '1px solid rgba(255,71,87,0.3)' },
         standardWarning: { backgroundColor: 'rgba(247,166,0,0.1)', color: '#fbbf24', border: '1px solid rgba(247,166,0,0.3)' },
-        standardInfo: { backgroundColor: 'rgba(6,182,212,0.1)', color: '#22d3ee', border: '1px solid rgba(6,182,212,0.3)' },
+        standardInfo: { backgroundColor: 'rgba(167,139,250,0.1)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,0.3)' },
       },
     },
   },

@@ -108,7 +108,7 @@ export default function NeuralBackdrop({ enabled = true }) {
         ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = isAiLink
           ? `rgba(167, 139, 250, ${link.alpha * 0.35})`
-          : `rgba(6, 182, 212, ${link.alpha * 0.35})`;
+          : `rgba(167, 139, 250, ${link.alpha * 0.35})`;
         ctx.lineWidth = 0.6;
         ctx.stroke();
       }
@@ -125,7 +125,7 @@ export default function NeuralBackdrop({ enabled = true }) {
         ctx.arc(n.x, n.y, n.r * 2.5, 0, Math.PI * 2);
         ctx.fillStyle = n.isAi
           ? `rgba(167, 139, 250, 0.12)`
-          : `rgba(6, 182, 212, 0.12)`;
+          : `rgba(167, 139, 250, 0.12)`;
         ctx.fill();
         ctx.globalAlpha = 1;
       }

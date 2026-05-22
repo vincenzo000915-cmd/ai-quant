@@ -101,7 +101,7 @@ export const statusColors = {
   paused:   { bg: 'rgba(247,166,0,0.12)',   fg: palette.warning, label: '已暂停' },
   retired:  { bg: 'rgba(100,116,139,0.1)',  fg: palette.textFaint, label: '已退役' },
   pending:  { bg: 'rgba(99,102,241,0.1)',   fg: palette.info, label: '待处理' },
-  qualified:{ bg: 'rgba(6,182,212,0.12)',   fg: palette.accent, label: '已合格' },
+  qualified:{ bg: 'rgba(167,139,250,0.12)',   fg: palette.accent, label: '已合格' },
   rejected: { bg: 'rgba(255,71,87,0.1)',    fg: palette.error, label: '已拒绝' },
   error:    { bg: 'rgba(255,71,87,0.12)',   fg: palette.error, label: '错误' },
   translated:{ bg: 'rgba(168,85,247,0.12)', fg: '#a855f7', label: '已翻译' },

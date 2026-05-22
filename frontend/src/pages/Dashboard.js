@@ -60,7 +60,7 @@ const C = {
 };
 
 const CATEGORY_META = {
-  ultra: { label: '◢ ULTRA',  color: C.purple, bg: 'rgba(6, 182, 212, 0.15)' },
+  ultra: { label: '◢ ULTRA',  color: C.purple, bg: 'rgba(167, 139, 250, 0.15)' },
   short: { label: '◤ SHORT',  color: C.error,  bg: 'rgba(255, 71, 87, 0.15)' },
   swing: { label: '◇ SWING',  color: C.gold,   bg: 'rgba(251, 191, 36, 0.15)' },
   long:  { label: '◆ LONG',   color: C.success,bg: 'rgba(0, 212, 170, 0.15)' },
@@ -749,7 +749,7 @@ export default function Dashboard() {
                       <stop offset="100%" stopColor={C.accent} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(6,182,212,0.1)" />
+                  <CartesianGrid strokeDasharray="2 8" stroke="rgba(167,139,250,0.1)" />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: C.textDim }} axisLine={false} tickLine={false} />
                   <ReTooltip />
@@ -842,7 +842,7 @@ export default function Dashboard() {
                     key={s.id}
                     hover
                     sx={{
-                      '&:hover': { background: 'rgba(6,182,212,0.05)' },
+                      '&:hover': { background: 'rgba(167,139,250,0.05)' },
                       borderLeft: s.has_open_position ? `3px solid ${C.success}` : '3px solid transparent',
                       transition: 'all 200ms',
                     }}
@@ -987,7 +987,7 @@ export default function Dashboard() {
                     ? ((pos.current_price - pos.entry_price) / pos.entry_price * 100)
                     : 0;
                   return (
-                    <TableRow key={pos.id} hover sx={{ '&:hover': { background: 'rgba(6,182,212,0.04)' } }}>
+                    <TableRow key={pos.id} hover sx={{ '&:hover': { background: 'rgba(167,139,250,0.04)' } }}>
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                           <PulseDot color={pos.side === 'long' ? C.success : C.error} size={6} />
@@ -1060,7 +1060,7 @@ function CustomChartTooltip({ active, payload, label, C }) {
   return (
     <Box sx={{
       bgcolor: 'rgba(8,10,24,0.94)',
-      border: '1px solid rgba(6,182,212,0.35)',
+      border: '1px solid rgba(167,139,250,0.35)',
       borderRadius: 1,
       px: 1.25, py: 1,
       fontFamily: 'JetBrains Mono, monospace',
@@ -1166,8 +1166,8 @@ function StrategyLiveStateGrid({ C }) {
                   {(s.indicators || []).map((ind, i) => (
                     <Box key={i} sx={{
                       px: 0.6, py: 0.15, borderRadius: 0.5,
-                      bgcolor: 'rgba(6,182,212,0.08)',
-                      border: '1px solid rgba(6,182,212,0.18)',
+                      bgcolor: 'rgba(167,139,250,0.08)',
+                      border: '1px solid rgba(167,139,250,0.18)',
                       fontFamily: 'JetBrains Mono, monospace',
                       fontSize: '0.68rem',
                     }}>

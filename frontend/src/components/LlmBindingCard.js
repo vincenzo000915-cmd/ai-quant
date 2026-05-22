@@ -189,7 +189,7 @@ function ProviderRow({ provider, state, onChange }) {
         {!bound && !editing && (
           <Stack spacing={1.5}>
             <Typography variant="caption" color="text.secondary">
-              申請 API Key：<a href={provider.signupUrl} target="_blank" rel="noreferrer" style={{ color: '#06b6d4' }}>
+              申請 API Key：<a href={provider.signupUrl} target="_blank" rel="noreferrer" style={{ color: '#a78bfa' }}>
                 {provider.signupUrl}
               </a>
             </Typography>

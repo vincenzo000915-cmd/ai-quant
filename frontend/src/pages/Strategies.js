@@ -415,7 +415,7 @@ export default function Strategies() {
                         </Tooltip>
                         {strategy.status !== 'retired' && (
                           <Tooltip title="參數網格搜尋（walk-forward）">
-                            <IconButton size="small" sx={{ color: '#06b6d4' }} onClick={() => { setOptimizeTarget(strategy); setOptimizeOpen(true); }}>
+                            <IconButton size="small" sx={{ color: '#a78bfa' }} onClick={() => { setOptimizeTarget(strategy); setOptimizeOpen(true); }}>
                               <TuneIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
@@ -680,7 +680,7 @@ export default function Strategies() {
                     { label: '最大回撤', value: `-${(r.max_drawdown_pct||0).toFixed(1)}%`, color: r.max_drawdown_pct < 30 ? '#00d4aa' : r.max_drawdown_pct < 60 ? '#f7a600' : '#ff4757' },
                   ].map((k, i) => (
                     <Grid item xs={6} md={3} key={i}>
-                      <Box sx={{ p: 1.5, border: '1px solid rgba(6,182,212,0.2)', borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)' }}>
+                      <Box sx={{ p: 1.5, border: '1px solid rgba(167,139,250,0.2)', borderRadius: 1.5, bgcolor: 'rgba(8,10,24,0.4)' }}>
                         <Typography variant="caption" sx={{ color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>{k.label}</Typography>
                         <Typography className="num-mono" sx={{ fontSize: '1.3rem', fontWeight: 700, color: k.color }}>{k.value}</Typography>
                       </Box>
@@ -691,7 +691,7 @@ export default function Strategies() {
                 {/* 次要指標 */}
                 <Box sx={{
                   display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 1.5, mb: 2,
-                  p: 1.5, border: '1px solid rgba(6,182,212,0.15)', borderRadius: 1, bgcolor: 'rgba(8,10,24,0.3)',
+                  p: 1.5, border: '1px solid rgba(167,139,250,0.15)', borderRadius: 1, bgcolor: 'rgba(8,10,24,0.3)',
                   fontFamily: 'JetBrains Mono, monospace',
                 }}>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>總交易</Typography><Typography sx={{ fontWeight: 600 }}>{r.total_trades}</Typography></Box>
@@ -717,7 +717,7 @@ export default function Strategies() {
                               <stop offset="100%" stopColor={profitable ? '#00d4aa' : '#ff4757'} stopOpacity={0} />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid strokeDasharray="2 6" stroke="rgba(6,182,212,0.1)" />
+                          <CartesianGrid strokeDasharray="2 6" stroke="rgba(167,139,250,0.1)" />
                           <XAxis dataKey="ts" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                           <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
                           <ReTooltip />
