@@ -7,8 +7,8 @@ export const palette = {
   // 背景層次
   bg: '#0a0e1a',          // 主背景 dark navy
   bgDeep: '#070a13',
-  surface: '#10172b',     // panel 表面
-  surface2: '#1a2240',    // hover / 次級表面
+  surface: 'rgba(16, 23, 43, 0.88)',     // panel 表面（微透明让 neural backdrop 透过）
+  surface2: 'rgba(26, 34, 64, 0.92)',    // hover / 次級表面
   surfaceSubtle: 'rgba(255,255,255,0.02)',
 
   // 邊框

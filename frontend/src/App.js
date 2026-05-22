@@ -100,9 +100,11 @@ globalStyle.textContent = `
     letter-spacing: -0.02em;
   }
 
-  /* === Phase 12.15.9.1: 干净实色 panel — 不要渐变 (user 反馈渐变老派) === */
+  /* === Phase 12.15.12: 微透明 panel 让 neural backdrop 透过 === */
   .glass-card {
-    background: #10172b;
+    background: rgba(16, 23, 43, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid rgba(148, 163, 184, 0.1);
     border-radius: 8px;
     position: relative;
@@ -382,9 +384,10 @@ const darkTheme = createTheme({
       styleOverrides: {
         root: {
           backgroundImage: 'none',
-          backgroundColor: '#10172b',
+          backgroundColor: 'rgba(16, 23, 43, 0.88)',   // 12.15.12: 微透明让 neural backdrop 透过
           border: '1px solid rgba(148, 163, 184, 0.1)',
           borderRadius: 8,
+          backdropFilter: 'blur(8px)',
         },
       },
     },

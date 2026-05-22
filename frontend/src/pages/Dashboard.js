@@ -31,6 +31,7 @@ import PageHeader from '../components/common/PageHeader';
 import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import AiStatusBar from '../components/AiStatusBar';
+import NeuralBackdrop from '../components/NeuralBackdrop';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -457,6 +458,9 @@ export default function Dashboard() {
 
   return (
     <Box sx={{ position: 'relative', zIndex: 1 }}>
+      {/* Phase 12.15.12: Neural network 背景动画（仅 dashboard 路由）*/}
+      <NeuralBackdrop enabled={true} />
+
       {/* === 統一頁頭 — 緊湊版 + KILL SWITCH 收進 actions === */}
       <PageHeader
         title="儀表板"
