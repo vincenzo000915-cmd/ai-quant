@@ -30,6 +30,7 @@ import { palette, typo, pnlColor } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
+import AiStatusBar from '../components/AiStatusBar';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -574,7 +575,9 @@ export default function Dashboard() {
 
       {/* refresh 時頂部 2px 細條 */}
       {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1, bgcolor: palette.border, '& .MuiLinearProgress-bar': { bgcolor: palette.accent } }} />}
-      {/* KILL SWITCH 已收進 PageHeader actions，HALTED banner 已上移到 PageHeader 下 */}
+
+      {/* Phase 12.15.10: AI 駕駛狀態條 — 紫色 accent 區隔 system cyan */}
+      <AiStatusBar />
 
       {/* === Top Row: BTC chart + 持倉概覽（用戶要求 BTC 在上、持倉同行）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>

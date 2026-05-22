@@ -99,43 +99,16 @@ globalStyle.textContent = `
     letter-spacing: -0.02em;
   }
 
-  /* === Phase 12.15.9: 金融科技 panel — 双层背景 + 顶部细 accent + 角落感 === */
+  /* === Phase 12.15.9.1: 干净实色 panel — 不要渐变 (user 反馈渐变老派) === */
   .glass-card {
-    background: linear-gradient(180deg, #10172b 0%, #0c1424 100%);
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 10px;
-    box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
-      0 0 0 1px rgba(0, 0, 0, 0.2),
-      0 12px 32px -16px rgba(0, 0, 0, 0.7);
+    background: #10172b;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 8px;
     position: relative;
-    transition: border-color 200ms, transform 200ms, box-shadow 200ms;
-  }
-  /* 顶部 accent 细线（默认 cyan，accent 色） */
-  .glass-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 16px; right: 16px;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(6,182,212,0.5), transparent);
-    pointer-events: none;
+    transition: border-color 200ms;
   }
   .glass-card:hover {
-    border-color: rgba(6, 182, 212, 0.3);
-    box-shadow:
-      0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
-      0 0 0 1px rgba(6, 182, 212, 0.1),
-      0 16px 40px -16px rgba(0, 0, 0, 0.8);
-  }
-  /* 角落 corner cut — Bybit 风格 panel 标识 */
-  .glass-card::after {
-    content: '';
-    position: absolute;
-    top: 0; right: 0;
-    width: 12px; height: 12px;
-    background: linear-gradient(225deg, rgba(6,182,212,0.18) 0%, transparent 50%);
-    pointer-events: none;
-    border-top-right-radius: 10px;
+    border-color: rgba(6, 182, 212, 0.25);
   }
 
   /* === 深層 panel（卡中卡）=== */
@@ -407,32 +380,10 @@ const darkTheme = createTheme({
     MuiCard: {
       styleOverrides: {
         root: {
-          backgroundImage: 'linear-gradient(180deg, #10172b 0%, #0c1424 100%)',
+          backgroundImage: 'none',
           backgroundColor: '#10172b',
-          border: '1px solid rgba(148, 163, 184, 0.12)',
-          borderRadius: 10,
-          boxShadow:
-            '0 1px 0 rgba(255,255,255,0.04) inset, 0 0 0 1px rgba(0,0,0,0.2), 0 12px 32px -16px rgba(0,0,0,0.7)',
-          position: 'relative',
-          // 顶部 accent 细线
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            top: 0, left: 16, right: 16,
-            height: 1,
-            background: 'linear-gradient(90deg, transparent, rgba(6,182,212,0.5), transparent)',
-            pointerEvents: 'none',
-          },
-          // 右上角 corner glow
-          '&::after': {
-            content: '""',
-            position: 'absolute',
-            top: 0, right: 0,
-            width: 12, height: 12,
-            background: 'linear-gradient(225deg, rgba(6,182,212,0.18) 0%, transparent 50%)',
-            pointerEvents: 'none',
-            borderTopRightRadius: 10,
-          },
+          border: '1px solid rgba(148, 163, 184, 0.1)',
+          borderRadius: 8,
         },
       },
     },

@@ -82,55 +82,29 @@ export default function KpiCell({
     <Box sx={{
       position: 'relative',
       p: isHero ? 2.5 : isCompact ? 1.5 : 2,
-      // 渐变背景（金融科技风 panel 标识）
-      background: isHero
-        ? `linear-gradient(180deg, ${palette.surface2} 0%, ${palette.surface} 100%)`
-        : `linear-gradient(180deg, ${palette.surface} 0%, #0c1424 100%)`,
+      // 干净实色（去渐变），accent 在 PnL 数字本身够了
+      bgcolor: palette.surface,
       border: `1px solid ${palette.border}`,
       borderRadius: isCompact ? 1 : 1.5,
       height: '100%',
-      // compact 统一 96px（有/无 sparkline 都同高，6 cell 底部对齐）
       minHeight: isHero ? 132 : isCompact ? 96 : 90,
-      // 顶部 accent 细线
-      '&::before': {
-        content: '""',
-        position: 'absolute',
-        top: 0, left: 12, right: 12,
-        height: 1,
-        background: `linear-gradient(90deg, transparent, ${accentColor}55, transparent)`,
-        pointerEvents: 'none',
-      },
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
       overflow: 'hidden',
       cursor: 'default',
-      // 多層 shadow 給 elevation 而不是扁平
-      boxShadow: isHero
-        ? `0 1px 0 rgba(255,255,255,0.04) inset, 0 12px 32px -16px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.02)`
-        : `0 1px 0 rgba(255,255,255,0.03) inset, 0 4px 12px -8px rgba(0,0,0,0.5)`,
-      transition: 'all 180ms cubic-bezier(0.4, 0, 0.2, 1)',
-      // hero 加渐变 + 右上角 radial glow + 左侧 accent bar (::after，避免冲突)
+      transition: 'border-color 180ms ease',
+      // hero 左侧 accent bar (subtle, 不发光)
       ...(isHero && {
-        background: `
-          radial-gradient(circle at top right, ${glowRgba} 0%, transparent 60%),
-          linear-gradient(135deg, ${palette.surface2} 0%, ${palette.surface} 100%)
-        `,
         '&::after': {
           content: '""',
           position: 'absolute',
           left: 0, top: 0, bottom: 0,
-          width: 3,
+          width: 2,
           background: accentColor,
-          opacity: 0.95,
-          boxShadow: `0 0 12px ${accentColor}`,
+          opacity: 0.7,
         },
       }),
-      // micro hover lift — SaaS 級 polish
       '&:hover': {
-        transform: 'translateY(-2px)',
         borderColor: palette.borderHot,
-        boxShadow: isHero
-          ? `0 1px 0 rgba(255,255,255,0.06) inset, 0 20px 40px -16px rgba(0,0,0,0.7), 0 0 0 1px ${accentColor}33`
-          : `0 1px 0 rgba(255,255,255,0.04) inset, 0 8px 20px -10px rgba(0,0,0,0.6)`,
       },
     }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={0.5} sx={{ mb: isHero ? 1 : 0.25 }}>

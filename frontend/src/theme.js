@@ -33,6 +33,13 @@ export const palette = {
   warmAccentDim: '#d68900',
   warmAccentGlow: 'rgba(247,166,0,0.2)',
 
+  // Phase 12.15.10: AI 專用 accent (紫) — 凡是「AI 在做事」都用這個
+  // 跟 system cyan 形成視覺區隔：cyan = 系統 / 紫 = AI
+  ai: '#a78bfa',                    // 紫罗兰
+  aiDim: '#7c3aed',
+  aiGlow: 'rgba(167, 139, 250, 0.3)',
+  aiBg: 'rgba(167, 139, 250, 0.08)',
+
   // 狀態色 — 金融科技風偏鮮明對比（不再柔和暗綠）
   success: '#00d4aa',     // Robinhood teal-green
   successGlow: 'rgba(0,212,170,0.25)',

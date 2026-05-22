@@ -12,27 +12,8 @@ export default function PageHeader({ title, subtitle, actions = null }) {
       mb: 2, pb: 1.5,
       borderBottom: `1px solid ${palette.border}`,
       gap: 2, flexWrap: 'wrap',
-      position: 'relative',
-      // 底部短 accent 线段
-      '&::after': {
-        content: '""',
-        position: 'absolute',
-        left: 0, bottom: -1, height: 2, width: 32,
-        background: palette.accent,
-        boxShadow: `0 0 8px ${palette.accent}`,
-      },
     }}>
-      <Box sx={{ minWidth: 0, position: 'relative', pl: 1.5,
-        // 左侧 cyan accent bar
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          left: 0, top: 4, bottom: 4, width: 3,
-          background: palette.accent,
-          borderRadius: 1,
-          boxShadow: `0 0 6px ${palette.accent}`,
-        },
-      }}>
+      <Box sx={{ minWidth: 0 }}>
         <Typography component="h1" sx={{
           ...typo.h1,
           color: palette.text, mb: 0.25,
