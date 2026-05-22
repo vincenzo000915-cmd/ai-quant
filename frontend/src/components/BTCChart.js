@@ -446,35 +446,13 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       </Box>
 
       <div ref={containerRef} style={{ width: '100%', height: effectiveHeight, flexGrow: fullscreen ? 1 : 0 }} />
-      {/* 倒計時 + 圖例 + LIVE 标识 */}
+      {/* 倒計時（LIVE 标识已上移到 chart 容器顶部，删本地重复）*/}
       <Box sx={{
         position: 'absolute', top: fullscreen ? 80 : 48, left: 12,
         display: 'flex', alignItems: 'center', gap: 1,
         fontFamily: 'JetBrains Mono, monospace',
         pointerEvents: 'none',
       }}>
-        {/* Phase 12.16.1: LIVE 标识 — 紫色 pulse dot 表示 5s 实时更新 */}
-        <Box sx={{
-          px: 0.85, py: 0.3,
-          bgcolor: 'rgba(0,212,170,0.12)',
-          border: `1px solid ${palette.success}55`,
-          borderRadius: 0.5,
-          display: 'flex', alignItems: 'center', gap: 0.5,
-        }}>
-          <Box sx={{
-            width: 6, height: 6, borderRadius: '50%',
-            bgcolor: palette.success,
-            boxShadow: `0 0 6px ${palette.success}`,
-            animation: 'live-pulse 1.2s ease-in-out infinite',
-            '@keyframes live-pulse': {
-              '0%, 100%': { opacity: 1, transform: 'scale(1)' },
-              '50%': { opacity: 0.5, transform: 'scale(1.4)' },
-            },
-          }} />
-          <Typography component="span" sx={{ color: palette.success, fontWeight: 700, fontSize: '0.6rem', letterSpacing: 0.6 }}>
-            LIVE
-          </Typography>
-        </Box>
         <Box sx={{
           px: 0.8, py: 0.2,
           bgcolor: 'rgba(8,10,24,0.7)',

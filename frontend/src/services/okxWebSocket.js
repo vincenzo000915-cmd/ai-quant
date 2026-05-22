@@ -10,7 +10,8 @@
 // - 自動重連（5s backoff + max 10 attempts）
 // - 心跳每 25s ping（OKX 30s 超时）
 
-const WS_URL = 'wss://ws.okx.com:8443/ws/v5/public';
+// Phase 12.18.1 fix: OKX v5 把 candle channel 移到 /business endpoint，/public 拒绝订阅
+const WS_URL = 'wss://ws.okx.com:8443/ws/v5/business';
 
 // timeframe → OKX bar 名映射（跟 backend exchange_service _TF_TO_OKX_BAR 一致）
 const TF_TO_BAR = {
@@ -89,6 +90,10 @@ class OkxWsClient {
       const subs = this.subscribers.get(key);
       if (!subs) return;
       // 转 candle 物件
+      this._pushCount = (this._pushCount || 0) + 1;
+      if (this._pushCount % 10 === 1) {
+        console.log(`[OkxWS] candle push #${this._pushCount} ${instId} ${bar} close=${msg.data[0]?.[4]}`);
+      }
       for (const row of msg.data) {
         const candle = {
           timestamp: parseInt(row[0], 10),

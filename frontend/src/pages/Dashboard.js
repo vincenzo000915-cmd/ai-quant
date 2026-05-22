@@ -371,10 +371,12 @@ export default function Dashboard() {
     }));
   }, [btcChart, trades, tfBtc]);
 
-  // 2 秒拉一次 ticker（輕量，跟 chartSymbol 切）
+  // Phase 12.18.1: ticker 价格从 btcChart 最后一根 close 派生（同步 WebSocket 推送）
+  //   不再独立 polling /api/market/<sym>/price，消除 5s 延迟
+  //   24h change/high/low 仍用 REST 拉一次（OKX ticker WS 频率太高，浪费）
   useEffect(() => {
     let cancelled = false;
-    const tick = async () => {
+    const load24h = async () => {
       try {
         const r = await fetch(`${API}/api/market/${chartSymbol}/price`);
         if (!r.ok || cancelled) return;
@@ -382,10 +384,18 @@ export default function Dashboard() {
         if (!cancelled) setBtcPrice(json);
       } catch { /* */ }
     };
-    tick();
-    const id = setInterval(tick, 5000);   // 2s → 5s，避免不必要 re-render
+    load24h();
+    const id = setInterval(load24h, 30000);   // 24h 数据 30s 刷一次足够
     return () => { cancelled = true; clearInterval(id); };
   }, [chartSymbol]);
+
+  // 实时 price 从 btcChart 最后一根 close 取（WebSocket 推送同步）
+  const livePrice = useMemo(() => {
+    if (btcChart.length && btcChart[btcChart.length - 1].close != null) {
+      return btcChart[btcChart.length - 1].close;
+    }
+    return btcPrice?.price;
+  }, [btcChart, btcPrice]);
 
   const sortedPerf = useMemo(() => {
     return [...perfList].sort((a, b) => {
@@ -620,14 +630,28 @@ export default function Dashboard() {
           <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
               <Box>
-                <Typography variant="overline" sx={{ color: 'text.secondary' }}>{chartSymbol} · LIVE (ticker 2s)</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                  <Box sx={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    bgcolor: palette.success,
+                    boxShadow: `0 0 6px ${palette.success}`,
+                    animation: 'live-pulse-tk 1.2s ease-in-out infinite',
+                    '@keyframes live-pulse-tk': {
+                      '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+                      '50%': { opacity: 0.5, transform: 'scale(1.4)' },
+                    },
+                  }} />
+                  <Typography variant="overline" sx={{ color: palette.success, fontWeight: 700, letterSpacing: 0.5 }}>
+                    {chartSymbol} · LIVE · OKX WS
+                  </Typography>
+                </Box>
                 <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, flexWrap: 'wrap' }}>
                   <Typography
                     className="num-mono"
                     variant="h5"
                     sx={{ fontWeight: 700, color: C.gold, fontSize: '1.6rem' }}
                   >
-                    ${(btcPrice?.price || 0).toLocaleString()}
+                    ${(livePrice || 0).toLocaleString()}
                   </Typography>
                   {/* 币种切换 */}
                   <Box sx={{ display: 'flex', gap: 0.4, flexWrap: 'wrap' }}>
