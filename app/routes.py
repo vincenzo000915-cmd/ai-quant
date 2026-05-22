@@ -1865,3 +1865,146 @@ def me_llm_delete(provider):
     return jsonify({'ok': True})
 
 
+
+
+# ============================================================
+# Phase 12.24: USDT 订阅 + 链上付款 endpoints
+# ============================================================
+
+@api_bp.route('/billing/chains', methods=['GET'])
+def billing_chains():
+    """列支持的 USDT 链（用于 Checkout 页选链）"""
+    from app.services.subscription_service import get_chain_addresses, PLAN_PRICES, DISCOUNT_MAP
+    return jsonify({
+        'chains': get_chain_addresses(),
+        'plans': {k: float(v) for k, v in PLAN_PRICES.items()},
+        'discounts': DISCOUNT_MAP,
+        'invoice_ttl_minutes': 30,
+    })
+
+
+@api_bp.route('/billing/invoice', methods=['POST'])
+@require_actor
+def billing_create_invoice():
+    """创建 USDT 付款 invoice。POST {plan, months, chain}"""
+    from app.services.subscription_service import create_invoice
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    plan = data.get('plan')
+    months = int(data.get('months', 1))
+    chain = data.get('chain', 'trc20')
+    r = create_invoice(uid, plan, months, chain)
+    if not r.get('ok'):
+        return jsonify({'error': r.get('error')}), 400
+    audit('invoice_created', actor='user', user_id=uid,
+          plan=plan, months=months, chain=chain,
+          invoice_id=r['invoice']['id'], amount_due=r['invoice']['amount_due'])
+    return jsonify(r['invoice'])
+
+
+@api_bp.route('/billing/invoice/<int:invoice_id>', methods=['GET'])
+@require_actor
+def billing_get_invoice(invoice_id):
+    """查询单个 invoice — 仅本人或 admin 可看"""
+    from app.services.subscription_service import get_invoice
+    from app.models import User
+    uid = _me_user_id()
+    user = User.query.get(uid)
+    inv = get_invoice(invoice_id, user_id=None if user and user.role == 'admin' else uid)
+    if not inv:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify(inv)
+
+
+@api_bp.route('/billing/invoice/<int:invoice_id>/submit-tx', methods=['POST'])
+@require_actor
+def billing_submit_tx(invoice_id):
+    """备用通道：用户付款后 5min 未识别，自己提交 tx hash 让 admin 审核"""
+    from app.models import PaymentInvoice
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    tx_hash = (data.get('tx_hash') or '').strip()
+    if not tx_hash:
+        return jsonify({'error': '请提供 tx_hash'}), 400
+    inv = PaymentInvoice.query.filter_by(id=invoice_id, user_id=uid).first()
+    if not inv:
+        return jsonify({'error': 'invoice 不存在或不属于你'}), 404
+    if inv.status != 'pending':
+        return jsonify({'error': f'invoice 当前状态: {inv.status}'}), 400
+    inv.tx_hash = tx_hash
+    inv.status = 'pending_review'
+    db.session.commit()
+    audit('invoice_tx_submitted', actor='user', user_id=uid,
+          invoice_id=invoice_id, tx_hash=tx_hash)
+    return jsonify(inv.to_dict())
+
+
+@api_bp.route('/me/subscription', methods=['GET'])
+@require_actor
+def me_subscription():
+    """当前 user 的订阅状态"""
+    from app.services.subscription_service import get_active_subscription, get_user_tier
+    uid = _me_user_id()
+    sub = get_active_subscription(uid)
+    return jsonify({
+        'tier': get_user_tier(uid),
+        'subscription': sub.to_dict() if sub else None,
+    })
+
+
+# Admin 审核 pending_review invoices
+@api_bp.route('/admin/invoices/review', methods=['GET'])
+@require_actor
+def admin_invoices_review_list():
+    """admin: 列待人工审核的 invoices"""
+    from app.models import PaymentInvoice, User
+    user = User.query.get(_me_user_id())
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'admin only'}), 403
+    rows = PaymentInvoice.query.filter_by(status='pending_review').order_by(PaymentInvoice.id.desc()).all()
+    return jsonify([r.to_dict() for r in rows])
+
+
+@api_bp.route('/admin/invoices/<int:invoice_id>/approve', methods=['POST'])
+@require_actor
+def admin_invoice_approve(invoice_id):
+    """admin: 手动批准 invoice → 开通订阅"""
+    from app.models import PaymentInvoice, User
+    from app.services.subscription_service import activate_subscription_from_invoice
+    from app.services.audit import log as audit
+    user = User.query.get(_me_user_id())
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'admin only'}), 403
+    inv = PaymentInvoice.query.get(invoice_id)
+    if not inv:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json(silent=True) or {}
+    inv.review_note = data.get('note', 'manual approval by admin')
+    sub = activate_subscription_from_invoice(inv)
+    audit('invoice_admin_approved', actor='admin', user_id=user.id,
+          invoice_id=invoice_id, target_user_id=inv.user_id,
+          subscription_id=sub.id, plan=sub.plan)
+    return jsonify({'ok': True, 'subscription': sub.to_dict()})
+
+
+@api_bp.route('/admin/invoices/<int:invoice_id>/reject', methods=['POST'])
+@require_actor
+def admin_invoice_reject(invoice_id):
+    """admin: 拒绝 invoice"""
+    from app.models import PaymentInvoice, User
+    from app.services.audit import log as audit
+    user = User.query.get(_me_user_id())
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'admin only'}), 403
+    inv = PaymentInvoice.query.get(invoice_id)
+    if not inv:
+        return jsonify({'error': 'not found'}), 404
+    data = request.get_json(silent=True) or {}
+    inv.status = 'cancelled'
+    inv.review_note = data.get('note', 'rejected by admin')
+    db.session.commit()
+    audit('invoice_admin_rejected', actor='admin', user_id=user.id,
+          invoice_id=invoice_id, target_user_id=inv.user_id, note=inv.review_note)
+    return jsonify({'ok': True})

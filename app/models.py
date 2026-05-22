@@ -655,3 +655,76 @@ class Candle(db.Model):
             'close': self.close,
             'volume': self.volume,
         }
+
+
+# ============================================================
+# Phase 12.24: USDT 订阅 SaaS — payment + subscription tables
+# ============================================================
+
+class PaymentInvoice(db.Model):
+    """Pending USDT 付款 invoice — 用户在 /checkout 创建后等链上确认"""
+    __tablename__ = 'payment_invoices'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    plan = db.Column(db.String(20), nullable=False)            # basic / pro / team
+    months = db.Column(db.Integer, nullable=False)             # 1 / 3 / 6 / 12
+    discount_pct = db.Column(db.Integer, default=0)            # 0 / 10 / 20 / 30
+    base_amount = db.Column(db.Numeric(12, 6), nullable=False) # 例如 337.500000 USDT
+    suffix = db.Column(db.String(8), nullable=False)           # 6 位 dust suffix 如 .123456
+    amount_due = db.Column(db.Numeric(12, 6), nullable=False)  # base_amount + suffix
+    chain = db.Column(db.String(10), nullable=False)           # trc20 / erc20 / bep20 / sol
+    address = db.Column(db.String(80), nullable=False)         # 收款地址（admin 主钱包）
+    status = db.Column(db.String(20), default='pending', index=True)
+    # pending / confirmed / expired / cancelled / pending_review (用户提交 tx hash)
+    tx_hash = db.Column(db.String(120))                        # 链上 tx hash（确认后填）
+    tx_block_number = db.Column(db.BigInteger)                 # 区块高度
+    tx_from_address = db.Column(db.String(80))                 # 付款方地址（防欺诈用）
+    tx_received_amount = db.Column(db.Numeric(12, 6))          # 实际收到 amount
+    review_note = db.Column(db.Text)                           # 手动审核备注
+    created_at = db.Column(db.DateTime, default=db.func.now(), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)        # 30 分钟过期
+    confirmed_at = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'plan': self.plan,
+            'months': self.months,
+            'discount_pct': self.discount_pct,
+            'base_amount': float(self.base_amount),
+            'amount_due': float(self.amount_due),
+            'suffix': self.suffix,
+            'chain': self.chain,
+            'address': self.address,
+            'status': self.status,
+            'tx_hash': self.tx_hash,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'confirmed_at': self.confirmed_at.isoformat() if self.confirmed_at else None,
+        }
+
+
+class Subscription(db.Model):
+    """已开通订阅 — 一个 user 一次只能有一条 active 订阅"""
+    __tablename__ = 'subscriptions'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    plan = db.Column(db.String(20), nullable=False)            # basic / pro / team
+    status = db.Column(db.String(20), default='active', index=True)
+    # active / cancelled / expired
+    invoice_id = db.Column(db.Integer, db.ForeignKey('payment_invoices.id'))
+    activated_at = db.Column(db.DateTime, default=db.func.now(), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    cancelled_at = db.Column(db.DateTime)
+    auto_renew = db.Column(db.Boolean, default=False)          # USDT 不能自动续，默认 false
+    notes = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'plan': self.plan,
+            'status': self.status,
+            'activated_at': self.activated_at.isoformat() if self.activated_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'days_remaining': max(0, (self.expires_at - db.func.now()).days) if self.expires_at else None,
+        }
