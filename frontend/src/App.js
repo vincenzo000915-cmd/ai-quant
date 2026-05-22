@@ -16,6 +16,7 @@ import Checkout from './pages/Checkout';
 import Terms from './pages/Terms';
 import RefundPolicy from './pages/RefundPolicy';
 import Privacy from './pages/Privacy';
+import UpgradeModal from './components/UpgradeModal';
 import './auth';   // 全局 fetch wrap 副作用
 
 const globalStyle = document.createElement('style');
@@ -525,6 +526,8 @@ export default function App() {
       <BrowserRouter>
         <AuthGate>
           {/* Phase 12.20: 删 AiStream 浮动卡片（cyber 风过重，AI 状态改放 Dashboard 顶部紫 accent 状态带） */}
+          {/* Phase 12.24.5: 全局 upgrade modal — 监听 fetch 402 自动弹出 */}
+          <UpgradeModal />
           <Routes>
             <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />

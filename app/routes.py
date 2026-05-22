@@ -5,7 +5,8 @@ from app.services.rate_limit import rate_limit
 from app.services.cache import cached_response
 from app.services.user_scope import (
     apply_user_filter, assign_user_id, current_user_id, get_owned,
-    has_ai_access, is_admin_actor, require_actor, require_pro_tier, scoped_query,
+    has_ai_access, is_admin_actor, require_actor, require_pro_tier,
+    require_tier, scoped_query,
 )
 from app.tasks.strategy_tasks import run_strategy_signals
 
@@ -40,6 +41,7 @@ def list_strategies():
 
 @api_bp.route('/strategies', methods=['POST'])
 @require_actor
+@require_tier('basic')
 def create_strategy():
     data = request.get_json()
     strategy = Strategy(
@@ -59,6 +61,7 @@ def create_strategy():
 
 
 @api_bp.route('/strategies/<int:id>', methods=['PUT'])
+@require_tier('basic')
 def update_strategy(id):
     strategy = _owned_strategy(id)
     data = request.get_json()
@@ -71,6 +74,7 @@ def update_strategy(id):
 
 
 @api_bp.route('/strategies/<int:id>', methods=['DELETE'])
+@require_tier('basic')
 def delete_strategy(id):
     strategy = _owned_strategy(id)
     db.session.delete(strategy)
@@ -79,6 +83,7 @@ def delete_strategy(id):
 
 
 @api_bp.route('/strategies/<int:id>/start', methods=['POST'])
+@require_tier('basic')
 def start_strategy(id):
     strategy = _owned_strategy(id)
     strategy.status = 'running'
@@ -89,6 +94,7 @@ def start_strategy(id):
 
 
 @api_bp.route('/strategies/<int:id>/stop', methods=['POST'])
+@require_tier('basic')
 def stop_strategy(id):
     strategy = _owned_strategy(id)
     strategy.status = 'stopped'
@@ -105,6 +111,7 @@ def strategies_live_state():
 
 @api_bp.route('/strategies/<int:id>/optimize', methods=['POST'])
 @rate_limit('10/min')
+@require_tier('basic')
 def trigger_optimize(id):
     """Phase 10.2: 觸發策略參數網格搜尋（非同步，丟給 Celery worker）。"""
     from app.services.audit import log as audit
@@ -173,6 +180,7 @@ def latest_optimize(id):
 
 
 @api_bp.route('/strategies/<int:id>/apply-params', methods=['POST'])
+@require_tier('basic')
 def apply_strategy_params(id):
     """Phase 10.2: 把優化選出的最佳參數套用到 strategy.params。"""
     from app.services.audit import log as audit
@@ -200,6 +208,7 @@ def apply_strategy_params(id):
 
 @api_bp.route('/strategies/<int:id>/fan-out', methods=['POST'])
 @rate_limit('10/min')
+@require_tier('basic')
 def fan_out_strategy(id):
     """Phase 10.6: clone a strategy across multiple symbols in one click.
 
@@ -578,6 +587,7 @@ def ai_generate_strategy():
 
 @api_bp.route('/strategies/<int:id>/retire', methods=['POST'])
 @rate_limit('20/min')
+@require_tier('basic')
 def retire_strategy(id):
     """Phase 10.7: 手動把策略退役（給 AdvisorPanel 一鍵套用用）。"""
     from app.services.audit import log as audit
@@ -596,6 +606,7 @@ def retire_strategy(id):
 
 
 @api_bp.route('/strategies/<int:id>/revive', methods=['POST'])
+@require_tier('basic')
 def revive_strategy(id):
     """手動把 retired 策略救回 stopped 狀態（不直接 running，user 還要再啟）"""
     from app.services.audit import log as audit
@@ -1112,6 +1123,7 @@ def btc_chart():
 
 
 @api_bp.route('/reconcile', methods=['POST'])
+@require_tier('basic')
 def reconcile_now():
     """Phase 8.2: 立即跑一次 OKX/local 對賬"""
     from app.services.reconciliation import reconcile
@@ -1119,6 +1131,7 @@ def reconcile_now():
 
 
 @api_bp.route('/anomaly/check', methods=['POST'])
+@require_tier('basic')
 def anomaly_check_now():
     """Phase 6.4: 立即跑 anomaly detector"""
     from app.services.anomaly_detector import run_all_checks
@@ -1127,6 +1140,7 @@ def anomaly_check_now():
 
 @api_bp.route('/killswitch', methods=['POST'])
 @rate_limit('5/min')
+@require_tier('basic')
 def killswitch():
     """Phase 6.3: 緊急停 — stop 所有策略 + 強平所有持倉 + halt + 通知"""
     from app.services.kill_switch import execute_kill_switch
@@ -1146,6 +1160,7 @@ def killswitch():
 
 
 @api_bp.route('/telegram/test', methods=['POST'])
+@require_tier('basic')
 def telegram_test():
     """Phase 6.2: 試送一則 Telegram 驗證 BOT_TOKEN / CHAT_ID 設定"""
     from app.services.telegram_service import send, _enabled
@@ -1440,6 +1455,7 @@ def get_candidate(cid):
 
 
 @api_bp.route('/candidates', methods=['POST'])
+@require_tier('basic')
 def create_candidate():
     """手動新增候選（爬蟲也會走這條，內部呼叫）"""
     data = request.get_json() or {}
@@ -1522,6 +1538,7 @@ def submit_pine_candidate():
 
 
 @api_bp.route('/candidates/<int:cid>', methods=['DELETE'])
+@require_tier('basic')
 def delete_candidate(cid):
     c = StrategyCandidate.query.get_or_404(cid)
     db.session.delete(c)
@@ -1530,6 +1547,7 @@ def delete_candidate(cid):
 
 
 @api_bp.route('/candidates/<int:cid>/reject', methods=['POST'])
+@require_tier('basic')
 def reject_candidate(cid):
     """標記為 rejected（不刪，保留紀錄）"""
     c = StrategyCandidate.query.get_or_404(cid)
@@ -1571,6 +1589,7 @@ def backtest_candidate_route(cid):
 
 
 @api_bp.route('/candidates/backtest-pending', methods=['POST'])
+@require_tier('basic')
 def backtest_pending_candidates():
     """批次跑所有 status='translated' 的候選回測（同步、慢）。可選 ?max=N 限制數量。"""
     from app.services.candidate_pipeline import backtest_all_translated
@@ -1580,6 +1599,7 @@ def backtest_pending_candidates():
 
 @api_bp.route('/candidates/<int:cid>/translate', methods=['POST'])
 @require_actor
+@require_tier('basic')
 def translate_candidate(cid):
     """Phase 11.5.9: 跑 LLM 翻譯 + 沙箱驗證。同步，慢（~5-30s/candidate）。
 
@@ -1600,6 +1620,7 @@ def translate_candidate(cid):
 
 @api_bp.route('/candidates/<int:cid>/promote', methods=['POST'])
 @require_actor
+@require_tier('basic')
 def promote_candidate(cid):
     """把 qualified candidate 推上線 — 建立 strategies 條目並註冊 signal_fn。
     Body 可選：{ "name": "...", "symbol": "BTC/USDT" }

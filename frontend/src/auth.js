@@ -1,4 +1,17 @@
-// Phase 8.1 + 11.1.5: 全局 fetch wrap + user auth
+// Phase 8.1 + 11.1.5 + 12.24.5: 全局 fetch wrap + user auth + tier upgrade prompt
+
+// 402 触发 — UI 监听这个 event 显示 upgrade modal
+let _upgradeListeners = [];
+export function onUpgradeRequired(fn) {
+  _upgradeListeners.push(fn);
+  return () => { _upgradeListeners = _upgradeListeners.filter(x => x !== fn); };
+}
+function _triggerUpgrade(body) {
+  for (const fn of _upgradeListeners) {
+    try { fn(body); } catch (e) { /* */ }
+  }
+}
+
 //
 // 雙軌：
 //  - System Bearer token（從 .env 拿） — admin 後門
@@ -67,6 +80,14 @@ if (typeof window !== 'undefined' && !window.__quantFetchWrapped) {
       if (!url.includes('/api/auth/')) {
         _triggerUnauthorized('401');
       }
+    }
+    // Phase 12.24.5: 402 = Payment Required (tier 不够) → 弹 upgrade modal
+    if (res.status === 402) {
+      try {
+        const cloned = res.clone();
+        const body = await cloned.json();
+        _triggerUpgrade(body);
+      } catch (e) { /* */ }
     }
     return res;
   };
