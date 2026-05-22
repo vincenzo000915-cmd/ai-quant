@@ -134,4 +134,10 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.check_onchain_payments',
         'schedule': 60.0,   # 每 60s
     },
+
+    # === Phase 12.34: Daily 早报 (08:00 UTC = 北京 16:00)
+    'daily-morning-report': {
+        'task': 'app.tasks.strategy_tasks.daily_morning_report',
+        'schedule': crontab(hour='8', minute='0'),
+    },
 }

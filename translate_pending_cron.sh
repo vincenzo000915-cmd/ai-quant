@@ -24,6 +24,40 @@ fi
 trap 'rm -f "$LOCK"' EXIT
 
 # 限制每次最多翻 5 個（保護 user 的 Claude Pro/Max 訂閱額度）
-python3 /opt/quant/translate_cli.py --pending --max 5
+set +e   # 暂时关掉 errexit，让我们捕获非零退出码
+TRANSLATE_OUT=$(python3 /opt/quant/translate_cli.py --pending --max 5 2>&1)
+RC=$?
+set -e
+echo "$TRANSLATE_OUT"
+
+# Phase 12.34: cron 失败立即 Telegram 告警
+FAILED=$(echo "$TRANSLATE_OUT" | grep -oE '完成：[0-9]+ 成功 / [0-9]+ 失敗' | grep -oE '/ [0-9]+ 失' | grep -oE '[0-9]+' | head -1)
+SUCCESS=$(echo "$TRANSLATE_OUT" | grep -oE '完成：[0-9]+ 成功' | grep -oE '[0-9]+' | head -1)
+TOTAL_PENDING=$(echo "$TRANSLATE_OUT" | grep -oE '共 [0-9]+ 個 pending' | grep -oE '[0-9]+' | head -1)
+
+# 失败条件：rc != 0  OR  失败数 > 0  OR  pending > 0 但 0 成功（claude CLI 全坏）
+ALERT=0
+ALERT_REASON=""
+if [ "$RC" -ne 0 ]; then
+  ALERT=1
+  ALERT_REASON="脚本异常 exit code=$RC"
+elif [ -n "$FAILED" ] && [ "$FAILED" -gt 0 ]; then
+  ALERT=1
+  ERR_SAMPLE=$(echo "$TRANSLATE_OUT" | grep -oE 'EXCEPTION: [^$]+' | head -1 | cut -c1-180)
+  ALERT_REASON="${FAILED} 个失败：${ERR_SAMPLE}"
+elif [ -n "$TOTAL_PENDING" ] && [ "$TOTAL_PENDING" -gt 0 ] && [ "${SUCCESS:-0}" -eq 0 ]; then
+  ALERT=1
+  ALERT_REASON="${TOTAL_PENDING} pending 但 0 成功（claude CLI 全坏）"
+fi
+
+if [ "$ALERT" -eq 1 ] && [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+  MSG=$(echo "🚨 Translate cron 失败
+成功 ${SUCCESS:-0} / 失败 ${FAILED:-?}（共 ${TOTAL_PENDING:-?} pending）
+${ALERT_REASON}" | head -c 800)
+  curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=${MSG}" > /dev/null
+  echo "[$LOG_TS] alert sent to Telegram"
+fi
 
 echo "[$LOG_TS] auto-translate end"

@@ -1203,3 +1203,89 @@ def check_onchain_payments():
         'confirmed': total_confirmed,
         'chains': results,
     }
+
+
+# ============================================================
+# Phase 12.34: Daily Telegram 早报 (08:00 UTC 推昨日总结)
+# ============================================================
+@celery_app.task(name='app.tasks.strategy_tasks.daily_morning_report')
+def daily_morning_report():
+    """每天 08:00 UTC 推昨日运转总结 + 异常 highlight"""
+    import datetime
+    from app.models import StrategyCandidate, Strategy, Trade, BacktestResult, PaymentInvoice
+    from app.extensions import db
+    from app.services.telegram_service import send as tg_send
+    from app.services.config_service import get_config
+
+    now = datetime.datetime.utcnow()
+    h24_ago = now - datetime.timedelta(hours=24)
+
+    # 1) 候选池
+    new_candidates = StrategyCandidate.query.filter(StrategyCandidate.created_at >= h24_ago).count()
+    new_translated = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'translated',
+        StrategyCandidate.updated_at >= h24_ago,
+    ).count()
+    new_promoted = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'promoted',
+        StrategyCandidate.updated_at >= h24_ago,
+    ).count()
+    pending_now = StrategyCandidate.query.filter_by(status='pending').count()
+    translated_now = StrategyCandidate.query.filter_by(status='translated').count()
+
+    # 2) 策略 / 交易
+    running = Strategy.query.filter_by(status='running').count()
+    new_trades = Trade.query.filter(Trade.exit_time >= h24_ago).all()
+    n_trades = len(new_trades)
+    pnl_24h = sum((t.pnl or 0) for t in new_trades)
+    n_wins = sum(1 for t in new_trades if (t.pnl or 0) > 0)
+
+    # 3) 回测
+    new_bt = BacktestResult.query.filter(BacktestResult.created_at >= h24_ago).count()
+
+    # 4) 订阅
+    new_invoices = PaymentInvoice.query.filter(PaymentInvoice.created_at >= h24_ago).count()
+    confirmed = PaymentInvoice.query.filter(
+        PaymentInvoice.confirmed_at >= h24_ago,
+    ).count() if hasattr(PaymentInvoice, 'confirmed_at') else 0
+
+    # 5) 异常 highlight
+    issues = []
+    if new_translated == 0 and pending_now > 0:
+        issues.append(f'⚠️ 24h 内 0 translated 但有 {pending_now} pending（claude CLI 失败？）')
+    if pending_now > 30:
+        issues.append(f'⚠️ {pending_now} pending 堆积超 30')
+    if running < 3:
+        issues.append(f'⚠️ 仅 {running} 策略 running')
+    cfg = get_config()
+    if cfg.get('halted'):
+        issues.append(f'🚨 system halted: {cfg.get("halt_reason", "?")}')
+
+    msg_lines = [
+        f'☀️ <b>Quant Pro 早报 · {now.strftime("%m-%d")}</b>',
+        f'',
+        f'<b>候选池 (24h)</b>',
+        f'  新增 {new_candidates} · 翻译 {new_translated} · 上线 {new_promoted}',
+        f'  存量 pending {pending_now} / translated {translated_now}',
+        f'',
+        f'<b>策略 / 交易 (24h)</b>',
+        f'  Running {running} · trades {n_trades} ({n_wins}赢)',
+        f'  PnL ${pnl_24h:+.2f}',
+        f'',
+        f'<b>回测 (24h)</b>',
+        f'  完成 {new_bt} 次',
+        f'',
+        f'<b>订阅 (24h)</b>',
+        f'  invoices {new_invoices} / confirmed {confirmed}',
+    ]
+    if issues:
+        msg_lines.append('')
+        msg_lines.append('<b>⚠️ 异常</b>')
+        for x in issues:
+            msg_lines.append(f'  {x}')
+    else:
+        msg_lines.append('')
+        msg_lines.append('✅ 所有 cron / 业务正常')
+
+    tg_send('\n'.join(msg_lines), parse_mode='HTML')
+    return {'sent': True, 'issues': issues, 'pending': pending_now, 'running': running}
