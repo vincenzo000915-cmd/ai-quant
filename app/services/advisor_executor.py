@@ -99,6 +99,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
 
     if action == 'promote_candidate':
         # Phase 10.10: 候選池 qualified → 上線
+        # Phase 12.31: per-TF 門檻 (short 高 PF / long 低 trades 容差)
         from app.services.candidate_pipeline import promote_candidate as do_promote
         cfg = get_config()
         cid = item.get('meta', {}).get('candidate_id')
@@ -106,6 +107,33 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         threshold = float(cfg.get('auto_promote_min_oos_sharpe', 1.5))
         if oos is None or oos < threshold:
             return False, f'OOS Sharpe {oos} < 阈值 {threshold}，跳過'
+
+        # 拉 candidate 細節 + 回測結果做 per-TF gate
+        from app.models import StrategyCandidate, BacktestResult
+        cand = StrategyCandidate.query.get(cid)
+        if cand and cand.backtest_result_id:
+            bt = BacktestResult.query.get(cand.backtest_result_id)
+            if bt:
+                tf = cand.timeframe or '4h'
+                # per-TF 門檻: (min PF, min trades, min AR%)
+                tf_gates = {
+                    '15m': (1.8, 60, 10),
+                    '30m': (1.8, 50, 10),
+                    '1h':  (1.5, 40, 8),
+                    '4h':  (1.5, 30, 8),
+                    '1d':  (1.4, 12, 6),
+                    '1w':  (1.3, 8,  5),
+                }
+                min_pf, min_trades, min_ar = tf_gates.get(tf, (1.5, 30, 8))
+                pf = bt.profit_factor or 0
+                tr = bt.total_trades or 0
+                ar = bt.annual_return_pct or 0
+                if pf < min_pf:
+                    return False, f'TF={tf} PF {pf:.2f} < 阈值 {min_pf}，跳過'
+                if tr < min_trades:
+                    return False, f'TF={tf} trades {tr} < 阈值 {min_trades}，跳過'
+                if ar < min_ar:
+                    return False, f'TF={tf} AR {ar:.1f}% < 阈值 {min_ar}%，跳過'
         symbol = item.get('meta', {}).get('symbol', 'BTC/USDT')
         result = do_promote(cid, symbol=symbol)
         if not result.get('ok'):
