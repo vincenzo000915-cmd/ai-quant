@@ -446,26 +446,33 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       </Box>
 
       <div ref={containerRef} style={{ width: '100%', height: effectiveHeight, flexGrow: fullscreen ? 1 : 0 }} />
-      {/* 倒計時（LIVE 标识已上移到 chart 容器顶部，删本地重复）*/}
+      {/* Phase 12.18.2: 倒計時跟 K 線走 — 移到右側價格軸旁邊，模擬 TradingView 風 */}
       <Box sx={{
-        position: 'absolute', top: fullscreen ? 80 : 48, left: 12,
+        position: 'absolute', top: fullscreen ? 80 : 48, right: 70,
         display: 'flex', alignItems: 'center', gap: 1,
         fontFamily: 'JetBrains Mono, monospace',
         pointerEvents: 'none',
       }}>
         <Box sx={{
           px: 0.8, py: 0.2,
-          bgcolor: 'rgba(8,10,24,0.7)',
-          border: '1px solid rgba(251,191,36,0.3)',
+          bgcolor: 'rgba(8,10,24,0.85)',
+          border: '1px solid rgba(247,166,0,0.3)',
           borderRadius: 0.5,
         }}>
           <Typography variant="caption" sx={{ color: 'rgba(148,163,184,0.7)', fontSize: '0.6rem', mr: 0.5 }}>
-            下一根{timeframe}
+            {timeframe}
           </Typography>
           <Typography component="span" sx={{ color: '#f7a600', fontWeight: 700, fontSize: '0.72rem', fontFamily: 'JetBrains Mono, monospace' }}>
             {fmtCountdown(remaining)}
           </Typography>
         </Box>
+      </Box>
+
+      {/* 信号 legend — 放左上 */}
+      <Box sx={{
+        position: 'absolute', top: fullscreen ? 80 : 48, left: 12,
+        fontFamily: 'JetBrains Mono, monospace', pointerEvents: 'none',
+      }}>
         {indicators?.signals && (
           <Box sx={{
             display: 'flex', gap: 1, alignItems: 'center',
