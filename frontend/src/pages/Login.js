@@ -9,6 +9,7 @@ import ShowChartIcon from '@mui/icons-material/ShowChart';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import LockIcon from '@mui/icons-material/Lock';
+import { useNavigate } from 'react-router-dom';
 import { loginWithPassword, registerWithPassword, setToken, verifyToken } from '../auth';
 
 const TAB_LOGIN = 0;
@@ -27,6 +28,18 @@ export default function Login({ onLoggedIn }) {
   const [adminError, setAdminError] = useState(null);
   const [adminBusy, setAdminBusy] = useState(false);
 
+  const navigate = useNavigate();
+
+  // Phase 12.29: Login 既可被父组件 mount（AuthGate locked 模式）
+  // 也可作为独立 /login 路由 — 后者没 onLoggedIn callback，自己跳 /dashboard
+  const handleSuccess = (user) => {
+    if (onLoggedIn) {
+      onLoggedIn(user);
+    } else {
+      navigate('/dashboard', { replace: true });
+    }
+  };
+
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
     if (!email || !password) {
@@ -42,7 +55,7 @@ export default function Login({ onLoggedIn }) {
       setError(r.error || (tab === TAB_LOGIN ? '登入失败' : '注册失败'));
       return;
     }
-    onLoggedIn?.(r.user);
+    handleSuccess(r.user);
   };
 
   const submitAdminToken = async () => {
@@ -53,7 +66,7 @@ export default function Login({ onLoggedIn }) {
     const r = await verifyToken();
     setAdminBusy(false);
     if (r.ok) {
-      onLoggedIn?.(null);
+      handleSuccess(null);
     } else {
       setToken('');
       setAdminError('Token 无效，请确认 .env 里的 API_AUTH_TOKEN');
