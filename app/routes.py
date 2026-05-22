@@ -2118,3 +2118,18 @@ def admin_billing_check_now():
         return jsonify({'error': 'admin only'}), 403
     results = check_all_chains()
     return jsonify({'ok': True, 'results': results})
+
+
+@api_bp.route('/admin/indexnow/ping', methods=['POST'])
+@require_actor
+def admin_indexnow_ping():
+    """admin: 手动通知 IndexNow Bing/Yandex 抓取所有公开页"""
+    from app.models import User
+    from app.services.indexnow import notify_urls
+    user = User.query.get(_me_user_id())
+    if not user or user.role != 'admin':
+        return jsonify({'error': 'admin only'}), 403
+    data = request.get_json(silent=True) or {}
+    urls = data.get('urls')   # 可选：只推指定 URL；None = 推全
+    r = notify_urls(urls)
+    return jsonify(r)
