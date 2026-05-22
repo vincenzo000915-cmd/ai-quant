@@ -1,0 +1,14 @@
+{
+  "name": "Quant Pro · AI 量化驾驶舱",
+  "short_name": "Quant Pro",
+  "description": "OKX 实盘接入，AI 为你闭环策略改进。USDT 4 链订阅。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#a78bfa",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/favicon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/favicon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
