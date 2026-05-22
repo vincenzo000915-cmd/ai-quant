@@ -145,10 +145,6 @@ export default function Pricing() {
         </Typography>
         <Typography sx={{ color: palette.textMuted, fontSize: '1rem', maxWidth: 720, mx: 'auto', mb: 3 }}>
           软件工具租赁模式（非投资顾问）。USDT 收款 · 链上结算 · 不持有用户资金 · 不替用户下单。
-          <br />
-          <Box component="span" sx={{ color: palette.text, fontWeight: 600, fontSize: '0.9rem' }}>
-            注册免费浏览，使用功能最少订阅 1 个月
-          </Box>
         </Typography>
 
         {/* 周期切换 */}

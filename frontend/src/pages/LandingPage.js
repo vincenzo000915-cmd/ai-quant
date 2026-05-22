@@ -393,7 +393,7 @@ function PricingTeaser() {
           PRICING · USDT 月付
         </Typography>
         <Typography sx={{ fontSize: { xs: '1.7rem', md: '2.3rem' }, fontWeight: 700, color: palette.text, mb: 1 }}>
-          注册免费浏览，使用最少订阅 1 月
+          选择适合你的订阅方案
         </Typography>
         <Typography sx={{ color: palette.textMuted, fontSize: 13.5 }}>
           预付折扣 · 3 月 -10% / 6 月 -20% / 1 年 -30%
