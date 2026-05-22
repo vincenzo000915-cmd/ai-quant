@@ -268,7 +268,9 @@ export default function Dashboard() {
     fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
 
-  // K 線 — 跟著 chartSymbol / tfBtc 切換 + 每 60s 後台刷新
+  // Phase 12.16.1: K 線 — 双 polling 实现「类即时」
+  //   每 5s 拉一次最新数据（OKX 不会限流 1 req/5s）→ 实时更新最后一根 candle
+  //   切换 symbol / tf 时全量重置
   useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
@@ -280,7 +282,7 @@ export default function Dashboard() {
       } catch {/* */}
     };
     loadChart();
-    const id = setInterval(loadChart, 60000);
+    const id = setInterval(loadChart, 5000);   // 60s → 5s 类即时
     return () => { cancelled = true; clearInterval(id); };
   }, [tfBtc, chartSymbol]);
 

@@ -159,7 +159,11 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
     };
   }, [height]);
 
-  // 更新主 K 線 + volume
+  // Phase 12.16.1: 增量更新主 K 線 + volume — 5s polling 不重置 zoom / crosshair
+  //   首次 / symbol/tf 切换 → setData() 全量
+  //   后续：只对最后一根 candle 调用 update()
+  const lastLastTsRef = useRef(0);
+  const lastFirstTsRef = useRef(0);
   useEffect(() => {
     if (!candleSeriesRef.current || !data || !data.length) return;
     const candles = data
@@ -168,8 +172,6 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         time: Math.floor(d.timestamp / 1000),
         open: d.open, high: d.high, low: d.low, close: d.close,
       }));
-    candleSeriesRef.current.setData(candles);
-
     const vols = data
       .filter(d => d.volume != null)
       .map(d => ({
@@ -177,8 +179,34 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
         value: d.volume,
         color: d.close >= d.open ? 'rgba(0,212,170,0.4)' : 'rgba(255,71,87,0.4)',
       }));
-    volumeSeriesRef.current.setData(vols);
-    chartRef.current?.timeScale().fitContent();
+    if (candles.length === 0) return;
+
+    const firstTs = candles[0].time;
+    const lastTs = candles[candles.length - 1].time;
+    // 全量重置触发条件：首次 / 切换 symbol/tf (firstTs 变) / 新数据 last 比之前还旧
+    const isReset = lastFirstTsRef.current !== firstTs || lastTs < lastLastTsRef.current;
+    lastFirstTsRef.current = firstTs;
+
+    if (isReset) {
+      candleSeriesRef.current.setData(candles);
+      volumeSeriesRef.current.setData(vols);
+      chartRef.current?.timeScale().fitContent();
+      lastLastTsRef.current = lastTs;
+    } else {
+      // 增量：只对 ts > lastLastTsRef 或 ts == lastLastTsRef 的 candle 调用 update()
+      // update() 自动处理 append (new candle) 或 update (same ts, new OHLC)
+      for (const c of candles) {
+        if (c.time >= lastLastTsRef.current) {
+          candleSeriesRef.current.update(c);
+        }
+      }
+      for (const v of vols) {
+        if (v.time >= lastLastTsRef.current) {
+          volumeSeriesRef.current.update(v);
+        }
+      }
+      lastLastTsRef.current = lastTs;
+    }
   }, [data]);
 
   // 指標：SMA20 / EMA50 / Bollinger
@@ -418,13 +446,35 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
       </Box>
 
       <div ref={containerRef} style={{ width: '100%', height: effectiveHeight, flexGrow: fullscreen ? 1 : 0 }} />
-      {/* 倒計時 + 圖例 */}
+      {/* 倒計時 + 圖例 + LIVE 标识 */}
       <Box sx={{
         position: 'absolute', top: fullscreen ? 80 : 48, left: 12,
-        display: 'flex', alignItems: 'center', gap: 1.5,
+        display: 'flex', alignItems: 'center', gap: 1,
         fontFamily: 'JetBrains Mono, monospace',
         pointerEvents: 'none',
       }}>
+        {/* Phase 12.16.1: LIVE 标识 — 紫色 pulse dot 表示 5s 实时更新 */}
+        <Box sx={{
+          px: 0.85, py: 0.3,
+          bgcolor: 'rgba(0,212,170,0.12)',
+          border: `1px solid ${palette.success}55`,
+          borderRadius: 0.5,
+          display: 'flex', alignItems: 'center', gap: 0.5,
+        }}>
+          <Box sx={{
+            width: 6, height: 6, borderRadius: '50%',
+            bgcolor: palette.success,
+            boxShadow: `0 0 6px ${palette.success}`,
+            animation: 'live-pulse 1.2s ease-in-out infinite',
+            '@keyframes live-pulse': {
+              '0%, 100%': { opacity: 1, transform: 'scale(1)' },
+              '50%': { opacity: 0.5, transform: 'scale(1.4)' },
+            },
+          }} />
+          <Typography component="span" sx={{ color: palette.success, fontWeight: 700, fontSize: '0.6rem', letterSpacing: 0.6 }}>
+            LIVE
+          </Typography>
+        </Box>
         <Box sx={{
           px: 0.8, py: 0.2,
           bgcolor: 'rgba(8,10,24,0.7)',
