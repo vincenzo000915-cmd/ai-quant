@@ -34,17 +34,18 @@ import PageHeader from '../components/common/PageHeader';
 import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import AiStatusBar from '../components/AiStatusBar';
-import NeuralBackdrop from '../components/NeuralBackdrop';
+// Phase 12.20: NeuralBackdrop 已下架（装饰过头）
 
 const API = process.env.REACT_APP_API_URL || '';
 
+// Phase 12.20: 紫主调 (Hyperliquid / Phantom 风) — AI 量化身份
 const C = {
-  primary: '#06b6d4',
-  primaryGlow: 'rgba(6, 182, 212, 0.6)',
-  accent: '#06b6d4',
-  accentGlow: 'rgba(6, 182, 212, 0.55)',
+  primary: '#a78bfa',
+  primaryGlow: 'rgba(167, 139, 250, 0.55)',
+  accent: '#a78bfa',
+  accentGlow: 'rgba(167, 139, 250, 0.45)',
   pink: '#ec4899',
-  purple: '#06b6d4',
+  purple: '#a78bfa',
   gold: '#f7a600',
   goldDeep: '#f59e0b',
   warnYellow: '#f7a600',
@@ -55,7 +56,7 @@ const C = {
   text: '#e2e8f0',
   textDim: '#94a3b8',
   textFaint: '#475569',
-  border: 'rgba(6, 182, 212, 0.2)',
+  border: 'rgba(167, 139, 250, 0.22)',
 };
 
 const CATEGORY_META = {
@@ -368,70 +369,50 @@ export default function Dashboard() {
     ? lastUpdate.toISOString().slice(11, 19) + ' UTC'
     : '——:——:—— UTC';
 
-  // KPI Card
-  const KPICard = ({ label, value, sublabel, icon, accent = 'primary', glow = false, highlight = false, sparkData, sparkColor }) => {
+  // Phase 12.20: KPI Card — 去 sparkline / 去 corner / 去 radial glow，紫色边框 + 鲜明数据
+  const KPICard = ({ label, value, sublabel, icon, accent = 'primary', highlight = false }) => {
     const accentMap = {
-      primary: { color: C.primary, glow: C.primaryGlow, glowClass: 'glow-text-primary' },
-      success: { color: C.success, glow: 'rgba(0,212,170,0.55)', glowClass: 'glow-text-success' },
-      error:   { color: C.error,   glow: 'rgba(255,71,87,0.55)', glowClass: 'glow-text-error' },
-      warning: { color: C.warning, glow: 'rgba(247,166,0,0.55)', glowClass: 'glow-text-gold' },
-      accent:  { color: C.accent,  glow: C.accentGlow, glowClass: 'glow-text-accent' },
-      gold:    { color: C.gold,    glow: 'rgba(251,191,36,0.55)', glowClass: 'glow-text-gold' },
+      primary: { color: C.primary },
+      success: { color: C.success },
+      error:   { color: C.error },
+      warning: { color: C.warning },
+      accent:  { color: C.accent },
+      gold:    { color: C.gold },
     };
     const a = accentMap[accent] || accentMap.primary;
     return (
-      <Box
-        className={highlight ? 'glow-border glass-card' : 'glass-card'}
-        sx={{ p: 2, height: '100%', position: 'relative', overflow: 'hidden' }}
-      >
-        <CornerDecor position="tl" color={a.color} />
-        <CornerDecor position="br" color={a.color} />
-
-        <Box sx={{
-          position: 'absolute', top: -30, right: -30, width: 140, height: 140,
-          background: `radial-gradient(circle, ${a.glow} 0%, transparent 70%)`,
-          opacity: 0.3, pointerEvents: 'none',
-        }} />
-
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1, position: 'relative' }}>
-          <Typography variant="overline" sx={{ color: 'text.secondary', lineHeight: 1 }}>
+      <Box sx={{
+        p: 2, height: '100%', position: 'relative', overflow: 'hidden',
+        bgcolor: 'rgba(16, 23, 43, 0.6)',
+        border: `1px solid ${highlight ? a.color : 'rgba(167, 139, 250, 0.18)'}`,
+        borderRadius: 1.25,
+        boxShadow: highlight ? `0 0 16px ${a.color}30, inset 0 1px 0 ${a.color}20` : 'inset 0 1px 0 rgba(255,255,255,0.03)',
+        transition: 'border-color 0.18s, box-shadow 0.18s',
+        '&:hover': { borderColor: a.color, boxShadow: `0 0 14px ${a.color}25` },
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 0.85 }}>
+          <Typography variant="overline" sx={{ color: 'text.secondary', lineHeight: 1, fontSize: '0.65rem', letterSpacing: 0.6 }}>
             {label}
           </Typography>
           <Box sx={{
-            width: 30, height: 30, borderRadius: 1.25,
+            width: 26, height: 26, borderRadius: 1,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            bgcolor: `${a.color}1a`, color: a.color,
-            border: `1px solid ${a.color}40`,
-            boxShadow: `0 0 12px ${a.color}30`,
+            bgcolor: `${a.color}14`, color: a.color,
           }}>
-            {React.cloneElement(icon, { sx: { fontSize: 16 } })}
+            {React.cloneElement(icon, { sx: { fontSize: 15 } })}
           </Box>
         </Box>
-
-        <Typography
-          className={`num-mono ${glow ? a.glowClass : ''}`}
-          sx={{
-            fontSize: { xs: '1.3rem', sm: '1.65rem' },
-            fontWeight: 700,
-            color: a.color,
-            lineHeight: 1.1,
-            mb: 0.5,
-            position: 'relative',
-          }}
-        >
+        <Typography className="num-mono" sx={{
+          fontSize: { xs: '1.35rem', sm: '1.7rem' },
+          fontWeight: 700, color: a.color, lineHeight: 1.05, mb: 0.4,
+          letterSpacing: '-0.02em',
+        }}>
           {value}
         </Typography>
-
         {sublabel && (
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem', position: 'relative', display: 'block' }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.68rem', display: 'block' }}>
             {sublabel}
           </Typography>
-        )}
-
-        {sparkData && sparkData.length > 1 && (
-          <Box sx={{ mt: 1, height: 28, opacity: 0.7 }}>
-            <Sparkline data={sparkData} color={sparkColor || a.color} width="100%" height="100%" />
-          </Box>
         )}
       </Box>
     );
@@ -448,8 +429,7 @@ export default function Dashboard() {
 
   return (
     <Box sx={{ position: 'relative', zIndex: 1 }}>
-      {/* Phase 12.15.12: Neural network 背景动画（仅 dashboard 路由）*/}
-      <NeuralBackdrop enabled={true} />
+      {/* Phase 12.20: 删 NeuralBackdrop — cyberpunk 装饰过重，主精力放紫色 accent + 数据密度 */}
 
       {/* === 統一頁頭 — 緊湊版 + KILL SWITCH 收進 actions === */}
       <PageHeader
@@ -573,10 +553,10 @@ export default function Dashboard() {
       {/* Phase 12.15.10: AI 駕駛狀態條 — 紫色 accent 區隔 system cyan */}
       <AiStatusBar />
 
-      {/* === Top Row: BTC chart + 持倉概覽（用戶要求 BTC 在上、持倉同行）=== */}
+      {/* === Phase 12.20: 走势图全宽（删 Row 1 右侧重复 OPEN POSITIONS）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
-        <Grid item xs={12} md={8}>
-          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
+        <Grid item xs={12}>
+          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
               <Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
@@ -697,65 +677,6 @@ export default function Dashboard() {
           </Box>
         </Grid>
 
-        <Grid item xs={12} md={4}>
-          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden', height: '100%' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Box>
-                <Typography variant="overline" sx={{ color: 'text.secondary' }}>OPEN POSITIONS</Typography>
-                <Typography variant="subtitle1" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
-                  [{positions.length}] LIVE
-                </Typography>
-              </Box>
-              <Typography className="num-mono" sx={{
-                fontSize: '0.95rem', fontWeight: 700,
-                color: positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0) >= 0 ? C.success : C.error,
-              }}>
-                {positions.length > 0 ? `${positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0) >= 0 ? '+' : ''}$${positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0).toFixed(2)}` : '—'}
-              </Typography>
-            </Box>
-            {positions.length === 0 ? (
-              <Box sx={{ height: 280, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: 'text.secondary' }}>
-                <Typography variant="body2">無持倉</Typography>
-                <Typography variant="caption" sx={{ fontFamily: 'JetBrains Mono', fontSize: '0.7rem', mt: 0.5 }}>AWAITING SIGNAL</Typography>
-              </Box>
-            ) : (
-              <Box sx={{ maxHeight: 360, overflowY: 'auto' }}>
-                {positions.map((pos) => {
-                  const stratName = sortedPerf.find((p) => p.id === pos.strategy_id)?.name || `#${pos.strategy_id}`;
-                  const upnl = pos.unrealized_pnl || 0;
-                  const spread = pos.current_price && pos.entry_price
-                    ? ((pos.current_price - pos.entry_price) / pos.entry_price * 100)
-                    : 0;
-                  return (
-                    <Box key={pos.id} sx={{
-                      mb: 1, p: 1, borderRadius: 1,
-                      bgcolor: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.05)',
-                    }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.72rem' }}>{stratName}</Typography>
-                        <Typography className="num-mono" sx={{
-                          fontSize: '0.85rem', fontWeight: 700,
-                          color: upnl >= 0 ? C.success : C.error,
-                        }}>
-                          {upnl >= 0 ? '+' : ''}${upnl.toFixed(2)}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.3 }}>
-                        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', fontFamily: 'JetBrains Mono' }}>
-                          {pos.side === 'long' ? '◤ L' : '◣ S'} {pos.size} @ ${pos.entry_price?.toFixed(0)}
-                        </Typography>
-                        <Typography className="num-mono" sx={{ fontSize: '0.65rem', color: spread >= 0 ? C.success : C.error }}>
-                          {spread >= 0 ? '+' : ''}{spread.toFixed(2)}%
-                        </Typography>
-                      </Box>
-                    </Box>
-                  );
-                })}
-              </Box>
-            )}
-          </Box>
-        </Grid>
       </Grid>
 
       {/* === Phase 12.19: 策略动作时间线 (取代 K 线上的 BUY/SELL markers) === */}
@@ -870,11 +791,6 @@ export default function Dashboard() {
 
       {/* === Strategy Matrix（密集模式）=== */}
       <Box className="glass-card" sx={{ p: 2.25, mb: 2.5, position: 'relative', overflow: 'hidden' }}>
-        <CornerDecor position="tl" color={C.primary} />
-        <CornerDecor position="tr" color={C.accent} />
-        <CornerDecor position="bl" color={C.purple} />
-        <CornerDecor position="br" color={C.primary} />
-
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
           <Box>
             <Typography variant="overline" sx={{ color: 'text.secondary' }}>STRATEGY MATRIX</Typography>
@@ -1033,9 +949,6 @@ export default function Dashboard() {
 
       {/* === Open Positions === */}
       <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
-        <CornerDecor position="tl" color={C.gold} />
-        <CornerDecor position="br" color={C.gold} />
-
         <Box sx={{ mb: 1.5 }}>
           <Typography variant="overline" sx={{ color: 'text.secondary' }}>OPEN POSITIONS</Typography>
           <Typography variant="subtitle1" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1 }}>

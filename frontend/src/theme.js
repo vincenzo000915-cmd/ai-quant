@@ -1,20 +1,21 @@
-// Phase 12.15.3: 統一 theme constants — 取代散在各 component 的 inline color hex
+// Phase 12.20: AI 金融科技風 — 紫主調 (Hyperliquid / Phantom Wallet 風)
 //
-// 設計方向：dark navy + slate + 1 個 accent (cyan)，pnl 紅綠，其他中性。
-// 減 neon / 減 glow / 減多色。SaaS-grade「乾淨可信」感而非 cyberpunk demo。
+// 設計方向：dark navy + slate + **紫主 accent** #a78bfa，PnL 紅綠保留。
+// 紫 = AI 駕駛感 + 量化身份。glow 只在 AI 在做事的地方（精緻 highlight，不是 neon 散光）。
+// 刪 cyberpunk 裝飾（NeuralBackdrop / 多色 CornerAccent）。資訊密度生產專業感。
 
 export const palette = {
   // 背景層次
   bg: '#0a0e1a',          // 主背景 dark navy
   bgDeep: '#070a13',
-  surface: 'rgba(16, 23, 43, 0.88)',     // panel 表面（微透明让 neural backdrop 透过）
-  surface2: 'rgba(26, 34, 64, 0.92)',    // hover / 次級表面
+  surface: 'rgba(16, 23, 43, 0.88)',
+  surface2: 'rgba(26, 34, 64, 0.92)',
   surfaceSubtle: 'rgba(255,255,255,0.02)',
 
-  // 邊框
-  border: 'rgba(148,163,184,0.12)',
-  borderHot: 'rgba(148,163,184,0.24)',
-  borderAccent: 'rgba(6,182,212,0.3)',
+  // 邊框（紫调 — AI accent 全局，加深让紫色身份更明显）
+  border: 'rgba(167, 139, 250, 0.18)',
+  borderHot: 'rgba(167, 139, 250, 0.36)',
+  borderAccent: 'rgba(167, 139, 250, 0.55)',
 
   // 文字
   text: '#e2e8f0',
@@ -22,22 +23,21 @@ export const palette = {
   textFaint: '#64748b',
   textDim: '#475569',
 
-  // 主 accent — cyan 系統色（system chrome 用，不過度搶眼）
-  accent: '#06b6d4',
-  accentDim: '#0891b2',
-  accentGlow: 'rgba(6,182,212,0.18)',
+  // 主 accent — 紫罗兰 (AI 量化身份)
+  accent: '#a78bfa',
+  accentDim: '#7c3aed',
+  accentGlow: 'rgba(167, 139, 250, 0.28)',
+  accentBright: '#c4b5fd',
 
-  // Phase 12.15.3.4: 金融科技混合風 — 取 Robinhood + Bybit 配色
-  // 暖 accent — 高亮 / 注意 / live mode
-  warmAccent: '#f7a600',        // Bybit 金黃 (give 交易產品「金錢」感)
+  // 暖 accent — 留給 warning / 個別 category（gold 不再做主色）
+  warmAccent: '#f7a600',
   warmAccentDim: '#d68900',
   warmAccentGlow: 'rgba(247,166,0,0.2)',
 
-  // Phase 12.15.10: AI 專用 accent (紫) — 凡是「AI 在做事」都用這個
-  // 跟 system cyan 形成視覺區隔：cyan = 系統 / 紫 = AI
-  ai: '#a78bfa',                    // 紫罗兰
+  // AI 字段保留兼容（alias 到 accent — 同一种紫）
+  ai: '#a78bfa',
   aiDim: '#7c3aed',
-  aiGlow: 'rgba(167, 139, 250, 0.3)',
+  aiGlow: 'rgba(167, 139, 250, 0.35)',
   aiBg: 'rgba(167, 139, 250, 0.08)',
 
   // 狀態色 — 金融科技風偏鮮明對比（不再柔和暗綠）

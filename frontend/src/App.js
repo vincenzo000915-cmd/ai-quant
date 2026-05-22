@@ -515,10 +515,10 @@ export default function App() {
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <div className="global-scanline" />
+      {/* Phase 12.20: 删 global-scanline 顶部扫描线（cyber 装饰） */}
       <BrowserRouter>
         <AuthGate>
-          <AiStream />
+          {/* Phase 12.20: 删 AiStream 浮动卡片（cyber 风过重，AI 状态改放 Dashboard 顶部紫 accent 状态带） */}
           <Routes>
             <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />

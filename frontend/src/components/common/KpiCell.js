@@ -73,9 +73,10 @@ export default function KpiCell({
 
   // 對應 accent color 給 hero 加 subtle radial glow 在右上角
   const accentColor = valueColor === palette.text ? palette.accent : valueColor;
-  const glowRgba = accent === 'success' ? 'rgba(16,185,129,0.18)'
-    : accent === 'error' ? 'rgba(244,63,94,0.18)'
-    : accent === 'accent' ? 'rgba(6,182,212,0.16)'
+  // Phase 12.20: 紫 accent — Hyperliquid / Phantom 风
+  const glowRgba = accent === 'success' ? 'rgba(0,212,170,0.20)'
+    : accent === 'error' ? 'rgba(255,71,87,0.20)'
+    : accent === 'accent' ? 'rgba(167,139,250,0.22)'
     : 'rgba(255,255,255,0.04)';
 
   return (
@@ -91,8 +92,17 @@ export default function KpiCell({
       display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
       overflow: 'hidden',
       cursor: 'default',
-      transition: 'border-color 180ms ease',
-      // hero 左侧 accent bar (subtle, 不发光)
+      transition: 'border-color 180ms ease, box-shadow 180ms ease',
+      // Phase 12.20: KPI 顶部紫色细 accent bar — Hyperliquid 风
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        left: 0, right: 0, top: 0,
+        height: isCompact ? 1.5 : 2,
+        background: `linear-gradient(90deg, transparent 0%, ${accentColor} 30%, ${accentColor} 70%, transparent 100%)`,
+        opacity: accent ? 0.9 : 0.35,
+      },
+      // hero 左侧 accent bar
       ...(isHero && {
         '&::after': {
           content: '""',
@@ -105,6 +115,7 @@ export default function KpiCell({
       }),
       '&:hover': {
         borderColor: palette.borderHot,
+        boxShadow: `0 0 12px ${glowRgba}`,
       },
     }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={0.5} sx={{ mb: isHero ? 1 : 0.25 }}>
