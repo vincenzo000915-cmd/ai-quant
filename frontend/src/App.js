@@ -16,6 +16,9 @@ import Checkout from './pages/Checkout';
 import Terms from './pages/Terms';
 import RefundPolicy from './pages/RefundPolicy';
 import Privacy from './pages/Privacy';
+import LandingPage from './pages/LandingPage';
+import Login from './pages/Login';
+import MarketingNav from './components/MarketingNav';
 import UpgradeModal from './components/UpgradeModal';
 import './auth';   // 全局 fetch wrap 副作用
 
@@ -524,28 +527,28 @@ export default function App() {
       <CssBaseline />
       {/* Phase 12.20: 删 global-scanline 顶部扫描线（cyber 装饰） */}
       <BrowserRouter>
-        <AuthGate>
-          {/* Phase 12.20: 删 AiStream 浮动卡片（cyber 风过重，AI 状态改放 Dashboard 顶部紫 accent 状态带） */}
-          {/* Phase 12.24.5: 全局 upgrade modal — 监听 fetch 402 自动弹出 */}
-          <UpgradeModal />
-          <Routes>
-            <Route path="/" element={<Layout />}>
-              <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="strategies" element={<Strategies />} />
-              <Route path="candidates" element={<Candidates />} />
-              <Route path="trades" element={<Trades />} />
-              <Route path="audit" element={<Audit />} />
-              <Route path="settings" element={<Settings />} />
-              {/* Phase 12.23: USDT 订阅 + 法律文档 */}
-              <Route path="pricing" element={<Pricing />} />
-              <Route path="checkout" element={<Checkout />} />
-              <Route path="terms" element={<Terms />} />
-              <Route path="refund-policy" element={<RefundPolicy />} />
-              <Route path="privacy" element={<Privacy />} />
-            </Route>
-          </Routes>
-        </AuthGate>
+        {/* Phase 12.24.5: 全局 upgrade modal — 监听 fetch 402 自动弹出 */}
+        <UpgradeModal />
+        <Routes>
+          {/* Phase 12.26: Marketing 公开路由（无需登录，无 sidebar）*/}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/pricing" element={<><MarketingNav /><Pricing /></>} />
+          <Route path="/checkout" element={<><MarketingNav /><Checkout /></>} />
+          <Route path="/terms" element={<><MarketingNav /><Terms /></>} />
+          <Route path="/refund-policy" element={<><MarketingNav /><RefundPolicy /></>} />
+          <Route path="/privacy" element={<><MarketingNav /><Privacy /></>} />
+
+          {/* Phase 12.26: 受保护 app 路由（AuthGate + sidebar Layout）*/}
+          <Route path="/" element={<AuthGate><Layout /></AuthGate>}>
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="strategies" element={<Strategies />} />
+            <Route path="candidates" element={<Candidates />} />
+            <Route path="trades" element={<Trades />} />
+            <Route path="audit" element={<Audit />} />
+            <Route path="settings" element={<Settings />} />
+          </Route>
+        </Routes>
       </BrowserRouter>
     </ThemeProvider>
   );
