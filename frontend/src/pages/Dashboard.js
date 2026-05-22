@@ -18,7 +18,10 @@ import {
   CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer, ReferenceDot,
   ReferenceLine,
 } from 'recharts';
-import BTCChart from '../components/BTCChart';
+// Phase 12.19: TradingView Widget 替代 lightweight-charts (BTCChart)
+//   + TradesTimeline 替代 K 线 markers (策略动作独立面板)
+import TradingViewWidget from '../components/TradingViewWidget';
+import TradesTimeline from '../components/TradesTimeline';
 // Phase 12.15.2: secondary panel lazy load — 減小 main bundle，首屏加快
 const RegimePanel = lazy(() => import('../components/RegimePanel'));
 const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
@@ -203,7 +206,7 @@ export default function Dashboard() {
   const [tfBtc, setTfBtc] = useState('1h');
   const [chartSymbol, setChartSymbol] = useState('BTC/USDT');
   const [supportedSymbols, setSupportedSymbols] = useState([]);
-  const [indicators, setIndicators] = useState({ sma20: true, ema50: false, bb: false, macd: false, rsi: false, signals: true });
+  // Phase 12.19: indicators state 已删除（TV widget 自带指标 dropdown，前端不再控制）
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -315,61 +318,7 @@ export default function Dashboard() {
     };
   }, [tfBtc, chartSymbol]);
 
-  // 計算 SMA / EMA / Bollinger Bands + 信號標記合併進 chart data
-  const btcChartEnriched = useMemo(() => {
-    if (!btcChart.length) return [];
-    const prices = btcChart.map(d => d.price);
-    const N = prices.length;
-    // SMA(20)
-    const sma20 = prices.map((_, i) => {
-      if (i < 19) return null;
-      const slice = prices.slice(i - 19, i + 1);
-      return slice.reduce((s, v) => s + v, 0) / 20;
-    });
-    // EMA(50)
-    const k = 2 / (50 + 1);
-    let ema = prices[0];
-    const ema50 = prices.map((p, i) => {
-      if (i === 0) { ema = p; return null; }
-      ema = p * k + ema * (1 - k);
-      return i >= 49 ? ema : null;
-    });
-    // Bollinger Bands (20, 2)
-    const bbU = []; const bbL = [];
-    for (let i = 0; i < N; i++) {
-      if (i < 19) { bbU.push(null); bbL.push(null); continue; }
-      const slice = prices.slice(i - 19, i + 1);
-      const mean = slice.reduce((s, v) => s + v, 0) / 20;
-      const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / 20;
-      const std = Math.sqrt(variance);
-      bbU.push(mean + 2 * std);
-      bbL.push(mean - 2 * std);
-    }
-    // 信號標記：把每根 K 線視為一個 bucket，看 trades 的 entry/exit 落在哪個 bucket
-    const tfMs = { '15m': 15*60e3, '30m': 30*60e3, '1h': 3600e3, '4h': 4*3600e3, '1d': 86400e3, '1w': 7*86400e3 }[tfBtc] || 3600e3;
-    const buckets = new Map();
-    btcChart.forEach((d, i) => buckets.set(Math.floor((d.timestamp || 0) / tfMs) * tfMs, i));
-    const buyMarks = new Array(N).fill(null);
-    const sellMarks = new Array(N).fill(null);
-    (trades || []).forEach(t => {
-      const entryBucket = Math.floor((new Date(t.entry_time).getTime()) / tfMs) * tfMs;
-      const idx = buckets.get(entryBucket);
-      if (idx !== undefined) buyMarks[idx] = t.entry_price;
-      const exitBucket = Math.floor((new Date(t.exit_time).getTime()) / tfMs) * tfMs;
-      const exitIdx = buckets.get(exitBucket);
-      if (exitIdx !== undefined) sellMarks[exitIdx] = t.exit_price;
-    });
-
-    return btcChart.map((d, i) => ({
-      ...d,
-      sma20: sma20[i],
-      ema50: ema50[i],
-      bbU: bbU[i],
-      bbL: bbL[i],
-      buy: buyMarks[i],
-      sell: sellMarks[i],
-    }));
-  }, [btcChart, trades, tfBtc]);
+  // Phase 12.19: btcChartEnriched 已删除（TV widget 自带指标，不再需要前端计算）
 
   // Phase 12.18.1: ticker 价格从 btcChart 最后一根 close 派生（同步 WebSocket 推送）
   //   不再独立 polling /api/market/<sym>/price，消除 5s 延迟
@@ -694,7 +643,7 @@ export default function Dashboard() {
               )}
             </Box>
 
-            {/* === Timeframe + Indicator 切換器 === */}
+            {/* === Timeframe 切換器（指標 chips 已删 — TV widget 自带）=== */}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1, alignItems: 'center' }}>
               <Typography variant="caption" sx={{ color: 'text.secondary', mr: 0.5, fontSize: '0.65rem' }}>TF:</Typography>
               {['15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
@@ -717,46 +666,13 @@ export default function Dashboard() {
                   {tf}
                 </Box>
               ))}
-              <Box sx={{ flexGrow: 1, minWidth: 4 }} />
-              <Typography variant="caption" sx={{ color: 'text.secondary', mr: 0.5, fontSize: '0.65rem' }}>指標:</Typography>
-              {[
-                { key: 'sma20', label: 'SMA20', col: C.primary },
-                { key: 'ema50', label: 'EMA50', col: C.accent },
-                { key: 'bb', label: 'BB', col: C.purple },
-                { key: 'macd', label: 'MACD', col: C.gold },
-                { key: 'rsi', label: 'RSI', col: C.purple },
-                { key: 'signals', label: '信號', col: C.success },
-              ].map(ind => (
-                <Box
-                  key={ind.key}
-                  component="button"
-                  onClick={() => setIndicators(s => ({ ...s, [ind.key]: !s[ind.key] }))}
-                  sx={{
-                    cursor: 'pointer',
-                    px: 0.8, py: 0.2,
-                    border: '1px solid',
-                    borderColor: indicators[ind.key] ? ind.col : 'rgba(255,255,255,0.12)',
-                    color: indicators[ind.key] ? ind.col : C.textDim,
-                    bgcolor: indicators[ind.key] ? `${ind.col}1a` : 'transparent',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    fontSize: '0.65rem', fontWeight: 700,
-                    borderRadius: 0.5,
-                  }}
-                >
-                  {ind.label}
-                </Box>
-              ))}
             </Box>
 
-            {/* Phase 7.4: K 線（lightweight-charts）*/}
-            <BTCChart
-              data={btcChart}
-              trades={trades}
-              positions={positions}
-              indicators={indicators}
+            {/* Phase 12.19: TradingView Widget — 替代 lightweight-charts，自带专业指标 + auto-scale + 倒计时 */}
+            <TradingViewWidget
+              symbol={chartSymbol}
               timeframe={tfBtc}
-              ticker={btcPrice}
-              height={340}
+              height={520}
             />
 
             {btcPrice && (
@@ -838,6 +754,32 @@ export default function Dashboard() {
                 })}
               </Box>
             )}
+          </Box>
+        </Grid>
+      </Grid>
+
+      {/* === Phase 12.19: 策略动作时间线 (取代 K 线上的 BUY/SELL markers) === */}
+      <Grid container spacing={2} sx={{ mb: 2.5 }}>
+        <Grid item xs={12}>
+          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
+              <Box>
+                <Typography variant="overline" sx={{ color: 'text.secondary' }}>策略动作时间线 · STRATEGY TIMELINE</Typography>
+                <Typography variant="subtitle1" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
+                  [{trades.length}] CLOSED · [{positions.filter(p => p.status === 'open').length}] HOLDING
+                </Typography>
+              </Box>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem' }}>
+                最近 30 条 · 倒序
+              </Typography>
+            </Box>
+            <TradesTimeline
+              trades={trades}
+              positions={positions}
+              strategyNameMap={Object.fromEntries((perfList || []).map(p => [p.id, p.name]))}
+              maxRows={30}
+              height={380}
+            />
           </Box>
         </Grid>
       </Grid>
