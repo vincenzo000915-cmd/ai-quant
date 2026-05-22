@@ -172,20 +172,16 @@ export default function Login({ onLoggedIn }) {
               onClick={() => setAdminMode((v) => !v)}
               sx={{ color: 'text.secondary', textTransform: 'none', fontSize: 12 }}
             >
-              {adminMode ? '收起' : '用 API Token 登入（管理员后门）'}
+              {adminMode ? '收起' : 'VIP 通道'}
             </Button>
             <Collapse in={adminMode}>
               <Stack spacing={1.5} sx={{ mt: 2 }}>
-                <Typography variant="caption" color="text.secondary">
-                  贴 <code>/opt/quant/.env</code> 里的 <code>API_AUTH_TOKEN</code> 值；
-                  用于 admin 紧急 debug，不走 user 登入。
-                </Typography>
                 {adminError && <Alert severity="error" sx={{ fontSize: 13 }}>{adminError}</Alert>}
                 <TextField
                   fullWidth
                   type="password"
                   size="small"
-                  placeholder="Bearer token 内容"
+                  placeholder="VIP Token"
                   value={adminToken}
                   onChange={(e) => setAdminToken(e.target.value)}
                 />
@@ -196,7 +192,7 @@ export default function Login({ onLoggedIn }) {
                   disabled={adminBusy || !adminToken.trim()}
                   sx={{ textTransform: 'none' }}
                 >
-                  {adminBusy ? '验证中…' : '解锁 admin'}
+                  {adminBusy ? '验证中…' : '进入'}
                 </Button>
               </Stack>
             </Collapse>
