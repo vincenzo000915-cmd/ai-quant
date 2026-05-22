@@ -268,9 +268,10 @@ export default function Dashboard() {
     fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
 
-  // Phase 12.16.1: K 線 — 双 polling 实现「类即时」
-  //   每 5s 拉一次最新数据（OKX 不会限流 1 req/5s）→ 实时更新最后一根 candle
-  //   切换 symbol / tf 时全量重置
+  // Phase 12.18: K 線 — 历史用 REST 一次性拉，实时 update 走 OKX WebSocket 推送
+  //   - 切 symbol/tf 时拉一次历史 + subscribe 新 channel
+  //   - WS 推送 < 100ms 接收最新 candle，直接 merge 进 btcChart state
+  //   - REST 兜底 60s 一次（防 WS 断线漏数据）
   useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
@@ -282,8 +283,36 @@ export default function Dashboard() {
       } catch {/* */}
     };
     loadChart();
-    const id = setInterval(loadChart, 5000);   // 60s → 5s 类即时
-    return () => { cancelled = true; clearInterval(id); };
+    const restFallback = setInterval(loadChart, 60000);   // 60s REST 兜底
+
+    // 订阅 OKX WS 实时推送
+    let unsubscribe = null;
+    (async () => {
+      try {
+        const okxWs = (await import('../services/okxWebSocket')).default;
+        unsubscribe = okxWs.subscribe(chartSymbol, tfBtc, (candle) => {
+          if (cancelled) return;
+          // merge 进 btcChart：找同 timestamp 的 candle 更新；否则 append
+          setBtcChart(prev => {
+            if (!prev.length) return prev;
+            const idx = prev.findIndex(d => d.timestamp === candle.timestamp);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = { ...next[idx], ...candle, price: candle.close };
+              return next;
+            }
+            // 新 candle — append
+            return [...prev, { ...candle, price: candle.close }];
+          });
+        });
+      } catch (e) { console.error('[BTCChart] WS subscribe failed:', e); }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearInterval(restFallback);
+      if (unsubscribe) unsubscribe();
+    };
   }, [tfBtc, chartSymbol]);
 
   // 計算 SMA / EMA / Bollinger Bands + 信號標記合併進 chart data
