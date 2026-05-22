@@ -12,6 +12,7 @@ import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import SettingsIcon from '@mui/icons-material/Settings';
 import HubIcon from '@mui/icons-material/Hub';
 import HistoryIcon from '@mui/icons-material/History';
+import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { label: '交易紀錄', icon: <ReceiptLongIcon />, path: '/trades' },
   { label: '審計日誌', icon: <HistoryIcon />, path: '/audit' },
   { label: '系統設定', icon: <SettingsIcon />, path: '/settings' },
+  { label: '订阅', icon: <WorkspacePremiumIcon />, path: '/pricing' },
 ];
 
 const navIconMap = {

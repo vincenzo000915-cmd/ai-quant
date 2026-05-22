@@ -10,6 +10,12 @@ import Candidates from './pages/Candidates';
 import Trades from './pages/Trades';
 import Audit from './pages/Audit';
 import Settings from './pages/Settings';
+// Phase 12.23: USDT 订阅相关页面
+import Pricing from './pages/Pricing';
+import Checkout from './pages/Checkout';
+import Terms from './pages/Terms';
+import RefundPolicy from './pages/RefundPolicy';
+import Privacy from './pages/Privacy';
 import './auth';   // 全局 fetch wrap 副作用
 
 const globalStyle = document.createElement('style');
@@ -528,6 +534,12 @@ export default function App() {
               <Route path="trades" element={<Trades />} />
               <Route path="audit" element={<Audit />} />
               <Route path="settings" element={<Settings />} />
+              {/* Phase 12.23: USDT 订阅 + 法律文档 */}
+              <Route path="pricing" element={<Pricing />} />
+              <Route path="checkout" element={<Checkout />} />
+              <Route path="terms" element={<Terms />} />
+              <Route path="refund-policy" element={<RefundPolicy />} />
+              <Route path="privacy" element={<Privacy />} />
             </Route>
           </Routes>
         </AuthGate>
