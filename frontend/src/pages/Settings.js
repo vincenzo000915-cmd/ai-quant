@@ -11,6 +11,7 @@ import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
 import LlmBindingCard from '../components/LlmBindingCard';
 import SizingAdvisorCard from '../components/SizingAdvisorCard';
+import SubscriptionCard from '../components/SubscriptionCard';
 import { PageSkeleton } from '../components/Skeleton';
 import PageHeader from '../components/common/PageHeader';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -107,6 +108,9 @@ export default function Settings() {
       />
 
       {msg && <Alert severity={msg.type} sx={{ mb: 2 }} onClose={() => setMsg(null)}>{msg.text}</Alert>}
+
+      {/* === Phase 12.24.3: 我的订阅 === */}
+      <SubscriptionCard />
 
       {/* === Phase 11.2: OKX 綁定 (per-user) === */}
       <OkxBindingCard />

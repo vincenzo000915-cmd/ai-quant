@@ -38,7 +38,12 @@ def has_ai_access() -> bool:
         return False
     if u.role == 'admin':
         return True
-    return u.subscription_tier in ('pro', 'team')
+    # Phase 12.24: 查实际 active subscription (subscription_tier 是兼容旧字段)
+    try:
+        from app.services.subscription_service import has_tier as _has_tier
+        return _has_tier(u.id, 'pro')
+    except Exception:
+        return u.subscription_tier in ('pro', 'team')
 
 
 def require_pro_tier(view):
@@ -48,10 +53,50 @@ def require_pro_tier(view):
         if not has_ai_access():
             return jsonify({
                 'error': '此功能需 Pro 訂閱',
-                'upgrade_hint': '到 設定 頁綁定 LLM key 並升級到 Pro 層',
+                'upgrade_hint': '/pricing 查看订阅方案',
+                'tier_required': 'pro',
             }), 402
         return view(*args, **kwargs)
     return wrapped
+
+
+def require_tier(min_tier='basic'):
+    """Phase 12.24: 通用 tier gate decorator
+
+    用法:
+        @api_bp.route('/strategies', methods=['POST'])
+        @require_actor
+        @require_tier('basic')
+        def create_strategy(): ...
+
+    admin / system actor 自动通过。其他需要 has_tier(uid, min_tier)。
+    """
+    def decorator(view):
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            if not has_request_context():
+                return view(*args, **kwargs)
+            if getattr(g, 'is_system', False):
+                return view(*args, **kwargs)
+            uid = getattr(g, 'current_user_id', None)
+            if not uid:
+                return jsonify({'error': '未登入'}), 401
+            u = getattr(g, 'current_user', None)
+            if u and u.role == 'admin':
+                return view(*args, **kwargs)
+            try:
+                from app.services.subscription_service import has_tier
+                if not has_tier(uid, min_tier):
+                    return jsonify({
+                        'error': f'此功能需 {min_tier.upper()} 及以上订阅',
+                        'upgrade_hint': '/pricing 查看订阅方案',
+                        'tier_required': min_tier,
+                    }), 402
+            except Exception:
+                return jsonify({'error': '订阅校验失败'}), 500
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
 
 
 def is_admin_actor() -> bool:
