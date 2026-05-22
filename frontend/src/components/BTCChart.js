@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import { createChart, CrosshairMode } from 'lightweight-charts';
+import FullscreenIcon from '@mui/icons-material/Fullscreen';
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
+import { IconButton, Tooltip } from '@mui/material';
+import { palette } from '../theme';
 
 const TF_SECONDS = {
   '15m': 15 * 60, '30m': 30 * 60, '1h': 3600, '4h': 4 * 3600,
@@ -53,6 +58,22 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
   const ema50Ref = useRef(null);
   const bbUpperRef = useRef(null);
   const bbLowerRef = useRef(null);
+  // Phase 12.16: hover OHLC 数据 + fullscreen
+  const [hoverData, setHoverData] = useState(null);   // {o, h, l, c, vol, time}
+  const [fullscreen, setFullscreen] = useState(false);
+  const effectiveHeight = fullscreen ? 'calc(100vh - 200px)' : height;
+  // 24h 变化（拿最近 + 最早算）
+  const stat24h = (() => {
+    if (!data || data.length < 2) return null;
+    const last = data[data.length - 1];
+    const dayAgo = data.find(d => d.timestamp >= last.timestamp - 86400_000) || data[0];
+    if (!dayAgo || !last || !dayAgo.close || !last.close) return null;
+    const change = last.close - dayAgo.close;
+    const changePct = (change / dayAgo.close) * 100;
+    const high24 = Math.max(...data.slice(-Math.min(24, data.length)).map(d => d.high || 0));
+    const low24 = Math.min(...data.slice(-Math.min(24, data.length)).map(d => d.low || Infinity));
+    return { change, changePct, high24, low24, last: last.close };
+  })();
 
   // 初始化 chart（只跑一次）
   useEffect(() => {
@@ -108,6 +129,22 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
+
+    // Phase 12.16: 监听 crosshair 移动更新 hover OHLC 数据
+    chart.subscribeCrosshairMove(param => {
+      if (!param || !param.time || !param.seriesData) {
+        setHoverData(null);
+        return;
+      }
+      const candleData = param.seriesData.get(candleSeries);
+      const volData = param.seriesData.get(volumeSeries);
+      if (candleData) {
+        setHoverData({
+          o: candleData.open, h: candleData.high, l: candleData.low, c: candleData.close,
+          vol: volData?.value, time: param.time,
+        });
+      }
+    });
 
     const onResize = () => {
       if (containerRef.current && chartRef.current) {
@@ -279,12 +316,111 @@ export default function BTCChart({ data, trades, positions, indicators, timefram
     candleSeriesRef.current.setMarkers(markers);
   }, [trades, positions, indicators?.signals]);
 
+  // 显示 hover 时的 OHLC，否则显示最近一根
+  const ohlc = hoverData || (data && data.length ? {
+    o: data[data.length - 1].open, h: data[data.length - 1].high,
+    l: data[data.length - 1].low, c: data[data.length - 1].close,
+    vol: data[data.length - 1].volume,
+  } : null);
+  const ohlcChange = ohlc ? (ohlc.c - ohlc.o) : 0;
+  const ohlcColor = ohlcChange >= 0 ? palette.success : palette.error;
+
   return (
-    <Box sx={{ position: 'relative' }}>
-      <div ref={containerRef} style={{ width: '100%', height }} />
+    <Box sx={{
+      position: 'relative',
+      ...(fullscreen && {
+        position: 'fixed', inset: 0, zIndex: 1300,
+        bgcolor: palette.bg,
+        p: 3,
+        display: 'flex', flexDirection: 'column',
+      }),
+    }}>
+      {/* Phase 12.16: 顶部 OHLC bar — TradingView 风 */}
+      <Box sx={{
+        display: 'flex', alignItems: 'center', gap: 2,
+        px: 1, py: 0.85, mb: 0.5,
+        flexWrap: 'wrap',
+        fontFamily: '"JetBrains Mono", monospace',
+        fontSize: 11,
+      }}>
+        {ohlc && (
+          <>
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'baseline' }}>
+              {[
+                { k: 'O', v: ohlc.o },
+                { k: 'H', v: ohlc.h },
+                { k: 'L', v: ohlc.l },
+                { k: 'C', v: ohlc.c },
+              ].map(item => (
+                <Box key={item.k} sx={{ display: 'flex', alignItems: 'baseline', gap: 0.4 }}>
+                  <Typography component="span" sx={{ fontSize: 9, fontWeight: 700, color: palette.textMuted, letterSpacing: 0.3 }}>{item.k}</Typography>
+                  <Typography component="span" sx={{ fontSize: 12, fontWeight: 600, color: palette.text, fontFamily: 'inherit' }}>
+                    {item.v?.toFixed?.(item.v > 100 ? 1 : 4) ?? '—'}
+                  </Typography>
+                </Box>
+              ))}
+              <Typography component="span" sx={{
+                fontSize: 11, fontWeight: 700, color: ohlcColor, fontFamily: 'inherit', ml: 0.5,
+              }}>
+                {ohlcChange >= 0 ? '+' : ''}{ohlcChange?.toFixed?.(1)}
+              </Typography>
+            </Box>
+            {ohlc.vol && (
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.4 }}>
+                <Typography component="span" sx={{ fontSize: 9, fontWeight: 700, color: palette.textMuted, letterSpacing: 0.3 }}>VOL</Typography>
+                <Typography component="span" sx={{ fontSize: 11, color: palette.textMuted, fontFamily: 'inherit' }}>
+                  {ohlc.vol > 1e6 ? `${(ohlc.vol / 1e6).toFixed(1)}M` : ohlc.vol > 1e3 ? `${(ohlc.vol / 1e3).toFixed(1)}K` : ohlc.vol?.toFixed(0)}
+                </Typography>
+              </Box>
+            )}
+          </>
+        )}
+        {stat24h && !hoverData && (
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, ml: 'auto' }}>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.4 }}>
+              <Typography component="span" sx={{ fontSize: 9, fontWeight: 700, color: palette.textMuted }}>24H</Typography>
+              <Typography component="span" sx={{ fontSize: 11, color: stat24h.changePct >= 0 ? palette.success : palette.error, fontFamily: 'inherit', fontWeight: 700 }}>
+                {stat24h.changePct >= 0 ? '+' : ''}{stat24h.changePct.toFixed(2)}%
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.4 }}>
+              <Typography component="span" sx={{ fontSize: 9, fontWeight: 700, color: palette.textMuted }}>H</Typography>
+              <Typography component="span" sx={{ fontSize: 11, color: palette.text, fontFamily: 'inherit' }}>{stat24h.high24?.toFixed(0)}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.4 }}>
+              <Typography component="span" sx={{ fontSize: 9, fontWeight: 700, color: palette.textMuted }}>L</Typography>
+              <Typography component="span" sx={{ fontSize: 11, color: palette.text, fontFamily: 'inherit' }}>{stat24h.low24?.toFixed(0)}</Typography>
+            </Box>
+          </Box>
+        )}
+        <Tooltip title="截图导出">
+          <IconButton size="small" onClick={() => {
+            // lightweight-charts takeScreenshot
+            try {
+              const canvas = chartRef.current?.takeScreenshot?.();
+              if (!canvas) return;
+              const link = document.createElement('a');
+              link.download = `chart-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+              link.href = canvas.toDataURL('image/png');
+              link.click();
+            } catch (e) { console.error('截图失败:', e); }
+          }}
+            sx={{ ml: stat24h ? 0 : 'auto', color: palette.textMuted, '&:hover': { color: palette.accent } }}>
+            <PhotoCameraIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title={fullscreen ? '退出全屏' : '全屏'}>
+          <IconButton size="small" onClick={() => setFullscreen(f => !f)}
+            sx={{ color: palette.textMuted, '&:hover': { color: palette.accent } }}>
+            {fullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      <div ref={containerRef} style={{ width: '100%', height: effectiveHeight, flexGrow: fullscreen ? 1 : 0 }} />
       {/* 倒計時 + 圖例 */}
       <Box sx={{
-        position: 'absolute', top: 8, left: 12,
+        position: 'absolute', top: fullscreen ? 80 : 48, left: 12,
         display: 'flex', alignItems: 'center', gap: 1.5,
         fontFamily: 'JetBrains Mono, monospace',
         pointerEvents: 'none',

@@ -15,21 +15,22 @@ import CloseIcon from '@mui/icons-material/Close';
 import { palette } from '../theme';
 
 // AI 事件类型 → 图标 + 中文描述
+// 只保留「真正涉及 LLM / AI 决策」的事件。规则自动（retire/revive/cleanup）排除避免噪音
 const AI_EVENT_META = {
+  // === LLM 直接调用 ===
   auto_ai_improve_done:     { icon: '🧠', label: 'AI 改进顾问完成', color: palette.ai },
   auto_ai_improve_skipped:  { icon: '⏭️', label: 'AI 改进跳过', color: palette.textMuted },
   auto_ai_improve_error:    { icon: '⚠️', label: 'AI 改进错误', color: palette.error },
   strategy_ai_generated:    { icon: '✨', label: 'AI 生成新策略', color: palette.ai },
   strategy_ai_improve:      { icon: '💡', label: 'AI 建议改进', color: palette.ai },
-  candidate_translate:      { icon: '🔤', label: 'AI 翻译候选', color: palette.accent },
-  candidate_backtest:       { icon: '📊', label: '候选回测完成', color: palette.accent },
-  advisor_auto_apply:       { icon: '🚀', label: '自动 promote 上线', color: palette.success },
-  auto_promote:             { icon: '🎯', label: '自动 promote 候选', color: palette.success },
+  candidate_translate:      { icon: '🔤', label: 'LLM 翻译候选', color: palette.ai },
+  // === 智能托管决策（advisor 规则 + LLM 共同）===
+  advisor_auto_apply:       { icon: '🚀', label: '智能托管自动套用', color: palette.success },
+  auto_promote:             { icon: '🎯', label: '自动 promote 上线', color: palette.success },
   candidate_promote:        { icon: '🎯', label: 'Promote 候选', color: palette.success },
-  strategy_retire:          { icon: '🗑️', label: '退役策略', color: palette.warning },
-  strategy_revive:          { icon: '🌱', label: '复活策略', color: palette.success },
-  strategy_params_applied:  { icon: '🔧', label: '套用新参数', color: palette.accent },
-  cleanup_candidates:       { icon: '🧹', label: '清理候选池', color: palette.textMuted },
+  strategy_params_applied:  { icon: '🔧', label: '套用 AI 优化参数', color: palette.accent },
+  // === 回测闭环（AI 生成的候选必经路径）===
+  candidate_backtest:       { icon: '📊', label: '候选回测完成', color: palette.accent },
 };
 
 function timeAgo(iso) {
