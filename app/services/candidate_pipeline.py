@@ -111,11 +111,17 @@ def translate_and_verify(candidate_id: int, *, user_id: int | None = None) -> di
     }
 
 
-def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: str = 'BTC/USDT') -> dict:
+def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: str | None = None) -> dict:
     """跑單一候選策略的回測。要求 status 為 'translated' 或 'qualified'（再跑一次）/ 'error'（重試）。
 
     流程：load_signal_fn → fetch K 線 → run_backtest(signal_fn=...) → 寫 BacktestResult
        → 依 Sharpe 標 qualified / translated。
+
+    Symbol 解析優先級（Phase 12.39 修 — 之前硬編碼 BTC 導致 AVAX live 用 BTC 回測決策）：
+      1. 顯式參數 symbol
+      2. candidate.source_meta['symbol']（AI improve / generate 寫的目標 symbol）
+      3. SystemConfig.default_backtest_symbol（user 當前 LIVE 主 symbol）
+      4. 'BTC/USDT' last-resort fallback
 
     狀態流轉：(translated|qualified|error) → backtesting → qualified（Sharpe ≥ 1.5）/ translated（不夠）/ error
     """
@@ -131,6 +137,14 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
 
     if not c.parsed_signal or not c.signal_fn_name:
         return {'ok': False, 'error': 'candidate has no parsed_signal / signal_fn_name (run translate first)'}
+
+    if symbol is None:
+        meta_symbol = (c.source_meta or {}).get('symbol') if c.source_meta else None
+        if meta_symbol:
+            symbol = meta_symbol
+        else:
+            from app.services.config_service import get as cfg_get
+            symbol = cfg_get('default_backtest_symbol', 'BTC/USDT')
 
     c.status = 'backtesting'
     c.error_log = None

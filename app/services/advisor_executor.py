@@ -135,7 +135,12 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                     return False, f'TF={tf} trades {tr} < 阈值 {min_trades}，跳過'
                 if ar < min_ar:
                     return False, f'TF={tf} AR {ar:.1f}% < 阈值 {min_ar}%，跳過'
-        symbol = item.get('meta', {}).get('symbol', 'BTC/USDT')
+        # Phase 12.39: 不再硬編碼 BTC fallback — 優先讀 candidate.source_meta，再 config 默認
+        symbol = item.get('meta', {}).get('symbol')
+        if not symbol and cand:
+            symbol = (cand.source_meta or {}).get('symbol')
+        if not symbol:
+            symbol = cfg.get('default_backtest_symbol', 'BTC/USDT')
         result = do_promote(cid, symbol=symbol)
         if not result.get('ok'):
             return False, f'promote 失败: {result.get("error")}'

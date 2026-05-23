@@ -24,6 +24,21 @@ from app.services.user_scope import scoped_query, apply_user_filter
 SYSTEM_PROMPT = f"""你是專業量化策略工程師。User 給你他現有策略組合 + 最近表現 + 當前 regime。
 任務：**強制輸出 3 個不同 timeframe 的新策略 candidates** — short / swing / long 各一個，互補多 TF 覆蓋。
 
+## 🪙 Symbol 必須來自 user 當前 trading 列表（v5 核心）
+
+User 的 running 策略告訴你他正在交易哪些 symbol（如 AVAX/USDT / BTC/USDT 等）。
+每個 candidate 必須**明確指定 symbol**，且只能從 user 現有 symbols 中選。理由：
+- 回測必須跟 LIVE 同 symbol 才有意義（BTC vol≈30% vs AVAX≈75%，PF 不可移植）
+- AI 應該為 user **正在用的幣**寫策略，而不是寫 generic BTC 策略硬塞
+
+選 symbol 時看 regime — 同一策略邏輯在不同 symbol 上 fit 不同：
+- 高 vol symbol（AVAX/SOL/DOGE）→ mean-reversion / breakout 在劇烈波動中盈利空間大
+- 低 vol symbol（BTC/ETH）→ trend follower 更穩定，假突破少
+- regime ranging（Hurst<0.4）→ mean-reversion 為主
+- regime trending（Hurst>0.6 + ADX>30）→ trend follower / breakout 為主
+
+rationale 必須說明：「為什麼選這個 symbol（不是其他的）」。
+
 ## 🎯 多 TF 強制需求（v4 核心）
 
 User 現有 7 個 running 策略**全是 4h swing**。多 TF 覆蓋是當前最大缺口。
@@ -147,16 +162,17 @@ def bb_squeeze_breakout_signal(df, params):
 
 ## 嚴格 JSON 輸出（不要 markdown 包圍）：
 {{
-  "analysis": "2-3 句話：現有策略覆蓋與缺口分析（強調 TF 多樣性缺口）",
+  "analysis": "2-3 句話：現有策略覆蓋與缺口分析（強調 TF 多樣性缺口 + symbol 選擇邏輯）",
   "improvements": [
     {{
       "candidate_type": "snake_case_slug",
       "signal_fn_name": "..._signal",
+      "symbol": "AVAX/USDT (必填，從 user 現有 running 策略的 symbols 中選 — 不能瞎填 BTC)",
       "category": "short" | "swing" | "long",
       "timeframe": "15m | 30m (short) / 1h | 4h (swing) / 1d | 1w (long)",
       "default_params": {{}},
       "parsed_signal": "def ..._signal(df, params): ... (含 trend filter + 嚴格觸發條件)",
-      "rationale": "為什麼這策略能過該 TF 對應門檻（必須證明：頻率合理 / 趨勢過濾 / 不 overfit / 補哪個 TF 缺口）",
+      "rationale": "為什麼這策略能過該 TF 對應門檻 + 為什麼選這個 symbol（symbol-specific 優勢，如 vol/regime/sample 大小）",
       "self_estimate": {{
         "trades_per_month": "整數 — 月觸發次數估計（已留 50% buffer）",
         "trades_in_90d_backtest": "整數 — short ≥60 / swing ≥30 / long ≥3 (1d) 才合格",
@@ -236,6 +252,9 @@ def improve_strategies(user_id: int) -> dict:
     except Exception:
         regimes = {}
 
+    # Phase 12.39: 拉 user 當前 trading 的 unique symbols（candidate 必須從這些中選）
+    user_symbols = sorted({s.symbol for s in running if s.symbol})
+
     # 構造 prompt
     lines = ['## 現有 running 策略\n']
     for s in running:
@@ -249,11 +268,13 @@ def improve_strategies(user_id: int) -> dict:
             f'{live["wins"]}勝/{live["losses"]}敗'
         )
 
-    lines.append('\n## 當前 regime\n')
+    lines.append(f'\n## 🪙 可選 symbol（必須從此列表選一個放進每個 candidate 的 "symbol" 欄）\n{user_symbols}')
+
+    lines.append('\n## 當前 regime（per symbol@timeframe）\n')
     for k, r in regimes.items():
         lines.append(f'- {k}: regime={r.get("regime")}, ADX={r.get("adx", "?")}, Hurst={r.get("hurst", "?")}')
 
-    lines.append('\n## 請按系統提示分析缺口，生成 1-3 個補完性新策略 JSON')
+    lines.append('\n## 請按系統提示分析缺口，生成 1-3 個補完性新策略 JSON（symbol 必填，從上方 user_symbols 選）')
     prompt = '\n'.join(lines)
 
     llm = call_llm(
@@ -297,11 +318,17 @@ def improve_strategies(user_id: int) -> dict:
             rejected.append({'candidate_type': ctype, 'reason': f'sandbox: {v.get("error")}'})
             continue
 
+        # Phase 12.39: symbol 必填且必須是 user 現有 symbol；不合則 fallback 第一個
+        imp_symbol = imp.get('symbol')
+        if not imp_symbol or imp_symbol not in user_symbols:
+            imp_symbol = user_symbols[0] if user_symbols else 'AVAX/USDT'
+
         rec = StrategyCandidate(
             source='manual',
             source_name=f'AI improve (user {user_id})',
             source_author=f'user:{user_id}:improve',
             source_meta={'analysis': analysis, 'rationale': imp.get('rationale'),
+                         'symbol': imp_symbol,
                          'llm_provider': llm.get('provider_used'),
                          'llm_model': llm.get('model_used')},
             raw_code=f'AI improve analysis: {analysis}\n\nrationale: {imp.get("rationale", "")}',
@@ -322,6 +349,7 @@ def improve_strategies(user_id: int) -> dict:
             'candidate_id': rec.id,
             'candidate_type': ctype,
             'signal_fn_name': imp['signal_fn_name'],
+            'symbol': imp_symbol,
             'category': imp.get('category'),
             'timeframe': imp.get('timeframe'),
             'rationale': imp.get('rationale'),
