@@ -176,18 +176,24 @@ CLAUDE_CLI_TIMEOUT = int(os.environ.get('CLAUDE_CLI_TIMEOUT', '300'))   # 12.17:
 
 
 def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
-                     max_tokens: int, model: str) -> dict:
+                     max_tokens: int, model: str,
+                     allowed_tools: list[str] | None = None,
+                     timeout: int | None = None) -> dict:
     """Phase 11.5.3.1: 用 container 內 claude CLI + host mount 的 ~/.claude OAuth。
 
     不需要 api_key（OAuth 在 mount 的配置裡）；max_tokens 也 claude CLI 不直接控制
     （由訂閱方使用 fairness 限），但 prompt 可以引導長度。
 
     用 --print 非互動模式 + --output-format json 拿結構化結果（含 model/usage）。
+
+    Phase 12.41: allowed_tools 让 LLM 可主动联网（e.g. ['WebSearch', 'WebFetch']）。
     """
-    # --permission-mode default：root 下 --dangerously-skip-permissions 被禁，但 default + --print 已夠 non-interactive
     args = ['claude', '--print', '--output-format', 'json', '--permission-mode', 'default']
     if model:
         args.extend(['--model', model])
+    if allowed_tools:
+        # claude_cli 接受 --allowedTools "Tool1 Tool2 ..."（空格分隔）
+        args.extend(['--allowedTools', ' '.join(allowed_tools)])
     if system:
         args.extend(['--append-system-prompt', system])
     proc = subprocess.run(
@@ -195,7 +201,7 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
         input=prompt,
         capture_output=True,
         text=True,
-        timeout=CLAUDE_CLI_TIMEOUT,
+        timeout=timeout if timeout is not None else CLAUDE_CLI_TIMEOUT,
     )
     if proc.returncode != 0:
         raise RuntimeError(f'claude CLI exited {proc.returncode}: {(proc.stderr or "").strip()[:300]}')
@@ -231,6 +237,8 @@ def call_llm(
     max_tokens: int = 2048,
     provider_pref: str | None = None,
     cache_key: str | None = None,
+    allowed_tools: list[str] | None = None,
+    timeout: int | None = None,
 ) -> dict:
     """主入口 — 自動選 user 綁的 provider 依 priority 嘗試。
 
@@ -279,7 +287,16 @@ def call_llm(
             continue
         t0 = time.time()
         try:
-            res = fn(api_key, prompt, system, max_tokens, model)
+            # Phase 12.41: 仅 claude_cli 当前支持 allowed_tools + per-call timeout
+            if provider == 'claude_cli':
+                kwargs = {}
+                if allowed_tools:
+                    kwargs['allowed_tools'] = allowed_tools
+                if timeout is not None:
+                    kwargs['timeout'] = timeout
+                res = fn(api_key, prompt, system, max_tokens, model, **kwargs)
+            else:
+                res = fn(api_key, prompt, system, max_tokens, model)
             latency_ms = int((time.time() - t0) * 1000)
             # 寫用量（claude_cli 不記，因走訂閱沒 API token 帳）
             if provider != 'claude_cli':

@@ -483,16 +483,19 @@ def ai_personal_advice():
 @require_actor
 @require_pro_tier
 def ai_improve_strategies():
-    """Phase 11.5.10: AI 看現有策略 + 表現 + regime → 主動生成 1-3 個補完性新候選"""
-    from app.services.llm_prompts.strategy_improve import improve_strategies
+    """Phase 12.41: AI improve v7 — 真 research agent (10+ indicators / 三层 refs /
+    主动 WebSearch+WebFetch / 失败 trades 反喂)。
+    """
+    from app.services.llm_prompts.strategy_improve_v7 import improve_strategies_research_agent
     from app.services.audit import log as audit
     uid = current_user_id() or 1
-    r = improve_strategies(uid)
+    r = improve_strategies_research_agent(uid, max_iterations=3, target_count=3, enable_external_research=True)
     if not r.get('ok'):
         return jsonify(r), 502
     audit('strategy_ai_improve', actor='user',
-          generated_count=len(r.get('generated', [])),
+          submitted_count=len(r.get('submitted', [])),
           rejected_count=len(r.get('rejected', [])),
+          iterations_used=r.get('iterations_used', 0),
           provider=r.get('llm_meta', {}).get('provider_used'))
     return jsonify(r), 201
 

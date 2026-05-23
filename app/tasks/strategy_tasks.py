@@ -1158,48 +1158,74 @@ def cleanup_old_rejected_candidates(retention_days: int | None = None):
 
 @celery_app.task
 def auto_ai_improve_strategies():
-    """Phase 11.5.11: 每週自動跑 AI 改進顧問 — admin (user_id=1) 走 claude_cli 訂閱免費。
+    """Phase 12.40: 每日跑 v6 迭代式 AI 改進 — admin (user_id=1) 走 claude_cli 訂閱免費。
 
-    跟爬蟲翻譯同等待遇：自動生成候選 → 自然進候選池 → 接 candidate_pipeline 回測 →
-    qualified → auto_promote → strategies(stopped) → user 手動 ▶️ 啟動 → LIVE。
+    v6 流程（vs v4/v5 fire-and-forget）:
+      1. 拉 profitable references → LLM 学已能赚钱的 pattern
+      2. 拉 symbol 实际数据 (RSI/BB/ADX 分布) → LLM 不再瞎猜频率
+      3. LLM 写 → quick_backtest 立即自测 → 失败反喂 LLM 改 → 最多 3 轮
+      4. 只 self-test 过的写入 strategy_candidates (status='qualified')
 
     僅 admin 跑：普通 user BYO API key 自動跑會燒 token；他們仍在 UI 手動觸發。
     """
-    from app.services.llm_prompts.strategy_improve import improve_strategies
+    from app.services.llm_prompts.strategy_improve_v7 import improve_strategies_research_agent
     from app.services.audit import log as audit
     try:
-        r = improve_strategies(user_id=1)
+        r = improve_strategies_research_agent(user_id=1, max_iterations=3, target_count=3, enable_external_research=True)
     except Exception as e:
-        audit('auto_ai_improve_error', actor='auto:weekly_ai_improve',
+        audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v6',
               error=f'{type(e).__name__}: {e}')
-        return f'auto-ai-improve error: {type(e).__name__}: {e}'
+        return f'auto-ai-improve-v6 error: {type(e).__name__}: {e}'
     if not r.get('ok'):
-        audit('auto_ai_improve_skipped', actor='auto:weekly_ai_improve',
+        audit('auto_ai_improve_skipped', actor='auto:daily_ai_improve_v6',
               reason=r.get('error'))
-        return f'auto-ai-improve skipped: {r.get("error")}'
+        return f'auto-ai-improve-v6 skipped: {r.get("error")}'
 
-    audit('auto_ai_improve_done', actor='auto:weekly_ai_improve',
-          generated_count=len(r.get('generated', [])),
-          rejected_count=len(r.get('rejected', [])),
+    submitted = r.get('submitted', [])
+    rejected = r.get('rejected', [])
+    iters = r.get('iterations_used', 0)
+
+    audit('auto_ai_improve_done', actor='auto:daily_ai_improve_v6',
+          submitted_count=len(submitted),
+          rejected_count=len(rejected),
+          iterations_used=iters,
           provider=r.get('llm_meta', {}).get('provider_used'),
           analysis=(r.get('analysis') or '')[:300])
 
-    # Telegram 提示（admin 看了知道有新 AI 候選）
+    # Telegram — v6 也报失败原因（让 admin 看 LLM 卡哪）
     try:
         from app.services.telegram_service import send as _tg
-        n = len(r.get('generated', []))
-        if n > 0:
-            names = ', '.join(g.get('candidate_type', '?') for g in r.get('generated', [])[:3])
+        if submitted:
+            lines = []
+            for g in submitted[:3]:
+                m = g.get('metrics') or {}
+                lines.append(
+                    f'• <code>{g["candidate_type"]}</code> ({g["symbol"]} {g["timeframe"]}/{g["category"]}): '
+                    f'OOS Sharpe={m.get("oos_sharpe")} PF={m.get("oos_pf")} trades={m.get("oos_trades")}'
+                )
             _tg(
-                f'🤖 <b>AI 改進顧問週度結果</b>\n'
-                f'生成 {n} 個補完性候選：{names}\n'
-                f'已寫入候選池待回測。OOS Sharpe ≥ 1.5 才會 promote。',
-                event_key='ai_improve_weekly',
+                f'🤖 <b>AI improve v6 — {iters} 轮迭代后 {len(submitted)} 个过自测</b>\n'
+                + '\n'.join(lines)
+                + f'\n\n已写入 strategy_candidates (status=qualified)，等 auto_promote 决策。',
+                event_key='ai_improve_daily',
+            )
+        else:
+            # 0 个通过 — 同等重要的信号
+            fail_reasons = {}
+            for r_ in rejected[:5]:
+                reason = (r_.get('reason') or '?')[:60]
+                fail_reasons[reason] = fail_reasons.get(reason, 0) + 1
+            reasons_str = '\n'.join(f'  • {k} × {v}' for k, v in fail_reasons.items())
+            _tg(
+                f'🤖 <b>AI improve v6 — 0 个过自测</b> ({iters} 轮)\n'
+                f'尝试了 {len(rejected)} 个候选，全 fail。Top 失败原因:\n{reasons_str}\n\n'
+                f'这是正常输出（quality > quantity），不是 bug。明天再试。',
+                event_key='ai_improve_daily',
             )
     except Exception:
         pass
 
-    return f'auto-ai-improve: 生成 {len(r.get("generated", []))} candidates, rejected {len(r.get("rejected", []))}'
+    return f'auto-ai-improve-v6: 提交 {len(submitted)}/{len(submitted) + len(rejected)} (经 {iters} 轮迭代)'
 
 
 # ============================================================
