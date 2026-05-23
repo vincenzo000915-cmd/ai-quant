@@ -138,15 +138,26 @@ def _run_signals(strategy_id=None, category_filter=None):
 
     # 讀一次 config，循環內共用
     cfg = _cfg()
-    trade_size = cfg['trade_size_usdt']
-    lev = cfg['leverage']
-    sl_pct = cfg['stop_loss_pct']
-    tp_pct = cfg['take_profit_pct']
+    trade_size_default = cfg['trade_size_usdt']
+    lev_default = cfg['leverage']
+    sl_pct_default = cfg['stop_loss_pct']
+    tp_pct_default = cfg['take_profit_pct']
     halted = cfg.get('halted', False)
     mode = cfg.get('trading_mode', 'paper')
 
+    def _resolve_risk(s):
+        """Phase 12.42 v8: 优先 strategy.params.risk_params > SystemConfig 默认"""
+        rp = (s.params or {}).get('risk_params') or {}
+        return (
+            rp.get('position_size_usdt') or trade_size_default,
+            rp.get('leverage') or lev_default,
+            rp.get('stop_loss_pct') or sl_pct_default,
+            rp.get('take_profit_pct') or tp_pct_default,
+        )
+
     results = []
     for s in strategies:
+        trade_size, lev, sl_pct, tp_pct = _resolve_risk(s)
         try:
             # 取得K線
             candles = Candle.query.filter_by(
@@ -367,16 +378,24 @@ def _pnl_pct_for(pos, current_price, leverage):
 
 @celery_app.task
 def update_positions():
-    """更新持倉當前價格和浮動盈虧（含槓桿）— long/short 都正確"""
-    lev = _cfg()['leverage']
+    """更新持倉當前價格和浮動盈虧（含槓桿）— long/short 都正確
+    Phase 12.42 v8: per-strategy leverage override 优先于 cfg
+    """
+    cfg_lev = _cfg()['leverage']
     positions = Position.query.filter_by(status='open').all()
     for pos in positions:
         try:
             ticker = get_ticker(pos.symbol)
             current = ticker['price']
             pos.current_price = current
+            # 拉对应 strategy 的 leverage override
+            lev = cfg_lev
+            if pos.strategy_id:
+                strat = Strategy.query.get(pos.strategy_id)
+                if strat:
+                    rp = (strat.params or {}).get('risk_params') or {}
+                    lev = rp.get('leverage') or cfg_lev
             _, raw_pct = _pnl_pct_for(pos, current, lev)
-            # Phase 12.8: size 已含 lev，PnL 不再 × lev
             pos.unrealized_pnl = raw_pct * pos.size * pos.entry_price / 100
         except Exception as e:
             print(f'[update] 持倉 {pos.id} 更新失敗: {e}')
@@ -386,11 +405,13 @@ def update_positions():
 
 @celery_app.task
 def check_stop_loss():
-    """檢查止損止盈（含槓桿）— long/short + flat_pct/atr 都觸發"""
+    """檢查止損止盈（含槓桿）— long/short + flat_pct/atr 都觸發
+    Phase 12.42 v8: per-strategy leverage/SL/TP override
+    """
     cfg = _cfg()
-    lev = cfg['leverage']
-    sl_pct = cfg['stop_loss_pct']
-    tp_pct = cfg['take_profit_pct']
+    cfg_lev = cfg['leverage']
+    cfg_sl_pct = cfg['stop_loss_pct']
+    cfg_tp_pct = cfg['take_profit_pct']
     mode = cfg.get('trading_mode', 'paper')
 
     positions = Position.query.filter_by(status='open').all()
@@ -399,6 +420,15 @@ def check_stop_loss():
         try:
             ticker = get_ticker(pos.symbol)
             current = ticker['price']
+            # 拉对应 strategy 的 leverage/SL/TP override
+            lev, sl_pct, tp_pct = cfg_lev, cfg_sl_pct, cfg_tp_pct
+            if pos.strategy_id:
+                strat = Strategy.query.get(pos.strategy_id)
+                if strat:
+                    rp = (strat.params or {}).get('risk_params') or {}
+                    lev = rp.get('leverage') or cfg_lev
+                    sl_pct = rp.get('stop_loss_pct') or cfg_sl_pct
+                    tp_pct = rp.get('take_profit_pct') or cfg_tp_pct
             pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
             close_side = 'buy' if pos.side == 'short' else 'sell'
 
@@ -1168,10 +1198,10 @@ def auto_ai_improve_strategies():
 
     僅 admin 跑：普通 user BYO API key 自動跑會燒 token；他們仍在 UI 手動觸發。
     """
-    from app.services.llm_prompts.strategy_improve_v7 import improve_strategies_research_agent
+    from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
     from app.services.audit import log as audit
     try:
-        r = improve_strategies_research_agent(user_id=1, max_iterations=3, target_count=3, enable_external_research=True)
+        r = improve_strategies_v8(user_id=1, max_iterations=3, target_count=3, enable_external_research=True)
     except Exception as e:
         audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v6',
               error=f'{type(e).__name__}: {e}')
@@ -1199,14 +1229,16 @@ def auto_ai_improve_strategies():
             lines = []
             for g in submitted[:3]:
                 m = g.get('metrics') or {}
+                rp = g.get('risk_params') or {}
                 lines.append(
                     f'• <code>{g["candidate_type"]}</code> ({g["symbol"]} {g["timeframe"]}/{g["category"]}): '
-                    f'OOS Sharpe={m.get("oos_sharpe")} PF={m.get("oos_pf")} trades={m.get("oos_trades")}'
+                    f'OOS Sharpe={m.get("oos_sharpe")} PF={m.get("oos_pf")} trades={m.get("oos_trades")} '
+                    f'· lev={rp.get("leverage")}x SL={rp.get("stop_loss_pct")}% TP={rp.get("take_profit_pct")}%'
                 )
             _tg(
-                f'🤖 <b>AI improve v6 — {iters} 轮迭代后 {len(submitted)} 个过自测</b>\n'
+                f'🤖 <b>AI v8 — {iters} 轮迭代后 {len(submitted)} 个过自测</b>\n'
                 + '\n'.join(lines)
-                + f'\n\n已写入 strategy_candidates (status=qualified)，等 auto_promote 决策。',
+                + f'\n\n👉 在首页「AI 精选策略」一键应用：\n<a href="https://ai-quant.medias-ai.cloud/">https://ai-quant.medias-ai.cloud/</a>',
                 event_key='ai_improve_daily',
             )
         else:

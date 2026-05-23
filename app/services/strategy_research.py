@@ -27,15 +27,17 @@ from app.services.user_scope import scoped_query, apply_user_filter
 from sqlalchemy import desc, func
 
 
-def pull_profitable_references(user_id: int, limit: int = 8) -> list[dict]:
+def pull_profitable_references(user_id: int, limit: int = 8,
+                                cross_user: bool = False) -> list[dict]:
     """拉已证明能赚钱的策略当 LLM 学习样本。
 
     优先级（高→低）：
-      1. 当前 running 策略中 OOS Sharpe ≥1.5 的
+      1. 当前 running 策略中 OOS Sharpe ≥1.5 的（user scope，user 自己的最权威）
       2. qualified candidates（已过系统门槛）
       3. 任何 backtest_result OOS Sharpe ≥1.5 的策略（即使已 stopped）
 
-    返回最多 limit 个，按 OOS Sharpe 降序。
+    Phase 12.42 v8: cross_user=True 时 admin 拉全表（看其他 user profitable 策略学）
+    return list of {source, type, symbol, timeframe, category, params, metrics}
     """
     refs: list[dict] = []
     seen_types: set[str] = set()
@@ -167,9 +169,9 @@ def pull_builtin_strategy_refs(limit: int = 20, include_source: bool = True) -> 
         if include_source:
             try:
                 src = inspect.getsource(fn)
-                # 截断到合理长度（avg 30-60 LOC）
-                if len(src) > 2000:
-                    src = src[:2000] + '\n    # ... (truncated)'
+                # 截断到 800 chars（避免 prompt 总长爆炸 - 20 策略 × 800 = 16k chars）
+                if len(src) > 800:
+                    src = src[:800] + '\n    # ... (truncated)'
                 item['fn_source'] = src
             except OSError:
                 item['fn_source'] = None
@@ -479,31 +481,24 @@ def compute_symbol_stats(candles: list[dict]) -> dict:
 
 def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
                    symbol: str, timeframe: str,
-                   *, candle_limit: int = 2000) -> dict:
+                   *, candle_limit: int = 2000,
+                   leverage: float | None = None,
+                   position_size_usdt: float | None = None,
+                   stop_loss_pct: float | None = None,
+                   take_profit_pct: float | None = None) -> dict:
     """内存跑 walk-forward 回测，**不写 DB** — 给 LLM 迭代自测用。
 
-    返回:
-      {
-        'ok': bool,
-        'error': str | None,
-        'symbol': str, 'timeframe': str,
-        'metrics': {
-          'is_sharpe': float, 'is_pf': float, 'is_trades': int,
-          'oos_sharpe': float, 'oos_pf': float, 'oos_trades': int, 'oos_ar_pct': float,
-          'oos_wr_pct': float, 'oos_max_dd_pct': float,
-          'decay_pct': float | None,
-          'full_sharpe': float, 'full_pf': float, 'full_trades': int,
-        }
-      }
+    Phase 12.42 v8: 接受 risk_params overrides — LLM 写的 leverage/SL/TP/pos 直接进回测。
+    默认值还是 backtest_engine.run_backtest 的默认（15x leverage / $10 / 5% SL / 8% TP）。
 
-    出错: ok=False + error 字符串。
+    返回 {ok, error, symbol, timeframe, metrics, walkforward_json, risk_params}
     """
     from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
     from app.services.exchange_service import fetch_ohlcv_history
     from app.services.backtest_engine import run_walkforward_backtest
     from app.services.config_service import get_config
 
-    # 1. sandbox verify (syntax + 5 dummy calls)
+    # 1. sandbox verify
     v = verify_signal_fn(parsed_signal, signal_fn_name, params or {})
     if not v.get('ok'):
         return {'ok': False, 'error': f'sandbox: {v.get("error")}', 'metrics': None}
@@ -522,17 +517,31 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
     if not candles or len(candles) < 200:
         return {'ok': False, 'error': f'candles 太少 {len(candles) if candles else 0} < 200', 'metrics': None}
 
-    # 4. run walk-forward
+    # 4. run walk-forward (Phase 12.42: 传 risk_params)
     cfg = get_config()
+    bt_kwargs = {
+        'timeframe': timeframe,
+        'signal_fn': signal_fn,
+        'slippage_pct': cfg.get('backtest_slippage_pct', 0.05),
+        'fee_pct': cfg.get('backtest_fee_pct', 0.05),
+    }
+    # Safety caps (绝不超出 user 系统级 max)
+    max_leverage_cap = float(cfg.get('leverage', 15.0))   # user 当前设定的 leverage 当上限
+    if leverage is not None:
+        bt_kwargs['leverage'] = min(max(float(leverage), 1.0), max(max_leverage_cap, float(leverage)))
+    if position_size_usdt is not None:
+        bt_kwargs['position_size_usdt'] = max(float(position_size_usdt), 1.0)
+    if stop_loss_pct is not None:
+        bt_kwargs['stop_loss_pct'] = max(min(float(stop_loss_pct), 30.0), 1.0)
+    if take_profit_pct is not None:
+        bt_kwargs['take_profit_pct'] = max(min(float(take_profit_pct), 50.0), 1.0)
+
     try:
         wf = run_walkforward_backtest(
             signal_fn_name or 'candidate',
             params or {},
             candles,
-            timeframe=timeframe,
-            signal_fn=signal_fn,
-            slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
-            fee_pct=cfg.get('backtest_fee_pct', 0.05),
+            **bt_kwargs,
         )
     except Exception as e:
         return {'ok': False, 'error': f'walkforward: {type(e).__name__}: {e}', 'metrics': None}
@@ -543,11 +552,41 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
     isr = wf.get('in_sample') or {}
     oos = wf.get('out_sample') or {}
     full = wf.get('full') or {}
+
+    # Phase 12.42: 额外抽出 trade-pattern 给 smart feedback 用
+    oos_trades = (oos.get('trades') or [])
+    sl_hits = sum(1 for t in oos_trades if t.get('reason') == 'stop_loss')
+    tp_hits = sum(1 for t in oos_trades if t.get('reason') == 'take_profit')
+    signal_exits = sum(1 for t in oos_trades if t.get('reason') in ('signal', 'reverse'))
+    bars_held_list = [t.get('bars_held') for t in oos_trades if t.get('bars_held') is not None]
+    avg_bars_held = round(sum(bars_held_list) / len(bars_held_list), 1) if bars_held_list else 0
+    win_pnl = sum(t.get('pnl') or 0 for t in oos_trades if (t.get('pnl') or 0) > 0)
+    loss_pnl = sum(abs(t.get('pnl') or 0) for t in oos_trades if (t.get('pnl') or 0) < 0)
+    win_count = sum(1 for t in oos_trades if (t.get('pnl') or 0) > 0)
+    loss_count = sum(1 for t in oos_trades if (t.get('pnl') or 0) < 0)
+    avg_win = round(win_pnl / win_count, 2) if win_count else 0
+    avg_loss = round(loss_pnl / loss_count, 2) if loss_count else 0
+
     return {
         'ok': True,
         'error': None,
         'symbol': symbol,
         'timeframe': timeframe,
+        'risk_params': {
+            'leverage': bt_kwargs.get('leverage'),
+            'position_size_usdt': bt_kwargs.get('position_size_usdt'),
+            'stop_loss_pct': bt_kwargs.get('stop_loss_pct'),
+            'take_profit_pct': bt_kwargs.get('take_profit_pct'),
+        },
+        'trade_patterns': {
+            'sl_hit_pct': round(sl_hits * 100 / max(len(oos_trades), 1), 1),
+            'tp_hit_pct': round(tp_hits * 100 / max(len(oos_trades), 1), 1),
+            'signal_exit_pct': round(signal_exits * 100 / max(len(oos_trades), 1), 1),
+            'avg_bars_held': avg_bars_held,
+            'avg_win_usdt': avg_win,
+            'avg_loss_usdt': avg_loss,
+            'win_loss_ratio': round(avg_win / avg_loss, 2) if avg_loss > 0 else None,
+        },
         'metrics': {
             'is_sharpe': round(isr.get('sharpe_ratio') or 0, 2),
             'is_pf': round(isr.get('profit_factor') or 0, 2),

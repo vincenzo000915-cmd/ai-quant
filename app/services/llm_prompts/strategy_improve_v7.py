@@ -41,9 +41,9 @@ CANDLE_LIMIT_BY_TF = {'15m': 1500, '30m': 1500, '1h': 1500, '4h': 1500, '1d': 10
 # 让 LLM 用的工具（read-only，安全）
 ALLOWED_TOOLS = ['WebSearch', 'WebFetch']
 
-# Phase 12.41.1: 2-phase 各自的 timeout
+# Phase 12.41.1: 2-phase 各自的 timeout (调高 generate 防 prompt 太大 LLM 来不及)
 RESEARCH_PHASE_TIMEOUT = 480   # 8min — Phase A 调研（带 web tools，本来就慢）
-GENERATE_PHASE_TIMEOUT = 240   # 4min — Phase B 写候选（无工具，应该快）
+GENERATE_PHASE_TIMEOUT = 720   # 12min — Phase B 写候选（prompt 已裁减但保安全）
 
 
 # Phase A 单独 prompt — 只做外部调研，输出 markdown summary
@@ -214,10 +214,15 @@ User 告诉你需 N 个。如果只有信心 1 个过自测，就交 1 个。
 
 
 def _format_refs_block(profitable: list, builtin: list, translated: list) -> str:
-    """三套 references 拼接成 prompt 部分"""
+    """三套 references 拼接成 prompt 部分（v7.1: 裁减 prompt 大小防 LLM 慢生成）
+
+    Profitable: 全 code（最权威必学）
+    Builtin: 只列 type+summary，**不带源码**（20 个全列源码太长）
+    Translated: 前 3 个带 short source；其余只列 type
+    """
     parts = []
 
-    parts.append('### 📊 DB profitable (user 现有已赚钱策略 - 最权威)')
+    parts.append('### 📊 DB profitable (user 现有已赚钱策略 - 最权威必学，含源码)')
     if not profitable:
         parts.append('  (空 — user 暂无 OOS Sharpe ≥1 的 reference)')
     else:
@@ -229,25 +234,23 @@ def _format_refs_block(profitable: list, builtin: list, translated: list) -> str
                 f'(IS Sharpe={m["is_sharpe"]} decay={m.get("decay_pct")}%)'
             )
             if r.get('parsed_signal'):
-                parts.append(f'    ```python\n    {r["parsed_signal"][:600]}\n    ```')
+                parts.append(f'    ```python\n    {r["parsed_signal"][:500]}\n    ```')
 
-    parts.append('\n### 📚 Built-in catalog (系统内置 20 vetted patterns - 最低标准)')
+    parts.append('\n### 📚 Built-in catalog (20 vetted patterns - 只列 type+summary，需要源码请引用 type 名)')
     for r in builtin:
         parts.append(f'  - `{r["type"]}` ({r["category"]}): {r["summary"]}')
-        if r.get('fn_source'):
-            parts.append(f'    ```python\n    {r["fn_source"][:800]}\n    ```')
 
-    parts.append('\n### 🌱 Translated candidates (GitHub 爬取 + AI 历史输出 - 灵感源)')
+    parts.append('\n### 🌱 Translated candidates (top 3 含源码 + 其余只列 type)')
     if not translated:
         parts.append('  (空)')
     else:
-        for r in translated:
+        for i, r in enumerate(translated):
             parts.append(
                 f'  - `{r["type"]}` ({r.get("category", "?")}/{r.get("timeframe", "?")}) '
                 f'from {r["source"]}: {r["source_name"]}'
             )
-            if r.get('fn_source'):
-                parts.append(f'    ```python\n    {r["fn_source"][:600]}\n    ```')
+            if i < 3 and r.get('fn_source'):
+                parts.append(f'    ```python\n    {r["fn_source"][:400]}\n    ```')
     return '\n'.join(parts)
 
 

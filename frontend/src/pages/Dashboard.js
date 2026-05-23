@@ -27,6 +27,8 @@ const RegimePanel = lazy(() => import('../components/RegimePanel'));
 const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
 const AdvisorPanel = lazy(() => import('../components/AdvisorPanel'));
 const AiInsightsCard = lazy(() => import('../components/AiInsightsCard'));
+// Phase 12.42 v8: AI 精选策略一键上架面板
+const AiPickPanel = lazy(() => import('../components/AiPickPanel'));
 import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
 // Phase 12.15.3: 新 design system
 import { palette, typo, pnlColor } from '../theme';
@@ -765,6 +767,11 @@ export default function Dashboard() {
           </Box>
         </Grid>
       </Grid>
+
+      {/* === Phase 12.42 v8: AI 精选策略 (qualified 候选一键上架) === */}
+      <Suspense fallback={<CardSkeleton height={200} headerWidth="35%" rows={3} />}>
+        <AiPickPanel />
+      </Suspense>
 
       {/* === Phase 11.5.6-8: AI 洞察（週復盤 / 個性化建議 / 故障診斷） === */}
       <Suspense fallback={<CardSkeleton height={180} headerWidth="30%" rows={2} />}>

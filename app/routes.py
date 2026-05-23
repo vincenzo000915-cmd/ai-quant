@@ -483,13 +483,13 @@ def ai_personal_advice():
 @require_actor
 @require_pro_tier
 def ai_improve_strategies():
-    """Phase 12.41: AI improve v7 — 真 research agent (10+ indicators / 三层 refs /
-    主动 WebSearch+WebFetch / 失败 trades 反喂)。
+    """Phase 12.42 v8: AI improve 完整量化分析师 — multi-symbol + AI 推荐 risk_params +
+    smart feedback + graceful no-edge。
     """
-    from app.services.llm_prompts.strategy_improve_v7 import improve_strategies_research_agent
+    from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
     from app.services.audit import log as audit
     uid = current_user_id() or 1
-    r = improve_strategies_research_agent(uid, max_iterations=3, target_count=3, enable_external_research=True)
+    r = improve_strategies_v8(uid, max_iterations=3, target_count=3, enable_external_research=True)
     if not r.get('ok'):
         return jsonify(r), 502
     audit('strategy_ai_improve', actor='user',
@@ -1644,6 +1644,156 @@ def promote_candidate(cid):
     err = result.get('error', '')
     code = 400 if ('not found' in err or 'must be qualified' in err or 'already exists' in err or 'missing' in err) else 500
     return jsonify(result), code
+
+
+# ===== Phase 12.42 v8: AI Insights panel endpoints =====
+
+@api_bp.route('/candidates/ai-picks', methods=['GET'])
+def candidates_ai_picks():
+    """List AI v8 qualified candidates pending user review (not yet promoted/dismissed)."""
+    rows = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'qualified',
+        StrategyCandidate.promoted_strategy_id.is_(None),
+    ).order_by(StrategyCandidate.created_at.desc()).limit(20).all()
+
+    out = []
+    for c in rows:
+        meta = c.source_meta or {}
+        bt = None
+        if c.backtest_result_id:
+            from app.models import BacktestResult
+            bt = BacktestResult.query.get(c.backtest_result_id)
+        wf = (bt.walkforward_json or {}) if bt else {}
+        oos = wf.get('out_sample') or {}
+        out.append({
+            'id': c.id,
+            'candidate_type': c.candidate_type,
+            'signal_fn_name': c.signal_fn_name,
+            'symbol': meta.get('symbol') or (bt.symbol if bt else None),
+            'timeframe': c.timeframe,
+            'category': c.category,
+            'source_name': c.source_name,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'rationale': meta.get('rationale'),
+            'external_source': meta.get('external_source'),
+            'internal_ref': meta.get('internal_ref'),
+            'analysis': meta.get('analysis'),
+            'external_research_summary': (meta.get('external_research_summary') or '')[:600],
+            'risk_params': meta.get('risk_params') or {},
+            'self_estimate': meta.get('self_estimate') or {},
+            'metrics': {
+                'oos_sharpe': oos.get('sharpe_ratio'),
+                'oos_profit_factor': oos.get('profit_factor'),
+                'oos_total_trades': oos.get('total_trades'),
+                'oos_win_rate': oos.get('win_rate'),
+                'oos_annual_return_pct': oos.get('annual_return_pct'),
+                'oos_max_drawdown_pct': oos.get('max_drawdown_pct'),
+                'decay_pct': wf.get('decay_pct'),
+            },
+            'trade_patterns': meta.get('trade_patterns') or {},
+        })
+    return jsonify({'count': len(out), 'items': out})
+
+
+@api_bp.route('/candidates/<int:cid>/promote-and-start', methods=['POST'])
+@require_actor
+@require_tier('basic')
+def candidate_promote_and_start(cid):
+    """One-click promote + start running.
+
+    Body optional: {
+      "risk_params": {"leverage": 5, "stop_loss_pct": 6, "take_profit_pct": 12, "position_size_usdt": 6},
+      "name": "...", "symbol": "BTC/USDT"
+    }
+    若不传 risk_params，使用 candidate.source_meta.risk_params (AI 推荐)
+    """
+    from app.services.candidate_pipeline import promote_candidate as do_promote
+    from app.services.audit import log as audit
+
+    c = StrategyCandidate.query.get_or_404(cid)
+    if c.status != 'qualified':
+        return jsonify({'ok': False, 'error': f'candidate {cid} status={c.status} (need qualified)'}), 400
+    if c.promoted_strategy_id:
+        return jsonify({'ok': False, 'error': f'candidate {cid} already promoted to strategy {c.promoted_strategy_id}'}), 400
+
+    data = request.get_json() or {}
+    meta = c.source_meta or {}
+    ai_risk = meta.get('risk_params') or {}
+    user_risk = data.get('risk_params') or {}
+    # final risk = user override > AI推荐 > 缺省
+    final_risk = {**ai_risk, **user_risk}
+
+    # Symbol 优先级: body > AI meta > candidate
+    symbol = data.get('symbol') or meta.get('symbol') or 'BTC/USDT'
+    owner = current_user_id() or 1
+
+    # 1. Promote (create Strategy in stopped state)
+    result = do_promote(cid, name=data.get('name'), symbol=symbol, owner_user_id=owner)
+    if not result.get('ok'):
+        err = result.get('error', '')
+        code = 400 if any(kw in err for kw in ('not found', 'must be qualified', 'already exists', 'missing')) else 500
+        return jsonify(result), code
+
+    new_sid = result['strategy']['id']
+
+    # 2. Write risk_params 进 strategy.params['risk_params']
+    s = Strategy.query.get(new_sid)
+    if s and final_risk:
+        # 写入 params jsonb (schema-less polymorphism)
+        p = dict(s.params or {})
+        p['risk_params'] = {
+            k: v for k, v in {
+                'leverage': final_risk.get('leverage'),
+                'stop_loss_pct': final_risk.get('stop_loss_pct'),
+                'take_profit_pct': final_risk.get('take_profit_pct'),
+                'position_size_usdt': final_risk.get('position_size_usdt'),
+                'reasoning': final_risk.get('reasoning'),
+            }.items() if v is not None
+        }
+        s.params = p
+
+    # 3. Set running + trigger signal cycle
+    if s:
+        s.status = 'running'
+        db.session.commit()
+        try:
+            run_strategy_signals.delay(s.id)
+        except Exception:
+            pass
+
+    audit('candidate_promote_and_start', actor='user', candidate_id=cid,
+          strategy_id=new_sid, risk_params=final_risk, symbol=symbol)
+
+    try:
+        from app.services.telegram_service import send as _tg
+        m = result.get('strategy', {})
+        _tg(
+            f'🚀 <b>用户从 AI 洞察一键上架</b>\n'
+            f'策略 #{new_sid} {m.get("name", "?")}\n'
+            f'symbol={symbol} 杠杆={final_risk.get("leverage", "default")}x SL={final_risk.get("stop_loss_pct", "default")}% TP={final_risk.get("take_profit_pct", "default")}%\n'
+            f'已 status=running，即时纳入信号循环。'
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        'ok': True,
+        'strategy': {**result['strategy'], 'risk_params': final_risk},
+    }), 201
+
+
+@api_bp.route('/candidates/<int:cid>/dismiss', methods=['POST'])
+@require_actor
+@require_tier('basic')
+def candidate_dismiss(cid):
+    """Reject AI pick — 不删，标 status='rejected'。同 /reject 但路径明确给 UI 用"""
+    c = StrategyCandidate.query.get_or_404(cid)
+    c.status = 'rejected'
+    data = request.get_json() or {}
+    if data.get('reason'):
+        c.llm_notes = (c.llm_notes or '') + f'\n[user dismissed] {data["reason"]}'
+    db.session.commit()
+    return jsonify({'ok': True, 'id': cid, 'status': c.status})
 
 
 # ===== K線數據 =====
