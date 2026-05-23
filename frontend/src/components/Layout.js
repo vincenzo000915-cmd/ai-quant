@@ -21,6 +21,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { getUser, onUserChange, logout } from '../auth';
 import { palette, typo } from '../theme';
+import TelegramChip from './TelegramChip';
 
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
@@ -231,6 +232,8 @@ export default function Layout() {
                 animation: 'pulse-dot 2s ease-in-out infinite',
               }} />
               <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: 11, color: palette.success, fontWeight: 600, letterSpacing: 0.3 }}>已连线</Typography>
+              {/* Phase 12.43: Telegram channel chip - 顶部活跃用户曝光 */}
+              <TelegramChip variant="icon" />
               {user && (
                 <>
                   <Chip

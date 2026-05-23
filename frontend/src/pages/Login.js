@@ -11,6 +11,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import LockIcon from '@mui/icons-material/Lock';
 import { useNavigate } from 'react-router-dom';
 import { loginWithPassword, registerWithPassword, setToken, verifyToken } from '../auth';
+import TelegramChip from '../components/TelegramChip';
 
 const TAB_LOGIN = 0;
 const TAB_REGISTER = 1;
@@ -201,6 +202,11 @@ export default function Login({ onLoggedIn }) {
           <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: 'text.disabled', mt: 3, fontSize: 11 }}>
             Quant Pro · AI 量化驾驶舱
           </Typography>
+
+          {/* Phase 12.43: TG community link - 漏斗顶端社群感 */}
+          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+            <TelegramChip variant="default" />
+          </Box>
         </CardContent>
       </Card>
     </Box>

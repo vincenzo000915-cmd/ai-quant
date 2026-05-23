@@ -19,6 +19,7 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import MarketingNav from '../components/MarketingNav';
 import NeuralBackdrop from '../components/NeuralBackdrop';
+import TelegramChip from '../components/TelegramChip';
 import { palette, typo } from '../theme';
 
 // ============================================================
@@ -550,6 +551,10 @@ function FinalCTA() {
               查看订阅方案
             </Button>
           </Stack>
+          {/* Phase 12.43: TG channel CTA for social proof + community */}
+          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+            <TelegramChip variant="cta" />
+          </Box>
         </Box>
       </Reveal>
     </Container>
@@ -567,7 +572,8 @@ function MarketingFooter() {
           <Typography sx={{ color: palette.textMuted, fontSize: 12 }}>
             © 2026 Quant Pro · AI 量化交易工具 · 软件租赁服务（非投资顾问）
           </Typography>
-          <Stack direction="row" spacing={2.5}>
+          <Stack direction="row" spacing={2.5} alignItems="center" flexWrap="wrap">
+            <TelegramChip variant="default" />
             {[
               { label: '服务条款', path: '/terms' },
               { label: '退款政策', path: '/refund-policy' },

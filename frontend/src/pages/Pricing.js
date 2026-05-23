@@ -11,6 +11,7 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import GroupsIcon from '@mui/icons-material/Groups';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { palette, typo } from '../theme';
+import TelegramChip from '../components/TelegramChip';
 
 const PLANS = [
   {
@@ -328,6 +329,22 @@ export default function Pricing() {
             </Grid>
           ))}
         </Grid>
+      </Box>
+
+      {/* Phase 12.43: TG CTA - 付费前社群兜底，建立信任 */}
+      <Box sx={{
+        textAlign: 'center', mb: 4, py: 3, px: 2,
+        bgcolor: 'rgba(167,139,250,0.04)',
+        border: `1px dashed ${palette.borderAccent}`,
+        borderRadius: 2,
+      }}>
+        <Typography sx={{ color: palette.text, fontWeight: 700, mb: 0.5, fontSize: 15 }}>
+          💬 加入官方频道先看再决定
+        </Typography>
+        <Typography sx={{ color: palette.textMuted, fontSize: 13, mb: 2 }}>
+          AI 每日策略 · 市场行情 · 真实订阅者反馈 · 早期 feature 访问
+        </Typography>
+        <TelegramChip variant="cta" />
       </Box>
 
       {/* === Footer links === */}
