@@ -58,8 +58,12 @@ with app.app_context():
 
 
 def claude_translate(prompt_text: str) -> str:
-    """呼叫 claude --print，回傳 stdout 原文"""
-    args = ['claude', '--print', '--model', CLAUDE_MODEL]
+    """呼叫 claude --print，回傳 stdout 原文
+
+    Phase 12.37: 加 --permission-mode default 防 cron (non-TTY) 环境下
+    claude CLI 自动启用 --dangerously-skip-permissions 触发 root 禁用错误
+    """
+    args = ['claude', '--print', '--permission-mode', 'default', '--model', CLAUDE_MODEL]
     r = subprocess.run(args, input=prompt_text, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT)
     if r.returncode != 0:
         raise RuntimeError(f'claude --print failed (rc={r.returncode}): {r.stderr.strip()[:300]}')
