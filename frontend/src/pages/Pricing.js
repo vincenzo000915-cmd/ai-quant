@@ -38,12 +38,13 @@ const PLANS = [
     price: 50,
     description: '量化交易工具基础包',
     features: [
-      '✓ 全部 22 个 hardcode 策略',
-      '✓ 智能托管 5 actions（auto retire/revive/apply/fan-out/promote）',
-      '✓ 全候选池（爬虫 + 翻译 + 沙箱 + 回测 pipeline）',
+      '✓ 全部 22 个内置策略 + 自动信号循环',
       '✓ LIVE 实盘模式（接你自己的 OKX API key）',
-      '✓ Telegram 通知',
-      '✓ 日报 + 周报 + 审计日志',
+      '✓ 智能托管（auto retire / revive / apply / fan-out）',
+      '✓ 候选池浏览 + 单个 candidate promote 上架',
+      '✓ Walk-forward 回测 + per-TF gate 自动筛选',
+      '✓ Telegram 通知（开平仓 + halt / kill switch）',
+      '✓ 每日 08:00 UTC PnL 早报',
     ],
     cta: '选择 Basic',
     accent: false,
@@ -80,7 +81,7 @@ const DISCOUNT_TIERS = [
 
 const FAQ = [
   { q: '为什么没有永久免费方案？', a: '量化工具维护成本高（candidate pipeline / AI 调用 / OKX WS / 服务器），免费会被无限注册滥用拖垮服务。注册后可免费浏览 UI 验证产品，但实际使用需订阅最少 1 个月。' },
-  { q: '注册免费可以看到什么？', a: '完整 UI（Dashboard / 策略 / 候选池 / Trades / 审计 / Settings），demo 数据 + 系统架构展示。但所有「动作」按钮禁用 — 不能新增策略 / 不能跑回测 / 不能 LIVE / 不能用 AI features。订阅后立刻全部解锁。' },
+  { q: '注册免费可以看到什么？', a: '完整 UI（Dashboard / 策略 / 候选池 / Trades / Settings），demo 数据 + 系统架构展示。所有「动作」按钮禁用 — 不能新增策略 / 不能跑回测 / 不能 LIVE / 不能用 AI features。审计日志为运营内部，仅 admin 可看。订阅 Basic 立刻解锁交易动作，Pro 解锁全部 AI。' },
   { q: '怎么付款？', a: '点击 CTA 跳转到我们网页内的支付页面，显示对应订阅 USDT 金额 + 二维码 + 链上地址（支持 TRC20 / ERC20）。从你自己钱包扫码或复制地址转账即可。系统监听链上自动确认（通常 1-3 分钟）后立即开通订阅。全程不离开 Quant Pro 网页，无需 Telegram 或第三方 App。' },
   { q: '可以退款吗？', a: '订阅期内不退款（USDT 链上不可逆 + 防滥用）。建议注册免费浏览 + 看 demo 充分了解后再订阅。详见 退款政策。' },
   { q: '你们能保证盈利吗？', a: '不能。70% 散户量化首年亏损是行业基线。我们提供的是工具（策略池 / 回测 / 风控 / AI），盈亏由策略 + 市场 + 你的参数决定。' },
