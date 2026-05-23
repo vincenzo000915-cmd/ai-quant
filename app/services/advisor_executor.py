@@ -116,13 +116,14 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             if bt:
                 tf = cand.timeframe or '4h'
                 # per-TF 門檻: (min PF, min trades, min AR%)
+                # Phase 12.38: 降 short PF 1.8 → 1.5 (1.8 几乎没策略能过，等真有 LIVE 数据再调严)
                 tf_gates = {
-                    '15m': (1.8, 60, 10),
-                    '30m': (1.8, 50, 10),
-                    '1h':  (1.5, 40, 8),
-                    '4h':  (1.5, 30, 8),
-                    '1d':  (1.4, 12, 6),
-                    '1w':  (1.3, 8,  5),
+                    '15m': (1.5, 60, 8),
+                    '30m': (1.5, 50, 8),
+                    '1h':  (1.4, 40, 7),
+                    '4h':  (1.4, 30, 7),
+                    '1d':  (1.3, 12, 5),
+                    '1w':  (1.2, 8,  4),
                 }
                 min_pf, min_trades, min_ar = tf_gates.get(tf, (1.5, 30, 8))
                 pf = bt.profit_factor or 0
