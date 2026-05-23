@@ -26,16 +26,25 @@ def make_celery(app_name=None):
 celery_app = make_celery()
 
 
-# 為每個 task push Flask app context — 沒有這個 SQLAlchemy.query 會炸
-# "Working outside of application context"。
-# 用 stack 是因為 celery prefork 子進程可能巢狀重入。
+# Phase 12.36: 修连接池泄漏 — cache app 一次，每个 task 不再 create_app
+# 之前 _push_app_context 每个 task 都 create_app() 创新 SQLAlchemy engine + 新 pool
+# → idle connection 累积爆炸 (worker process 82+ idle, max_connections=100)
 _app_ctx_stack = []
+_cached_app = None
+
+
+def _get_cached_app():
+    """Lazy cache Flask app per worker process — 只 create 一次，复用 engine + pool"""
+    global _cached_app
+    if _cached_app is None:
+        from app import create_app
+        _cached_app = create_app()
+    return _cached_app
 
 
 @task_prerun.connect
 def _push_app_context(sender=None, task_id=None, task=None, **kwargs):
-    from app import create_app
-    app = create_app()
+    app = _get_cached_app()
     ctx = app.app_context()
     ctx.push()
     _app_ctx_stack.append(ctx)

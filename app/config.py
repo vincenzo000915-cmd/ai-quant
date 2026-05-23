@@ -23,6 +23,14 @@ class Config:
     DB_PASS = os.getenv('DB_PASS', 'quant_pass')
     SQLALCHEMY_DATABASE_URI = f'postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Phase 12.36: 连接池调优 — 防 worker idle 累积爆 Postgres max_connections=100
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 5,           # 默认 5 常驻连接
+        'max_overflow': 5,        # 高峰 +5 (总 10)
+        'pool_recycle': 1800,     # 30min recycle 防长 idle 被 pg 切
+        'pool_pre_ping': True,    # 拿连接前 ping 确认活
+        'pool_timeout': 20,       # 等不到连接 20s 超时
+    }
 
     # Redis
     REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
