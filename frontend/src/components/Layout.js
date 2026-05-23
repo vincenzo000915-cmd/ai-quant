@@ -26,15 +26,21 @@ import TelegramChip from './TelegramChip';
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
 
-const NAV_ITEMS = [
+// Phase 12.43: 审计日志 admin 才看（普通 user 没意义）
+const NAV_ITEMS_ALL = [
   { label: '儀表板', icon: <DashboardIcon />, path: '/dashboard' },
   { label: '策略管理', icon: <AutoGraphIcon />, path: '/strategies' },
   { label: '候選池', icon: <HubIcon />, path: '/candidates' },
   { label: '交易紀錄', icon: <ReceiptLongIcon />, path: '/trades' },
-  { label: '審計日誌', icon: <HistoryIcon />, path: '/audit' },
+  { label: '審計日誌', icon: <HistoryIcon />, path: '/audit', adminOnly: true },
   { label: '系統設定', icon: <SettingsIcon />, path: '/settings' },
   { label: '订阅', icon: <WorkspacePremiumIcon />, path: '/pricing' },
 ];
+
+function getNavItems(user) {
+  const isAdmin = user?.role === 'admin';
+  return NAV_ITEMS_ALL.filter(it => !it.adminOnly || isAdmin);
+}
 
 const navIconMap = {
   '/dashboard': <DashboardIcon />,
@@ -93,7 +99,7 @@ export default function Layout() {
       </Toolbar>
       <Divider sx={{ borderColor: palette.border }} />
       <List sx={{ mt: 1, px: 1 }}>
-        {NAV_ITEMS.map(({ label, icon, path }) => {
+        {getNavItems(user).map(({ label, icon, path }) => {
           const active = location.pathname === path;
           return (
             <Tooltip key={path} title={open ? '' : label} placement="right">
@@ -305,7 +311,7 @@ export default function Layout() {
               },
             }}
           >
-            {NAV_ITEMS.map(({ label, path }) => (
+            {getNavItems(user).map(({ label, path }) => (
               <BottomNavigationAction
                 key={path}
                 label={<Typography variant="caption" sx={{ fontSize: 10 }}>{label}</Typography>}
