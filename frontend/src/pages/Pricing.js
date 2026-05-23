@@ -8,7 +8,6 @@ import { Box, Container, Typography, Grid, Button, Chip, Switch, Link as MuiLink
 import CheckIcon from '@mui/icons-material/Check';
 import StarIcon from '@mui/icons-material/Star';
 import BoltIcon from '@mui/icons-material/Bolt';
-import GroupsIcon from '@mui/icons-material/Groups';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { palette, typo } from '../theme';
 import TelegramChip from '../components/TelegramChip';
@@ -55,37 +54,20 @@ const PLANS = [
     icon: StarIcon,
     price: 125,
     badge: '最受欢迎',
-    description: 'AI 量化驾驶舱 — BYO LLM key',
+    description: 'AI 量化驾驶舱 — 真量化分析师 + 一键上架',
     features: [
       '✓ 包含 Basic 全部功能',
+      '🚀 AI 精选策略一键上架（v8 真 research + risk_params + 一键 apply）',
+      '✨ AI 改进顾问（多 symbol + 多 TF + 跨网 research）',
       '✨ AI 策略解释（一键看「赚什么 / 怕什么」）',
       '✨ AI 自然语言生成策略',
       '✨ AI Regime 解读 + 周复盘报告',
       '✨ AI 个性化建议 + 故障诊断 agent',
-      '✨ AI 改进顾问（自动看你策略缺口 + 生成新候选）',
       '✨ AI 仓位/杠杆推荐',
       '🔑 BYO key — 你自己付 Anthropic/OpenAI/Gemini token',
     ],
     cta: '选择 Pro',
     accent: true,
-  },
-  {
-    id: 'team',
-    name: 'Team',
-    icon: GroupsIcon,
-    price: 250,
-    priceSuffix: '+',
-    description: '团队 / 多账户 / 优先客服',
-    features: [
-      '✓ 包含 Pro 全部功能',
-      '✓ 多账户子用户管理',
-      '✓ 团队权限分级（admin / trader / viewer）',
-      '✓ 多 OKX key 隔离运行',
-      '✓ 优先 Telegram 客服（24h 内回复）',
-      '✓ 定制策略需求支持',
-    ],
-    cta: '联系销售',
-    accent: false,
   },
 ];
 
@@ -115,8 +97,6 @@ export default function Pricing() {
   const handleCta = (plan) => {
     if (plan.id === 'preview') {
       navigate('/login?tab=register');
-    } else if (plan.id === 'team') {
-      window.location.href = 'mailto:sales@medias-ai.cloud?subject=Quant Pro Team Plan 询价';
     } else {
       navigate(`/checkout?plan=${plan.id}&months=${discount.months}`);
     }

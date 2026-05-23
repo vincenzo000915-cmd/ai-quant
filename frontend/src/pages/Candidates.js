@@ -20,6 +20,7 @@ import ShowChartIcon from '@mui/icons-material/ShowChart';
 import ContentPasteIcon from '@mui/icons-material/ContentPaste';
 import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
+import { getUser } from '../auth';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -48,6 +49,10 @@ function fmtNum(v, digits = 2, suffix = '') {
 }
 
 export default function Candidates() {
+  // Phase 12.44: admin 才看 batch backtest / crawl GitHub 等系统动作
+  const currentUser = getUser();
+  const isAdmin = currentUser?.role === 'admin';
+
   const [candidates, setCandidates] = useState([]);
   const [stats, setStats] = useState({ total: 0, by_status: {}, by_source: {} });
   const [loading, setLoading] = useState(true);
@@ -202,18 +207,21 @@ export default function Candidates() {
         title="候选策略池"
         subtitle="爬虫 → LLM 翻译 → 沙箱验证 → 真实回测 → Promote 上线"
         actions={[
-          <Button key="bt" startIcon={<ScienceIcon />} onClick={backtestPending} variant="contained" size="small"
-            disabled={busy === 'bt-pending' || !(stats.by_status?.translated)}
-            sx={{ textTransform: 'none', bgcolor: palette.accent, '&:hover': { bgcolor: palette.accentDim } }}>
-            批次回测 ({stats.by_status?.translated || 0})
-          </Button>,
+          // Phase 12.44: 批次回测 / 爬 GitHub 都是 admin 动作（普通 user 通过 AiPickPanel 一键 apply）
+          ...(isAdmin ? [
+            <Button key="bt" startIcon={<ScienceIcon />} onClick={backtestPending} variant="contained" size="small"
+              disabled={busy === 'bt-pending' || !(stats.by_status?.translated)}
+              sx={{ textTransform: 'none', bgcolor: palette.accent, '&:hover': { bgcolor: palette.accentDim } }}>
+              批次回测 ({stats.by_status?.translated || 0})
+            </Button>,
+            <Button key="crawl" startIcon={<CloudDownloadIcon />} onClick={crawlGithub} variant="outlined" size="small" disabled={busy === 'crawl'}
+              sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>
+              爬 GitHub
+            </Button>,
+          ] : []),
           <Button key="pine" startIcon={<ContentPasteIcon />} onClick={() => setPineOpen(true)} variant="outlined" size="small"
             sx={{ color: palette.accent, borderColor: `${palette.accent}55`, textTransform: 'none', '&:hover': { borderColor: palette.accent, bgcolor: `${palette.accent}11` } }}>
             贴入 Pine
-          </Button>,
-          <Button key="crawl" startIcon={<CloudDownloadIcon />} onClick={crawlGithub} variant="outlined" size="small" disabled={busy === 'crawl'}
-            sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>
-            爬 GitHub
           </Button>,
           <Button key="refresh" startIcon={<RefreshIcon />} onClick={load} variant="outlined" size="small"
             sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}>

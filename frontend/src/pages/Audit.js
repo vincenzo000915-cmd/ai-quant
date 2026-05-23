@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, Chip, IconButton, LinearProgress,
-  TextField, MenuItem, Stack,
+  TextField, MenuItem, Stack, Alert,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { Navigate } from 'react-router-dom';
 import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
+import { getUser } from '../auth';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -27,6 +29,11 @@ const ACTOR_COLORS = {
 };
 
 export default function Audit() {
+  // Phase 12.44: admin-only — 非 admin 跳回 dashboard
+  const u = getUser();
+  if (u && u.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('');

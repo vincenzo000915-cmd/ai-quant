@@ -145,7 +145,7 @@ export default function Checkout() {
   };
 
   // 计算预览金额 (生成 invoice 前展示)
-  const PLAN_PRICES = { basic: 50, pro: 125, team: 250 };
+  const PLAN_PRICES = { basic: 50, pro: 125 };
   const DISCOUNT_MAP = { 1: 0, 3: 10, 6: 20, 12: 30 };
   const previewAmount = Math.round(
     PLAN_PRICES[plan] * months * (1 - (DISCOUNT_MAP[months] || 0) / 100) * 100

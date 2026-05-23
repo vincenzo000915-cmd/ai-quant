@@ -5,7 +5,7 @@ from app.services.rate_limit import rate_limit
 from app.services.cache import cached_response
 from app.services.user_scope import (
     apply_user_filter, assign_user_id, current_user_id, get_owned,
-    has_ai_access, is_admin_actor, require_actor, require_pro_tier,
+    has_ai_access, is_admin_actor, require_actor, require_admin, require_pro_tier,
     require_tier, scoped_query,
 )
 from app.tasks.strategy_tasks import run_strategy_signals
@@ -1216,9 +1216,9 @@ def get_system_config():
 
 
 @api_bp.route('/audit', methods=['GET'])
-@require_actor
+@require_admin
 def list_audit():
-    """Phase 8.4: 查 audit log。?type=halt&limit=100"""
+    """Phase 8.4 / 12.44: 查 audit log（admin-only — 跨 user 系统数据）。?type=halt&limit=100"""
     q = scoped_query(AuditLog)
     event_type = request.args.get('type')
     actor = request.args.get('actor')
@@ -1649,8 +1649,10 @@ def promote_candidate(cid):
 # ===== Phase 12.42 v8: AI Insights panel endpoints =====
 
 @api_bp.route('/candidates/ai-picks', methods=['GET'])
+@require_actor
+@require_pro_tier
 def candidates_ai_picks():
-    """List AI v8 qualified candidates pending user review (not yet promoted/dismissed)."""
+    """List AI v8 qualified candidates pending user review (Pro 才能看 AI 输出)."""
     rows = StrategyCandidate.query.filter(
         StrategyCandidate.status == 'qualified',
         StrategyCandidate.promoted_strategy_id.is_(None),

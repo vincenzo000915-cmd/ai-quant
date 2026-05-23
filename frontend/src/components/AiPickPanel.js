@@ -28,15 +28,22 @@ export default function AiPickPanel() {
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  const [actioning, setActioning] = useState({});  // {[id]: 'apply'|'reject'}
-  const [adjustDialog, setAdjustDialog] = useState(null);   // candidate being adjusted
+  const [needsPro, setNeedsPro] = useState(false);    // Phase 12.44: 402 → 升级提示
+  const [actioning, setActioning] = useState({});
+  const [adjustDialog, setAdjustDialog] = useState(null);
   const [expandedIds, setExpandedIds] = useState({});
 
   const refresh = useCallback(async () => {
     setBusy(true);
     setErr(null);
+    setNeedsPro(false);
     try {
       const r = await fetch('/api/candidates/ai-picks');
+      if (r.status === 402) {
+        setNeedsPro(true);
+        setItems([]);
+        return;
+      }
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       setItems(body.items || []);
@@ -276,7 +283,31 @@ export default function AiPickPanel() {
           </Stack>
         )}
 
-        {!busy && items.length === 0 && (
+        {/* Phase 12.44: 非 Pro user 升级提示 */}
+        {needsPro && (
+          <Box sx={{
+            py: 3, textAlign: 'center',
+            bgcolor: 'rgba(167,139,250,0.06)',
+            border: '1px dashed rgba(167,139,250,0.3)', borderRadius: 1,
+          }}>
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 1, color: PURPLE }}>
+              ✨ AI 精选策略是 Pro 功能
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block', mb: 1.5, color: 'text.secondary' }}>
+              AI 每日生成新策略 · 自带 risk_params 推荐 · 一键上架
+            </Typography>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => window.location.href = '/pricing'}
+              sx={{ bgcolor: PURPLE, '&:hover': { bgcolor: '#9472eb' } }}
+            >
+              升级到 Pro 解锁
+            </Button>
+          </Box>
+        )}
+
+        {!needsPro && !busy && items.length === 0 && (
           <Box sx={{
             py: 2.5, textAlign: 'center', color: 'text.secondary',
             border: '1px dashed rgba(167,139,250,0.2)', borderRadius: 1,

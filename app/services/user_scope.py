@@ -112,6 +112,23 @@ def is_admin_actor() -> bool:
     return bool(u and getattr(u, 'role', '') == 'admin')
 
 
+def require_admin(view):
+    """Phase 12.44: admin-only decorator (跨 user 系统数据访问 — audit log, invoices review etc)"""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not has_request_context():
+            return view(*args, **kwargs)
+        if getattr(g, 'is_system', False):
+            return view(*args, **kwargs)
+        u = getattr(g, 'current_user', None)
+        if not u:
+            return jsonify({'error': '未登入'}), 401
+        if u.role != 'admin':
+            return jsonify({'error': '此功能仅限 admin', 'tier_required': 'admin'}), 403
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def require_actor(view):
     """Decorator: 需要 system token 或 user JWT。否則 401。
 
