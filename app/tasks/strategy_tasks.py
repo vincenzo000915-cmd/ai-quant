@@ -1226,66 +1226,59 @@ def auto_ai_improve_strategies():
 
     僅 admin 跑：普通 user BYO API key 自動跑會燒 token；他們仍在 UI 手動觸發。
     """
-    from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
+    # Phase 14: 改用 catalog-first 推荐 (v8 invent 仅 full_auto 模式时调，留待 14d)
+    from app.services.llm_prompts.strategy_recommend import recommend_strategies
     from app.services.audit import log as audit
     try:
-        r = improve_strategies_v8(user_id=1, max_iterations=2, target_count=2, enable_external_research=True)
+        r = recommend_strategies(user_id=1, max_recommend=3)
     except Exception as e:
         audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v8',
               error=f'{type(e).__name__}: {e}')
         return f'auto-ai-improve-v6 error: {type(e).__name__}: {e}'
     if not r.get('ok'):
-        audit('auto_ai_improve_skipped', actor='auto:daily_ai_improve_v8',
+        audit('auto_ai_improve_skipped', actor='auto:daily_recommend',
               reason=r.get('error'))
-        return f'auto-ai-improve-v6 skipped: {r.get("error")}'
+        return f'auto-recommend skipped: {r.get("error")}'
 
-    submitted = r.get('submitted', [])
-    rejected = r.get('rejected', [])
-    iters = r.get('iterations_used', 0)
+    recs = r.get('recommendations', [])
+    auto_applied = [x for x in recs if (x.get('auto_apply') or {}).get('applied')]
+    awaiting = [x for x in recs if not (x.get('auto_apply') or {}).get('applied')]
+    mode = r.get('mode', 'manual')
 
-    audit('auto_ai_improve_done', actor='auto:daily_ai_improve_v8',
-          submitted_count=len(submitted),
-          rejected_count=len(rejected),
-          iterations_used=iters,
-          provider=r.get('llm_meta', {}).get('provider_used'),
-          analysis=(r.get('analysis') or '')[:300])
+    audit('auto_ai_improve_done', actor='auto:daily_recommend',
+          recommended_count=len(recs),
+          auto_applied_count=len(auto_applied),
+          mode=mode)
 
-    # Telegram — v6 也报失败原因（让 admin 看 LLM 卡哪）
+    # Telegram report
     try:
         from app.services.telegram_service import send as _tg
-        if submitted:
-            lines = []
-            for g in submitted[:3]:
-                m = g.get('metrics') or {}
-                rp = g.get('risk_params') or {}
-                lines.append(
-                    f'• <code>{g["candidate_type"]}</code> ({g["symbol"]} {g["timeframe"]}/{g["category"]}): '
-                    f'OOS Sharpe={m.get("oos_sharpe")} PF={m.get("oos_pf")} trades={m.get("oos_trades")} '
-                    f'· lev={rp.get("leverage")}x SL={rp.get("stop_loss_pct")}% TP={rp.get("take_profit_pct")}%'
-                )
+        lines = []
+        for x in recs[:3]:
+            mark = '🚀' if (x.get('auto_apply') or {}).get('applied') else '👀'
+            rp = x.get('recommended_risk') or {}
+            lines.append(
+                f'{mark} <code>{x["catalog_type"]}</code> ({x["symbol"]} {x["timeframe"]}/{x["category"]}) '
+                f'Sharpe={x.get("verified_sharpe")} · score={x["score"]} · lev={rp.get("leverage")}x'
+            )
+        if auto_applied:
             _tg(
-                f'🤖 <b>AI v8 — {iters} 轮迭代后 {len(submitted)} 个过自测</b>\n'
+                f'🤖 <b>AI 推荐 ({mode}): 自动上线 {len(auto_applied)} / 候选 {len(recs)}</b>\n'
                 + '\n'.join(lines)
-                + f'\n\n👉 在首页「AI 精选策略」一键应用：\n<a href="https://ai-quant.medias-ai.cloud/">https://ai-quant.medias-ai.cloud/</a>',
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">面板查看</a>',
                 event_key='ai_improve_daily',
             )
-        else:
-            # 0 个通过 — 同等重要的信号
-            fail_reasons = {}
-            for r_ in rejected[:5]:
-                reason = (r_.get('reason') or '?')[:60]
-                fail_reasons[reason] = fail_reasons.get(reason, 0) + 1
-            reasons_str = '\n'.join(f'  • {k} × {v}' for k, v in fail_reasons.items())
+        elif awaiting:
             _tg(
-                f'🤖 <b>AI improve v6 — 0 个过自测</b> ({iters} 轮)\n'
-                f'尝试了 {len(rejected)} 个候选，全 fail。Top 失败原因:\n{reasons_str}\n\n'
-                f'这是正常输出（quality > quantity），不是 bug。明天再试。',
+                f'🤖 <b>AI 推荐 ({mode}): {len(awaiting)} 个待审 (手动 mode)</b>\n'
+                + '\n'.join(lines)
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键应用</a>',
                 event_key='ai_improve_daily',
             )
     except Exception:
         pass
 
-    return f'auto-ai-improve-v6: 提交 {len(submitted)}/{len(submitted) + len(rejected)} (经 {iters} 轮迭代)'
+    return f'recommend ({mode}): {len(recs)} 个，auto-applied {len(auto_applied)}'
 
 
 # ============================================================

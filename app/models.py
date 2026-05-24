@@ -456,6 +456,13 @@ class SystemConfig(db.Model):
     auto_promote_max_per_day = db.Column(db.Integer, default=2)
     auto_promote_min_oos_sharpe = db.Column(db.Float, default=1.5)
 
+    # Phase 14c: AI decision mode (manual / semi_auto / full_auto)
+    # manual = 走 AiRecentDecisions 面板等 user apply
+    # semi_auto = verified_oos_sharpe ≥ 2.5 自动 apply，其他面板
+    # full_auto = 全部自动 + 数据充分时允许 v8 invent (Pro tier 才能开)
+    ai_decision_mode = db.Column(db.String(20), default='manual')
+    auto_apply_max_running = db.Column(db.Integer, default=8)
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -488,6 +495,8 @@ class SystemConfig(db.Model):
             'fan_out_min_oos_sharpe': self.fan_out_min_oos_sharpe or 1.0,
             'auto_promote_max_per_day': self.auto_promote_max_per_day or 2,
             'auto_promote_min_oos_sharpe': self.auto_promote_min_oos_sharpe or 1.5,
+            'ai_decision_mode': self.ai_decision_mode or 'manual',
+            'auto_apply_max_running': self.auto_apply_max_running or 8,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
@@ -590,6 +599,19 @@ class StrategyCandidate(db.Model):
     # pending / translating / translated / backtesting / qualified / rejected / promoted / error
     error_log = db.Column(db.Text)
 
+    # Phase 14: Vetted catalog metadata (when source='catalog')
+    catalog_meta = db.Column(db.JSON, default={})
+    # {
+    #   'citation': 'arxiv 2310.xxxxx / github.com/jesse-ai/jesse',
+    #   'verified_oos_sharpe': 2.3,
+    #   'verified_pf': 1.85,
+    #   'ideal_regimes': ['trending', 'high_vol'],
+    #   'fit_symbols': ['BTC/USDT', 'ETH/USDT'],
+    #   'fit_tfs': ['4h', '1d'],
+    #   'recommended_risk': {'leverage': 3, 'sl_pct': 8, 'tp_pct': 15, 'order_type': 'maker'},
+    #   'avoid_when': 'choppy / low ADX',
+    # }
+
     # 關聯
     backtest_result_id = db.Column(db.Integer, db.ForeignKey('backtest_results.id'))
     promoted_strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
@@ -617,6 +639,7 @@ class StrategyCandidate(db.Model):
             'llm_notes': self.llm_notes,
             'llm_model': self.llm_model,
             'status': self.status,
+            'catalog_meta': self.catalog_meta or {},
             'error_log': self.error_log,
             'backtest_result_id': self.backtest_result_id,
             'promoted_strategy_id': self.promoted_strategy_id,

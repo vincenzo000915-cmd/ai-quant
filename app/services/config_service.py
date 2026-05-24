@@ -41,6 +41,9 @@ DEFAULTS = {
     'fan_out_min_oos_sharpe': 1.0,
     'auto_promote_max_per_day': 2,
     'auto_promote_min_oos_sharpe': 1.5,
+    # Phase 14c
+    'ai_decision_mode': 'manual',
+    'auto_apply_max_running': 8,
 }
 
 

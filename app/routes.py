@@ -483,20 +483,21 @@ def ai_personal_advice():
 @require_actor
 @require_pro_tier
 def ai_improve_strategies():
-    """Phase 12.42 v8: AI improve 完整量化分析师 — multi-symbol + AI 推荐 risk_params +
-    smart feedback + graceful no-edge。
+    """Phase 14: catalog-first AI 推荐 — 从 vetted catalog 选 fit user 的策略 (取代 v8 invent)
+    v8 invent 仅 full_auto 模式 + 高门槛时辅助调用 (14d 待实施)
     """
-    from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
+    from app.services.llm_prompts.strategy_recommend import recommend_strategies
     from app.services.audit import log as audit
     uid = current_user_id() or 1
-    r = improve_strategies_v8(uid, max_iterations=3, target_count=3, enable_external_research=True)
+    r = recommend_strategies(uid, max_recommend=3)
     if not r.get('ok'):
         return jsonify(r), 502
+    recs = r.get('recommendations', [])
+    auto_count = sum(1 for x in recs if (x.get('auto_apply') or {}).get('applied'))
     audit('strategy_ai_improve', actor='user',
-          submitted_count=len(r.get('submitted', [])),
-          rejected_count=len(r.get('rejected', [])),
-          iterations_used=r.get('iterations_used', 0),
-          provider=r.get('llm_meta', {}).get('provider_used'))
+          recommended=len(recs),
+          auto_applied=auto_count,
+          mode=r.get('mode'))
     return jsonify(r), 201
 
 
@@ -1652,38 +1653,43 @@ def promote_candidate(cid):
 @require_actor
 @require_pro_tier
 def candidates_ai_picks():
-    """List AI v8 qualified candidates pending user review (Pro 才能看 AI 输出)."""
+    """List AI-recommended qualified candidates pending user review.
+    Phase 14: 排除 catalog 模板自身（source='catalog'），只显示 clone + AI improve 输出
+    """
     rows = StrategyCandidate.query.filter(
         StrategyCandidate.status == 'qualified',
         StrategyCandidate.promoted_strategy_id.is_(None),
+        StrategyCandidate.source != 'catalog',     # 排除 catalog 模板
     ).order_by(StrategyCandidate.created_at.desc()).limit(20).all()
 
     out = []
     for c in rows:
         meta = c.source_meta or {}
+        cat_meta = c.catalog_meta or {}
         bt = None
         if c.backtest_result_id:
             from app.models import BacktestResult
             bt = BacktestResult.query.get(c.backtest_result_id)
         wf = (bt.walkforward_json or {}) if bt else {}
         oos = wf.get('out_sample') or {}
-        out.append({
-            'id': c.id,
-            'candidate_type': c.candidate_type,
-            'signal_fn_name': c.signal_fn_name,
-            'symbol': meta.get('symbol') or (bt.symbol if bt else None),
-            'timeframe': c.timeframe,
-            'category': c.category,
-            'source_name': c.source_name,
-            'created_at': c.created_at.isoformat() if c.created_at else None,
-            'rationale': meta.get('rationale'),
-            'external_source': meta.get('external_source'),
-            'internal_ref': meta.get('internal_ref'),
-            'analysis': meta.get('analysis'),
-            'external_research_summary': (meta.get('external_research_summary') or '')[:600],
-            'risk_params': meta.get('risk_params') or {},
-            'self_estimate': meta.get('self_estimate') or {},
-            'metrics': {
+
+        # Phase 14: catalog clone 用 verified_sharpe (没 actual backtest)
+        # AI improve 输出 用 actual oos
+        is_catalog_clone = c.source == 'catalog_clone'
+        if is_catalog_clone:
+            metrics = {
+                'oos_sharpe': cat_meta.get('verified_oos_sharpe'),
+                'oos_profit_factor': cat_meta.get('verified_pf'),
+                'oos_total_trades': None,
+                'oos_win_rate': None,
+                'oos_annual_return_pct': None,
+                'oos_max_drawdown_pct': None,
+                'decay_pct': None,
+                'source_label': 'vetted catalog',
+            }
+            risk = cat_meta.get('recommended_risk') or meta.get('risk_params') or {}
+        else:
+            metrics = {
                 'oos_sharpe': oos.get('sharpe_ratio'),
                 'oos_profit_factor': oos.get('profit_factor'),
                 'oos_total_trades': oos.get('total_trades'),
@@ -1691,7 +1697,32 @@ def candidates_ai_picks():
                 'oos_annual_return_pct': oos.get('annual_return_pct'),
                 'oos_max_drawdown_pct': oos.get('max_drawdown_pct'),
                 'decay_pct': wf.get('decay_pct'),
-            },
+                'source_label': 'AI invented',
+            }
+            risk = meta.get('risk_params') or {}
+
+        out.append({
+            'id': c.id,
+            'candidate_type': c.candidate_type,
+            'signal_fn_name': c.signal_fn_name,
+            'symbol': meta.get('symbol') or (bt.symbol if bt else None),
+            'timeframe': c.timeframe,
+            'category': c.category,
+            'source': c.source,
+            'source_name': c.source_name,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'rationale': meta.get('rationale') or cat_meta.get('description'),
+            'description': cat_meta.get('description'),
+            'citation': cat_meta.get('citation'),
+            'ideal_regimes': cat_meta.get('ideal_regimes'),
+            'avoid_when': cat_meta.get('avoid_when'),
+            'external_source': meta.get('external_source'),
+            'internal_ref': meta.get('internal_ref'),
+            'analysis': meta.get('analysis'),
+            'external_research_summary': (meta.get('external_research_summary') or '')[:600],
+            'risk_params': risk,
+            'self_estimate': meta.get('self_estimate') or {},
+            'metrics': metrics,
             'trade_patterns': meta.get('trade_patterns') or {},
         })
     return jsonify({'count': len(out), 'items': out})
