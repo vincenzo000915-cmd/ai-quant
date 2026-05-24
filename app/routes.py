@@ -916,8 +916,14 @@ def run_all_backtests():
 @api_bp.route('/strategies/performance', methods=['GET'])
 @require_actor
 def strategies_performance():
-    """每個策略的真實表現統計（trades 表 + positions 表 + 最新 backtest）"""
+    """每個策略的真實表現統計（trades 表 + positions 表 + 最新 backtest）
+
+    Phase 14i: ?include=live_card 时额外返回 running 策略 selling-point 数据:
+      equity_curve_30d (累计 pnl 序列 max 30 点),
+      open_position_detail (entry/current/SL/TP/距离%/浮盈%)
+    """
     from sqlalchemy import func
+    include_live = (request.args.get('include') == 'live_card')
 
     strategies = scoped_query(Strategy).order_by(Strategy.id).all()
 
@@ -992,7 +998,7 @@ def strategies_performance():
             if bt.max_drawdown_pct and bt.max_drawdown_pct >= 100:
                 rating = 'liquidated'  # 模擬下早就爆倉
 
-        result.append({
+        row = {
             'id': s.id,
             'name': s.name,
             'type': s.type,
@@ -1014,7 +1020,67 @@ def strategies_performance():
             'last_trade_at': trade_stats.last_trade.isoformat() if trade_stats.last_trade else None,
             'backtest': bt_data,
             'rating': rating,
-        })
+        }
+
+        # Phase 14i: live_card 数据 — 仅 running 策略需要
+        if include_live and s.status == 'running':
+            # 30 天 trades → 累计 pnl curve
+            import datetime as _dt
+            cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=30)
+            recent_trades = db.session.query(Trade.exit_time, Trade.pnl).filter(
+                Trade.strategy_id == s.id,
+                Trade.exit_time != None,           # noqa: E711
+                Trade.exit_time > cutoff,
+            ).order_by(Trade.exit_time.asc()).all()
+            cum = 0.0
+            curve = []
+            for et, pnl in recent_trades:
+                cum += float(pnl or 0)
+                curve.append({'ts': et.isoformat(), 'cum_pnl': round(cum, 4)})
+            # 下采样到 max 30 点 (取等距)
+            if len(curve) > 30:
+                step = len(curve) // 30
+                curve = curve[::max(step, 1)][-30:]
+            row['equity_curve_30d'] = curve
+            row['trades_30d'] = len(recent_trades)
+
+            # 持仓详情
+            if open_pos:
+                entry = float(open_pos.entry_price or 0)
+                cur = float(open_pos.current_price or 0)
+                sl = float(open_pos.sl_price or 0)
+                tp = float(open_pos.tp_price or 0)
+                side = (open_pos.side or '').lower()
+                size = float(open_pos.size or 0)
+                # 距离 % (相对当前价)
+                dist_sl_pct = None
+                dist_tp_pct = None
+                if cur > 0 and sl > 0:
+                    dist_sl_pct = round((cur - sl) / cur * 100, 2) if side == 'long' else round((sl - cur) / cur * 100, 2)
+                if cur > 0 and tp > 0:
+                    dist_tp_pct = round((tp - cur) / cur * 100, 2) if side == 'long' else round((cur - tp) / cur * 100, 2)
+                # 浮盈 %
+                unreal_pct = None
+                if entry > 0:
+                    if side == 'long':
+                        unreal_pct = round((cur - entry) / entry * 100, 2)
+                    elif side == 'short':
+                        unreal_pct = round((entry - cur) / entry * 100, 2)
+                row['open_position_detail'] = {
+                    'side': side,
+                    'size': size,
+                    'entry_price': entry,
+                    'current_price': cur,
+                    'sl_price': sl or None,
+                    'tp_price': tp or None,
+                    'dist_to_sl_pct': dist_sl_pct,
+                    'dist_to_tp_pct': dist_tp_pct,
+                    'unrealized_pnl_usd': round(float(open_pos.unrealized_pnl or 0), 2),
+                    'unrealized_pnl_pct': unreal_pct,
+                    'opened_at': open_pos.opened_at.isoformat() if open_pos.opened_at else None,
+                }
+
+        result.append(row)
 
     return jsonify(result)
 

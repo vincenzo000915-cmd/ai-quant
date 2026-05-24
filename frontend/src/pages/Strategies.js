@@ -33,6 +33,7 @@ import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import StatusChip from '../components/common/StatusChip';
 import { prettifyType } from '../utils/strategyTypeLabels';
+import LiveStrategyCard from '../components/LiveStrategyCard';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -204,6 +205,24 @@ export default function Strategies() {
     setLoading(false);
   }, []);
 
+  // Phase 14i: 共享 perf 数据 (live_card), 每 30s 刷新
+  const [livePerf, setLivePerf] = useState({});      // { [id]: row }
+  useEffect(() => {
+    const fetchLive = async () => {
+      try {
+        const r = await fetch(`${API}/api/strategies/performance?include=live_card`);
+        if (!r.ok) return;
+        const arr = await r.json();
+        const map = {};
+        (arr || []).forEach(row => { map[row.id] = row; });
+        setLivePerf(map);
+      } catch {}
+    };
+    fetchLive();
+    const t = setInterval(fetchLive, 30000);
+    return () => clearInterval(t);
+  }, []);
+
   const fetchEstimate = async () => {
     try {
       const res = await fetch(`${API}/api/simulation/estimate?capital=100&leverage=15`);
@@ -335,7 +354,8 @@ export default function Strategies() {
               </TableHead>
               <TableBody>
                 {items.map((strategy) => (
-                  <TableRow key={strategy.id} sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' } }}>
+                  <React.Fragment key={strategy.id}>
+                  <TableRow sx={{ '&:hover': { bgcolor: 'rgba(255,255,255,0.03)' }, '& td': strategy.status === 'running' ? { borderBottom: 'none' } : {} }}>
                     <TableCell>
                       <Typography variant="body2" fontWeight={600} sx={{ fontSize: 13 }}>{strategy.name}</Typography>
                     </TableCell>
@@ -441,6 +461,15 @@ export default function Strategies() {
                       </Box>
                     </TableCell>
                   </TableRow>
+                  {/* Phase 14i: running 策略卖点 strip */}
+                  {strategy.status === 'running' && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ pt: 0, pb: 1.5, px: 1 }}>
+                        <LiveStrategyCard strategyId={strategy.id} data={livePerf[strategy.id]} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  </React.Fragment>
                 ))}
               </TableBody>
             </Table>
