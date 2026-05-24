@@ -597,14 +597,18 @@ def improve_strategies_v8(user_id: int, *,
     except Exception:
         detect_regime = lambda *_a, **_kw: {}
     symbol_stats: dict[str, Any] = {}
+    candle_cache: dict[str, list] = {}    # Phase 12.46.1: 复用避免 OKX rate limit
+    import time as _time
     for symbol in universe:
         for tf in TARGET_TFS:
             key = f'{symbol}@{tf}'
             try:
                 candles = fetch_ohlcv_history(symbol, tf, total_limit=CANDLE_LIMIT_BY_TF.get(tf, 1500))
+                candle_cache[key] = candles
                 stats = compute_symbol_stats(candles)
                 regime = detect_regime(symbol, tf)
                 symbol_stats[key] = {'regime': regime, 'stats': stats}
+                _time.sleep(0.2)    # OKX 公开 API 20 req/2s 限频，主动避让
             except Exception as e:
                 symbol_stats[key] = {'error': f'{type(e).__name__}: {e}'}
 
@@ -724,6 +728,7 @@ def improve_strategies_v8(user_id: int, *,
                 position_size_usdt=rp.get('position_size_usdt'),
                 stop_loss_pct=rp.get('stop_loss_pct'),
                 take_profit_pct=rp.get('take_profit_pct'),
+                cached_candles=candle_cache.get(f'{symbol}@{tf or "4h"}'),  # 复用 cache 避 OKX rate limit
             )
 
             passed = False

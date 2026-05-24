@@ -485,7 +485,8 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
                    leverage: float | None = None,
                    position_size_usdt: float | None = None,
                    stop_loss_pct: float | None = None,
-                   take_profit_pct: float | None = None) -> dict:
+                   take_profit_pct: float | None = None,
+                   cached_candles: list | None = None) -> dict:
     """内存跑 walk-forward 回测，**不写 DB** — 给 LLM 迭代自测用。
 
     Phase 12.42 v8: 接受 risk_params overrides — LLM 写的 leverage/SL/TP/pos 直接进回测。
@@ -509,11 +510,14 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
     except Exception as e:
         return {'ok': False, 'error': f'load: {type(e).__name__}: {e}', 'metrics': None}
 
-    # 3. fetch candles
-    try:
-        candles = fetch_ohlcv_history(symbol, timeframe, total_limit=candle_limit)
-    except Exception as e:
-        return {'ok': False, 'error': f'fetch_ohlcv: {type(e).__name__}: {e}', 'metrics': None}
+    # 3. fetch candles — 优先用调用方传的 cache 避免 OKX rate limit
+    if cached_candles and len(cached_candles) >= 200:
+        candles = cached_candles
+    else:
+        try:
+            candles = fetch_ohlcv_history(symbol, timeframe, total_limit=candle_limit)
+        except Exception as e:
+            return {'ok': False, 'error': f'fetch_ohlcv: {type(e).__name__}: {e}', 'metrics': None}
     if not candles or len(candles) < 200:
         return {'ok': False, 'error': f'candles 太少 {len(candles) if candles else 0} < 200', 'metrics': None}
 
