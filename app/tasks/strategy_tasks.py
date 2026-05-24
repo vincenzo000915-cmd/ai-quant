@@ -1229,7 +1229,7 @@ def auto_ai_improve_strategies():
     from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
     from app.services.audit import log as audit
     try:
-        r = improve_strategies_v8(user_id=1, max_iterations=3, target_count=3, enable_external_research=True)
+        r = improve_strategies_v8(user_id=1, max_iterations=2, target_count=2, enable_external_research=True)
     except Exception as e:
         audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v8',
               error=f'{type(e).__name__}: {e}')

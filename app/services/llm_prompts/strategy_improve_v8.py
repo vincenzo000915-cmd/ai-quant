@@ -36,7 +36,7 @@ SYMBOL_UNIVERSE_BASE = ['AVAX/USDT', 'BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 CANDLE_LIMIT_BY_TF = {'15m': 1500, '30m': 1500, '1h': 1500, '4h': 1500, '1d': 1000, '1w': 500}
 ALLOWED_TOOLS = ['WebSearch', 'WebFetch']
 RESEARCH_PHASE_TIMEOUT = 480
-GENERATE_PHASE_TIMEOUT = 1080   # 18min — v8.1 prompt 加频率校准后 720s 实测 timeout
+GENERATE_PHASE_TIMEOUT = 1500   # 25min — v8.3 prompt + 复杂 JSON 输出实测要更多时间
 
 
 RESEARCH_SYSTEM_PROMPT = """你是量化研究员。**任务**: 调研外部资源找当前对多个 crypto symbols 有效的交易模式。
@@ -778,7 +778,7 @@ def improve_strategies_v8(user_id: int, *,
             user_id=user_id,
             prompt=prompt,
             system=GENERATE_SYSTEM_PROMPT,
-            max_tokens=10000,
+            max_tokens=6000,    # v8.3 实测：减小 output 让 sonnet 更快收敛 (10000 → 6000)
             allowed_tools=None,
             timeout=GENERATE_PHASE_TIMEOUT,
         )
