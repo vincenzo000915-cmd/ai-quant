@@ -178,14 +178,16 @@ def _run_signals(strategy_id=None, category_filter=None):
     mode = cfg.get('trading_mode', 'paper')
 
     def _resolve_risk(s):
-        """Phase 12.42 v8 + 13 + 14d: 优先 strategy.params.risk_params > SystemConfig 默认"""
+        """Phase 12.42 v8 + 13 + 14d + 14e: per-strategy risk_params override
+        14e: 同时接受 sl_pct/tp_pct (catalog 简写) 和 stop_loss_pct/take_profit_pct (v8) — alias 修
+        """
         rp = (s.params or {}).get('risk_params') or {}
         return (
             rp.get('position_size_usdt') or trade_size_default,
             rp.get('leverage') or lev_default,
-            rp.get('stop_loss_pct') or sl_pct_default,
-            rp.get('take_profit_pct') or tp_pct_default,
-            rp.get('order_type') or 'market',   # Phase 13: 'market' | 'maker' | 'maker_with_fallback'
+            rp.get('stop_loss_pct') or rp.get('sl_pct') or sl_pct_default,
+            rp.get('take_profit_pct') or rp.get('tp_pct') or tp_pct_default,
+            rp.get('order_type') or 'market',
         )
 
     def _is_paper_only(s) -> bool:
@@ -474,8 +476,8 @@ def check_stop_loss():
                 if strat:
                     rp = (strat.params or {}).get('risk_params') or {}
                     lev = rp.get('leverage') or cfg_lev
-                    sl_pct = rp.get('stop_loss_pct') or cfg_sl_pct
-                    tp_pct = rp.get('take_profit_pct') or cfg_tp_pct
+                    sl_pct = rp.get('stop_loss_pct') or rp.get('sl_pct') or cfg_sl_pct
+                    tp_pct = rp.get('take_profit_pct') or rp.get('tp_pct') or cfg_tp_pct
             pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
             close_side = 'buy' if pos.side == 'short' else 'sell'
 

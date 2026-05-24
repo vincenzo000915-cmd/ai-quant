@@ -207,10 +207,55 @@ def _pick_symbol_for_recommendation(entry: StrategyCandidate, user_symbols: list
     return 'AVAX/USDT'
 
 
-def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: str) -> StrategyCandidate:
-    """克隆 catalog → 新 candidate (避免 catalog 模板被 promote 后无法复用)"""
+def _adapt_risk_to_capital(rec_risk: dict, symbol: str, capital: float, prices: dict,
+                            trade_size_default: float = 10) -> dict:
+    """Phase 14e: 把 catalog 的 recommended_risk 自适应 user 实际资金
+    确保 position_size × leverage ≥ min contract notional × 1.5 (留 buffer)
+    确保 position_size ≤ capital × 20% (单笔不超 20% 资金)
+    """
+    from app.services.symbols import get_contract_size
+    adapted = dict(rec_risk or {})
+    rec_lev = float(adapted.get('leverage') or 3)
+    contract_size = get_contract_size(symbol)
+    price = prices.get(symbol, 0) if prices else 0
+
+    if not (contract_size and price and capital > 0):
+        # 无信息时退默认
+        adapted['position_size_usdt'] = trade_size_default
+        return adapted
+
+    min_notional = contract_size * price * 1.5    # 1.5 = 50% buffer (避 contracts 取整)
+    max_capital_per_trade = capital * 0.20         # 单笔最多 20% 资金
+
+    # 算需要的 position_size 让 notional 至少能开 1 contract
+    needed_size = min_notional / rec_lev
+
+    # 限制 ≤ max_capital_per_trade
+    final_size = min(needed_size, max_capital_per_trade)
+
+    # 但 final_size × rec_lev 还不够开 → 提杠杆 (cap 10x)
+    if final_size * rec_lev < min_notional:
+        new_lev = min(10, int(min_notional / final_size) + 1)
+        if new_lev * final_size >= min_notional:
+            adapted['leverage'] = new_lev
+            adapted['_lev_bumped'] = f'{rec_lev}x → {new_lev}x (足够开最小合约)'
+
+    adapted['position_size_usdt'] = round(final_size, 2)
+    adapted['_capital_at_recommend'] = round(capital, 2)
+    adapted['_min_contract_notional'] = round(min_notional, 2)
+    return adapted
+
+
+def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: str,
+                                  capital: float = 0, prices: dict | None = None,
+                                  trade_size_default: float = 10) -> StrategyCandidate:
+    """克隆 catalog → 新 candidate (avoid 模板被消费)
+    Phase 14e: 同时自适应 risk_params 到 user 实际资金
+    """
     cm = entry.catalog_meta or {}
     rec_risk = cm.get('recommended_risk') or {}
+    # 14e: 自适应 risk
+    adapted_risk = _adapt_risk_to_capital(rec_risk, symbol, capital, prices or {}, trade_size_default)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')
     cloned_type = f'{entry.candidate_type}_u{user_id}_{timestamp}'
     clone = StrategyCandidate(
@@ -220,7 +265,7 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
         source_author=entry.source_author,
         source_meta={
             'symbol': symbol,
-            'risk_params': rec_risk,
+            'risk_params': adapted_risk,
             'cloned_from_catalog_id': entry.id,
             'cloned_at': timestamp,
             'description': cm.get('description'),
@@ -250,6 +295,16 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
         return None
     cm = clone.catalog_meta or {}
     sharpe = float(cm.get('verified_oos_sharpe') or 1.5)
+    sym = (clone.source_meta or {}).get('symbol') or 'AVAX/USDT'
+
+    # Phase 14e: Concentration guard — 同 (symbol, TF, category) 已 running 则 skip
+    overlap = scoped_query(Strategy).filter_by(
+        status='running', symbol=sym, timeframe=clone.timeframe,
+        category=clone.category,
+    ).first()
+    if overlap:
+        return {'skipped': True,
+                'reason': f'已 running 同 (symbol={sym}, TF={clone.timeframe}, cat={clone.category}) 策略 #{overlap.id}，避免过度集中'}
 
     # Guardrails
     n_running = scoped_query(Strategy).filter_by(status='running').count()
@@ -371,19 +426,58 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
             'message': f'资金 ${user_capital:.0f} 不足以下单任何 catalog 策略最小合约。建议加资金或降 lev/trade_size',
         }
 
+    # Phase 14e: 拉过去 30 天 trade history — 避免推荐已亏损的 strategy type
+    losing_types = set()
+    try:
+        from app.models import Trade
+        from sqlalchemy import func
+        recent = (db.session.query(
+            Strategy.type,
+            func.coalesce(func.sum(Trade.pnl), 0).label('pnl'),
+            func.count(Trade.id).label('n'),
+        ).join(Trade, Trade.strategy_id == Strategy.id)
+         .filter(Trade.exit_time > datetime.datetime.utcnow() - datetime.timedelta(days=30))
+         .group_by(Strategy.type).all())
+        for row in recent:
+            if row.pnl < 0 and row.n >= 3:
+                # 30 天内 3+ 笔且累计亏 → 该类型暂时避开
+                losing_types.add(row.type.replace('cand_', '').replace('cat_', ''))
+    except Exception:
+        pass
+
     # Score 所有 feasible catalog
     scored = []
     for entry in feasible_catalog:
         s, reasons = _score_catalog_entry(entry, user, regimes)
+        # 14e: 历史亏损 type 减分
+        base_type = entry.candidate_type.replace('cat_', '')
+        if any(lt in base_type or base_type in lt for lt in losing_types):
+            s -= 25
+            reasons.append(f'历史 30 天 {base_type} 亏损 (-25)')
         scored.append((entry, s, reasons))
     scored.sort(key=lambda x: -x[1])
-    top = scored[:max_recommend]
+
+    # Phase 14e: diversification — top max_recommend 强制不同 category
+    top = []
+    seen_categories = set()
+    for entry, s, reasons in scored:
+        if len(top) >= max_recommend:
+            break
+        if entry.category in seen_categories:
+            continue
+        top.append((entry, s, reasons))
+        seen_categories.add(entry.category)
+    # 如果不同 category 不够，补上次优 (允许同 category)
+    if len(top) < max_recommend:
+        remaining = [(e, s, r) for e, s, r in scored if (e, s, r) not in top]
+        top.extend(remaining[:max_recommend - len(top)])
 
     # Clone top N + maybe auto-apply
     recommendations = []
     for entry, score, reasons in top:
         sym = _pick_symbol_for_recommendation(entry, user['symbols'], prices, user_capital, trade_size)
-        clone = _clone_catalog_to_candidate(entry, user_id, sym)
+        clone = _clone_catalog_to_candidate(entry, user_id, sym, user_capital, prices, trade_size)
+        adapted_risk = (clone.source_meta or {}).get('risk_params') or {}
         auto = _maybe_auto_apply(clone, user_id, mode, cfg)
         recommendations.append({
             'catalog_id': entry.id,
@@ -394,7 +488,8 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
             'category': entry.category,
             'timeframe': entry.timeframe,
             'verified_sharpe': (entry.catalog_meta or {}).get('verified_oos_sharpe'),
-            'recommended_risk': (entry.catalog_meta or {}).get('recommended_risk'),
+            'recommended_risk_original': (entry.catalog_meta or {}).get('recommended_risk'),
+            'recommended_risk': adapted_risk,    # ★ adapted to capital
             'description': (entry.catalog_meta or {}).get('description'),
             'score': score,
             'reasons': reasons,
