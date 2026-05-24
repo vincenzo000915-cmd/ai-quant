@@ -11,6 +11,7 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { palette, typo } from '../theme';
 import TelegramChip from '../components/TelegramChip';
+import { getUser } from '../auth';
 
 const PLANS = [
   {
@@ -98,9 +99,15 @@ export default function Pricing() {
   const handleCta = (plan) => {
     if (plan.id === 'preview') {
       navigate('/login?tab=register');
-    } else {
-      navigate(`/checkout?plan=${plan.id}&months=${discount.months}`);
+      return;
     }
+    // Phase 12.48: 未登入 → 先注册（带 next 让注册完跳回 checkout，不掉单）
+    const target = `/checkout?plan=${plan.id}&months=${discount.months}`;
+    if (!getUser()) {
+      navigate(`/login?tab=register&next=${encodeURIComponent(target)}`);
+      return;
+    }
+    navigate(target);
   };
 
   const calcPrice = (basePrice) => {
@@ -156,14 +163,14 @@ export default function Pricing() {
         </Box>
       </Box>
 
-      {/* === 4 plans === */}
-      <Grid container spacing={2.5} sx={{ mb: 8 }}>
+      {/* === 3 plans (Phase 12.48: md=4 让 3 张卡占满 12 grid) === */}
+      <Grid container spacing={2.5} sx={{ mb: 8 }} justifyContent="center">
         {PLANS.map((plan) => {
           const Icon = plan.icon;
           const isAccent = plan.accent;
           const price = calcPrice(plan.price);
           return (
-            <Grid key={plan.id} item xs={12} sm={6} md={3}>
+            <Grid key={plan.id} item xs={12} sm={6} md={4}>
               <Box sx={{
                 position: 'relative', height: '100%',
                 p: 3,

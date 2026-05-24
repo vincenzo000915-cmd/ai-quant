@@ -9,7 +9,7 @@ import ShowChartIcon from '@mui/icons-material/ShowChart';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import LockIcon from '@mui/icons-material/Lock';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { loginWithPassword, registerWithPassword, setToken, verifyToken } from '../auth';
 import TelegramChip from '../components/TelegramChip';
 
@@ -17,7 +17,13 @@ const TAB_LOGIN = 0;
 const TAB_REGISTER = 1;
 
 export default function Login({ onLoggedIn }) {
-  const [tab, setTab] = useState(TAB_LOGIN);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Phase 12.48: URL ?tab=register / ?next=... 支持
+  const initialTab = searchParams.get('tab') === 'register' ? TAB_REGISTER : TAB_LOGIN;
+  const nextUrl = searchParams.get('next');   // 注册/登入后回到这里
+
+  const [tab, setTab] = useState(initialTab);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -29,15 +35,14 @@ export default function Login({ onLoggedIn }) {
   const [adminError, setAdminError] = useState(null);
   const [adminBusy, setAdminBusy] = useState(false);
 
-  const navigate = useNavigate();
-
   // Phase 12.29: Login 既可被父组件 mount（AuthGate locked 模式）
-  // 也可作为独立 /login 路由 — 后者没 onLoggedIn callback，自己跳 /dashboard
+  // 也可作为独立 /login 路由 — 后者没 onLoggedIn callback
+  // Phase 12.48: 自跳路径 = ?next= (若有) > /dashboard
   const handleSuccess = (user) => {
     if (onLoggedIn) {
       onLoggedIn(user);
     } else {
-      navigate('/dashboard', { replace: true });
+      navigate(nextUrl || '/dashboard', { replace: true });
     }
   };
 

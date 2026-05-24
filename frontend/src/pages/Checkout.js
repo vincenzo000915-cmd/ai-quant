@@ -16,6 +16,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { QRCodeSVG } from 'qrcode.react';
 import { palette, typo } from '../theme';
+import { getUser } from '../auth';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -31,6 +32,15 @@ export default function Checkout() {
   const navigate = useNavigate();
   const plan = params.get('plan') || 'basic';
   const months = parseInt(params.get('months') || '1', 10);
+
+  // Phase 12.48: 未登入直接拉 checkout 是漏洞（user 付完款没账号收订阅）
+  // 强制先注册，注册完跳回这里 (带原 query 不掉单)
+  useEffect(() => {
+    if (!getUser()) {
+      const next = encodeURIComponent(`/checkout?plan=${plan}&months=${months}`);
+      navigate(`/login?tab=register&next=${next}`, { replace: true });
+    }
+  }, [navigate, plan, months]);
 
   const [chainsConfig, setChainsConfig] = useState({});
   const [selectedChain, setSelectedChain] = useState(null);
