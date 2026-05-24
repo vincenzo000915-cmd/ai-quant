@@ -33,6 +33,8 @@ export default function AiPickPanel() {
   const [actioning, setActioning] = useState({});
   const [adjustDialog, setAdjustDialog] = useState(null);
   const [expandedIds, setExpandedIds] = useState({});
+  // Phase 14h: per-item LLM 解释 (lazy-fetched after items load)
+  const [explanations, setExplanations] = useState({});   // { [id]: { explanation, risk_warning, source, loading?, error? } }
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -56,6 +58,35 @@ export default function AiPickPanel() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Phase 14h: 每次 items 变化, 异步取每条的 LLM 解释 (catalog clone 才有意义)
+  useEffect(() => {
+    if (!items.length) return;
+    items.filter(it => it.source === 'catalog_clone').forEach(it => {
+      setExplanations(prev => {
+        if (prev[it.id]) return prev;    // 已有 (loading/done/error) → skip
+        // 启动 fetch (在 setState 内安全, 因为下方 promise 在 microtask 调度)
+        fetch('/api/me/recommendation-explain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clone_id: it.id }),
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (!data.ok) {
+              setExplanations(s => ({ ...s, [it.id]: { error: data.error || 'failed', loading: false } }));
+              return;
+            }
+            setExplanations(s => ({ ...s, [it.id]: {
+              explanation: data.explanation, risk_warning: data.risk_warning,
+              source: data.source, cached: data.cached, loading: false,
+            }}));
+          })
+          .catch(e => setExplanations(s => ({ ...s, [it.id]: { error: e.message, loading: false } })));
+        return { ...prev, [it.id]: { loading: true } };
+      });
+    });
+  }, [items]);
 
   const handleApply = async (cid, customRisk = null) => {
     setActioning(s => ({ ...s, [cid]: 'apply' }));
@@ -168,6 +199,42 @@ export default function AiPickPanel() {
               </Typography>
             )}
           </Box>
+
+          {/* Phase 14h: LLM 个性化解释 (lazy-loaded) */}
+          {(() => {
+            const expl = explanations[it.id];
+            if (!expl) return null;
+            if (expl.loading) {
+              return (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, color: 'text.secondary' }}>
+                  <CircularProgress size={12} />
+                  <Typography variant="caption">AI 正在分析为什么这条适合你…</Typography>
+                </Box>
+              );
+            }
+            if (expl.error) return null;   // 静默 fallback 到 rationale
+            return (
+              <Box sx={{
+                mb: 1, p: 1, borderRadius: 1,
+                bgcolor: 'rgba(96,165,250,0.06)',
+                border: '1px solid rgba(96,165,250,0.18)',
+              }}>
+                <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.5 }}>
+                  🤖 {expl.explanation}
+                </Typography>
+                {expl.risk_warning && (
+                  <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: '#fbbf24' }}>
+                    ⚠️ {expl.risk_warning}
+                  </Typography>
+                )}
+                <Typography variant="caption" sx={{ display: 'block', mt: 0.3, color: 'text.disabled', fontSize: 9 }}>
+                  {expl.source === 'llm' && '由 AI 实时生成'}
+                  {expl.source === 'cache' && '由 AI 生成 (cached 12h)'}
+                  {expl.source === 'rule_based' && 'rule-based 描述'}
+                </Typography>
+              </Box>
+            );
+          })()}
 
           {/* Rationale snippet */}
           {it.rationale && (

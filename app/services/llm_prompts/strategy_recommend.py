@@ -605,3 +605,147 @@ def _maybe_auto_apply_invent(cand, user_id: int, mode: str, cfg: dict) -> dict |
         pass
 
     return {'applied': True, 'paper_only_days': 7, 'strategy_id': sid}
+
+
+# ============================================================
+# Phase 14h: AI 推荐解释 LLM 化
+# 给一条 clone candidate (推荐结果) → 调 user 的 LLM 生成 1-2 句中文解释 + 风险提示
+# Fallback 到 catalog_meta.description + rule-based reasons
+# 缓存 12h (catalog_id + symbol 不变 → 解释稳定)
+# ============================================================
+
+_EXPLAIN_SYSTEM = """你是量化交易顾问。根据 catalog 策略元数据 + 用户当前资金/持仓状态 + 市场环境，写 1-2 句中文解释，告诉用户为什么这条策略适合他现在。
+要求:
+- 第一句: 为什么 fit (匹配 user 的 X + 利用 Y 市场环境)
+- 第二句: 风险/注意事项 (避开什么环境)
+- 中文, 简洁, 口语化, 不要罗列指标参数
+- 不要寒暄, 不要"建议你"开头, 直接陈述
+输出严格 JSON: {"explanation": "...", "risk_warning": "..."}"""
+
+
+def _build_explain_prompt(entry, sym: str, user: dict, regimes: dict,
+                          user_capital: float, score: int, reasons: list) -> str:
+    cm = entry.catalog_meta or {}
+    fit_regimes = cm.get('ideal_regimes') or []
+    avoid = cm.get('avoid_when') or '-'
+    desc = cm.get('description') or '-'
+    rec_risk = cm.get('recommended_risk') or {}
+    sharpe = cm.get('verified_oos_sharpe') or '-'
+    cur_regime = regimes.get(sym, {}) if isinstance(regimes, dict) else {}
+
+    return f"""## 策略
+- 类型: {entry.candidate_type}
+- 中文描述: {desc}
+- 适合环境: {', '.join(fit_regimes) if fit_regimes else '-'}
+- 避开: {avoid}
+- OOS Sharpe: {sharpe}
+- 推荐 risk: leverage={rec_risk.get('leverage')}x, SL={rec_risk.get('sl_pct')}%, TP={rec_risk.get('tp_pct')}%
+
+## 用户状态
+- 资金: ${user_capital:.0f}
+- 现有 running 策略数: {user.get('count', 0)}
+- 持仓品种: {', '.join(user.get('symbols', []) or ['(无)'])}
+- 持仓类别: {', '.join(user.get('categories', []) or ['(无)'])}
+
+## 推荐 symbol + 当前市场
+- 推荐: {sym}
+- 当前 {sym} 环境: {cur_regime if cur_regime else '(数据不足)'}
+
+## 评分依据 (rule-based)
+{chr(10).join('- ' + r for r in reasons[:5])}
+
+请输出严格 JSON。"""
+
+
+def explain_recommendation(user_id: int, clone_candidate_id: int) -> dict:
+    """给一条 clone candidate, 生成 LLM 中文解释 + 风险提示.
+
+    返回 {ok, explanation, risk_warning, fallback, source: 'llm'|'rule_based'|'cache'}
+    """
+    clone = StrategyCandidate.query.get(clone_candidate_id)
+    if not clone:
+        return {'ok': False, 'error': 'candidate not found'}
+
+    src_meta = clone.source_meta or {}
+    cm = clone.catalog_meta or {}
+    catalog_id = src_meta.get('cloned_from_catalog_id')
+    sym = src_meta.get('symbol') or (cm.get('recommended_symbol') if cm else None) or 'BTC/USDT'
+    desc = cm.get('description') or '(无描述)'
+    avoid = cm.get('avoid_when') or '-'
+
+    # 解析回原 catalog (取最新 ideal_regimes/description)
+    catalog_entry = StrategyCandidate.query.get(catalog_id) if catalog_id else None
+    use_entry = catalog_entry or clone
+
+    user = _user_running_summary(user_id)
+    regimes = _detect_user_regimes([sym]) if sym else {}
+    user_capital = _get_user_capital()
+    score = src_meta.get('score', 0)
+    reasons = src_meta.get('reasons') or []
+
+    # Cache key — catalog_id + sym 唯一决定解释内容
+    cache_key = f'reco_expl:{user_id}:{catalog_id or use_entry.id}:{sym}'
+
+    prompt = _build_explain_prompt(use_entry, sym, user, regimes, user_capital, score, reasons)
+
+    try:
+        from app.services.llm_provider import call_llm
+        res = call_llm(
+            user_id=user_id,
+            prompt=prompt,
+            system=_EXPLAIN_SYSTEM,
+            max_tokens=400,
+            cache_key=cache_key,
+            timeout=20,
+        )
+    except Exception as e:
+        return {
+            'ok': True,
+            'source': 'rule_based',
+            'explanation': desc,
+            'risk_warning': f'避免: {avoid}',
+            'fallback_reason': f'llm exception: {type(e).__name__}',
+        }
+
+    if not res.get('ok'):
+        return {
+            'ok': True,
+            'source': 'rule_based',
+            'explanation': desc,
+            'risk_warning': f'避免: {avoid}',
+            'fallback_reason': res.get('error', '')[:100],
+        }
+
+    text = (res.get('text') or '').strip()
+    # 解析 JSON
+    import json
+    import re
+    parsed = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        # try extract first {...}
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+            except Exception:
+                pass
+
+    if not parsed or not isinstance(parsed, dict):
+        return {
+            'ok': True,
+            'source': 'rule_based',
+            'explanation': desc,
+            'risk_warning': f'避免: {avoid}',
+            'fallback_reason': f'llm output not parseable: {text[:80]}',
+        }
+
+    return {
+        'ok': True,
+        'source': 'cache' if res.get('cached') else 'llm',
+        'explanation': (parsed.get('explanation') or desc).strip(),
+        'risk_warning': (parsed.get('risk_warning') or f'避免: {avoid}').strip(),
+        'provider_used': res.get('provider_used'),
+        'cached': bool(res.get('cached')),
+    }

@@ -501,6 +501,30 @@ def ai_improve_strategies():
     return jsonify(r), 201
 
 
+@api_bp.route('/me/recommendation-explain', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_recommendation_explain():
+    """Phase 14h: 单条 catalog clone candidate → LLM 中文解释 + 风险提示
+    Body: { "clone_id": 123 }
+    返回: { ok, explanation, risk_warning, source: 'llm'|'cache'|'rule_based', cached? }
+    用 cache (12h) 避免重复 LLM 调用; LLM 失败 → fallback 到 catalog_meta.description.
+    """
+    from app.services.llm_prompts.strategy_recommend import explain_recommendation
+    uid = current_user_id() or 1
+    payload = request.get_json(silent=True) or {}
+    clone_id = payload.get('clone_id')
+    if not clone_id:
+        return jsonify({'ok': False, 'error': 'missing clone_id'}), 400
+    try:
+        cid = int(clone_id)
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'invalid clone_id'}), 400
+    r = explain_recommendation(uid, cid)
+    code = 200 if r.get('ok') else 502
+    return jsonify(r), code
+
+
 @api_bp.route('/me/sizing-advice', methods=['POST'])
 @require_actor
 @require_pro_tier
