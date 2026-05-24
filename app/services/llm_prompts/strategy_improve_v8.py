@@ -172,18 +172,25 @@ Python 自动算 `expected_trades = primary_pct × filter_pcts × candles / 1.5`
 `self_estimate` 必须包含：
 
 ```json
-{
-  "primary_trigger_pct": 6.3,            // 单一 trigger 占 candles 的 %（从 symbol_stats 直接读，如 RSI<30 → rsi14.pct_below_30）
-  "primary_trigger_source": "AVAX@4h.rsi14.pct_below_30",  // 标明从哪取的
-  "filter_pass_pcts": [55, 60],          // 各 filter 估通过率 %（最多 2 个，不算 min_bars guard）
-  "candles_in_window": 540,               // 90d / TF (15m=8640, 30m=4320, 1h=2160, 4h=540, 1d=90)
-  "expected_oos_trades": 12,              // = primary/100 × Π(filter/100) × candles / 1.5
+{{
+  "primary_trigger_pct": 6.3,
+  "primary_trigger_source": "AVAX@4h.rsi14.pct_below_30",
+  "filter_pass_pcts": [55, 60],
+  "candles_in_window": 540,
+  "expected_oos_trades": 12,
   "expected_oos_sharpe": 1.6,
   "expected_oos_pf": 1.5,
   "expected_oos_ar_pct": 8,
   "reasoning_for_estimate": "为什么这组合在该 regime 下应能赚"
-}
+}}
 ```
+
+字段含义：
+- `primary_trigger_pct`: 单一触发条件占 candles 的 %（从 symbol_stats 读，如 RSI<30 → `rsi14.pct_below_30`）
+- `primary_trigger_source`: 标明从哪个 stats 字段取
+- `filter_pass_pcts`: 各 filter 通过率 %（最多 2 个，不算 min_bars guard）
+- `candles_in_window`: 90 天的 candle 数（15m=8640, 30m=4320, 1h=2160, 4h=540, 1d=90）
+- `expected_oos_trades`: = primary/100 × Π(filter/100) × candles / 1.5
 
 ## Filter 层数
 
