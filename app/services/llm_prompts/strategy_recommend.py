@@ -293,7 +293,57 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
             'score': score,
             'reasons': reasons,
             'auto_apply': auto,
+            'source': 'catalog',
         })
+
+    # Phase 14d: full_auto 模式且 catalog top score < 高门槛 → 触发 v8 invent
+    invent_result = None
+    if mode == 'full_auto':
+        catalog_max_score = top[0][1] if top else 0
+        if catalog_max_score < 80:
+            # catalog 没有显著好选 → 尝试 invent
+            try:
+                from app.services.llm_prompts.strategy_improve_v8 import improve_strategies_v8
+                v8_r = improve_strategies_v8(
+                    user_id=user_id, max_iterations=1, target_count=1,
+                    enable_external_research=True,
+                )
+                invent_result = {
+                    'attempted': True,
+                    'submitted_count': len(v8_r.get('submitted', [])),
+                    'rejected_count': len(v8_r.get('rejected', [])),
+                }
+                # invent 输出 — apply paper-only guard
+                for sub in v8_r.get('submitted', []):
+                    cid = sub.get('candidate_id')
+                    if not cid:
+                        continue
+                    metric_sharpe = (sub.get('metrics') or {}).get('oos_sharpe', 0)
+                    if metric_sharpe < 2.0:
+                        invent_result.setdefault('rejected_low_sharpe', []).append(
+                            {'candidate_id': cid, 'sharpe': metric_sharpe}
+                        )
+                        continue
+                    # Mark for paper-only 7 天
+                    cand = StrategyCandidate.query.get(cid)
+                    if cand:
+                        meta = dict(cand.source_meta or {})
+                        meta['paper_only_days'] = 7
+                        meta['source_label'] = 'AI invented (paper-only 7d)'
+                        cand.source_meta = meta
+                    # Try auto-apply (with paper-only flag)
+                    auto_invent = _maybe_auto_apply_invent(cand, user_id, mode, cfg)
+                    recommendations.append({
+                        'cloned_id': cid,
+                        'cloned_type': cand.candidate_type if cand else '?',
+                        'symbol': (cand.source_meta or {}).get('symbol') if cand else None,
+                        'verified_sharpe': metric_sharpe,
+                        'source': 'invented',
+                        'auto_apply': auto_invent,
+                        'paper_only_days': 7,
+                    })
+            except Exception as e:
+                invent_result = {'attempted': True, 'error': f'{type(e).__name__}: {e}'}
 
     db.session.commit()
     return {
@@ -303,4 +353,52 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
         'regimes': regimes,
         'catalog_size': len(catalog),
         'recommendations': recommendations,
+        'invent_result': invent_result,
     }
+
+
+def _maybe_auto_apply_invent(cand, user_id: int, mode: str, cfg: dict) -> dict | None:
+    """Phase 14d: invent 出的策略走 paper-only 7 天再升 LIVE"""
+    if mode != 'full_auto' or not cand:
+        return None
+    from app.services.candidate_pipeline import promote_candidate as do_promote
+    sym = (cand.source_meta or {}).get('symbol') or 'AVAX/USDT'
+    rp = (cand.source_meta or {}).get('risk_params') or {}
+
+    # Guardrail: 总 running 限制
+    n_running = scoped_query(Strategy).filter_by(status='running').count()
+    if n_running >= int(cfg.get('auto_apply_max_running', 8)):
+        return {'skipped': True, 'reason': f'running {n_running} >= max'}
+
+    promote_res = do_promote(cand.id, symbol=sym, owner_user_id=user_id)
+    if not promote_res.get('ok'):
+        return {'skipped': True, 'reason': f'promote fail: {promote_res.get("error", "")[:100]}'}
+    sid = promote_res['strategy']['id']
+    s = Strategy.query.get(sid)
+    if s:
+        p = dict(s.params or {})
+        p['risk_params'] = {k: v for k, v in rp.items() if v is not None}
+        # Phase 14d: paper-only 7 天
+        import datetime as _dt
+        p['paper_only_until'] = (_dt.datetime.utcnow() + _dt.timedelta(days=7)).isoformat()
+        s.params = p
+        s.status = 'running'
+        db.session.commit()
+        try:
+            from app.tasks.strategy_tasks import run_strategy_signals
+            run_strategy_signals.delay(sid)
+        except Exception:
+            pass
+
+    # audit
+    try:
+        from app.services.audit import log as audit
+        audit('candidate_promote_and_start_paper_only',
+              actor='auto:strategy_recommend_invent',
+              user_id=user_id, candidate_id=cand.id, strategy_id=sid,
+              risk_params=rp, symbol=sym,
+              paper_only_until_days=7)
+    except Exception:
+        pass
+
+    return {'applied': True, 'paper_only_days': 7, 'strategy_id': sid}

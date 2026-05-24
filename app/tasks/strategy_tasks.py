@@ -51,6 +51,11 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
     """
     effective_mode = mode
     user_creds = None
+
+    # Phase 14d: 检查 strategy paper_only_until (AI 发明策略需 7 天 paper dry-run)
+    # 注：caller (run_signals) 没传 strategy_id；只能通过 user_id 间接推 — 这块在 caller 加 ord_type 时一起做
+    # 实际守门在 caller 检查更准确
+
     if mode == 'live':
         from app.services.exchange_service import _resolve_creds
         user_creds = _resolve_creds(user_id)
@@ -173,7 +178,7 @@ def _run_signals(strategy_id=None, category_filter=None):
     mode = cfg.get('trading_mode', 'paper')
 
     def _resolve_risk(s):
-        """Phase 12.42 v8 + 13: 优先 strategy.params.risk_params > SystemConfig 默认"""
+        """Phase 12.42 v8 + 13 + 14d: 优先 strategy.params.risk_params > SystemConfig 默认"""
         rp = (s.params or {}).get('risk_params') or {}
         return (
             rp.get('position_size_usdt') or trade_size_default,
@@ -183,9 +188,23 @@ def _run_signals(strategy_id=None, category_filter=None):
             rp.get('order_type') or 'market',   # Phase 13: 'market' | 'maker' | 'maker_with_fallback'
         )
 
+    def _is_paper_only(s) -> bool:
+        """Phase 14d: AI invent 策略 7 天 paper-only dry-run"""
+        paper_until = (s.params or {}).get('paper_only_until')
+        if not paper_until:
+            return False
+        try:
+            import datetime as _dt
+            until = _dt.datetime.fromisoformat(paper_until)
+            return _dt.datetime.utcnow() < until
+        except Exception:
+            return False
+
     results = []
     for s in strategies:
         trade_size, lev, sl_pct, tp_pct, ord_type = _resolve_risk(s)
+        # Phase 14d: paper-only 强制覆盖 mode
+        strategy_mode = 'paper' if _is_paper_only(s) else mode
         try:
             # 取得K線
             candles = Candle.query.filter_by(
@@ -298,7 +317,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         continue
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type)
+                order = _place_order(s.symbol, okx_side, effective_size, price, strategy_mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -347,7 +366,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type)
 
                 # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order and not order.get('simulated'):
