@@ -20,6 +20,12 @@ import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import MarketingNav from './components/MarketingNav';
 import UpgradeModal from './components/UpgradeModal';
+// Phase 14j: Admin 后台 pages
+import AdminUsers from './pages/AdminUsers';
+import AdminUserDetail from './pages/AdminUserDetail';
+import AdminRevenue from './pages/AdminRevenue';
+import AdminAuditLog from './pages/AdminAuditLog';
+import AdminGuard from './components/AdminGuard';
 import './auth';   // 全局 fetch wrap 副作用
 
 const globalStyle = document.createElement('style');
@@ -547,6 +553,11 @@ export default function App() {
             <Route path="trades" element={<Trades />} />
             <Route path="audit" element={<Audit />} />
             <Route path="settings" element={<Settings />} />
+            {/* Phase 14j: Admin-only routes (双层守护: AdminGuard + backend require_admin) */}
+            <Route path="admin/users" element={<AdminGuard><AdminUsers /></AdminGuard>} />
+            <Route path="admin/users/:id" element={<AdminGuard><AdminUserDetail /></AdminGuard>} />
+            <Route path="admin/revenue" element={<AdminGuard><AdminRevenue /></AdminGuard>} />
+            <Route path="admin/audit" element={<AdminGuard><AdminAuditLog /></AdminGuard>} />
           </Route>
         </Routes>
       </BrowserRouter>

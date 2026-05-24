@@ -19,6 +19,10 @@ import ShowChartIcon from '@mui/icons-material/ShowChart';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
+import PeopleIcon from '@mui/icons-material/People';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { getUser, onUserChange, logout } from '../auth';
 import { palette, typo } from '../theme';
 import TelegramChip from './TelegramChip';
@@ -26,20 +30,28 @@ import TelegramChip from './TelegramChip';
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
 
-// Phase 12.43: 审计日志 admin 才看（普通 user 没意义）
-const NAV_ITEMS_ALL = [
+// 主导航 (所有 user 可见)
+const NAV_MAIN = [
   { label: '儀表板', icon: <DashboardIcon />, path: '/dashboard' },
   { label: '策略管理', icon: <AutoGraphIcon />, path: '/strategies' },
   { label: '候選池', icon: <HubIcon />, path: '/candidates' },
   { label: '交易紀錄', icon: <ReceiptLongIcon />, path: '/trades' },
-  { label: '審計日誌', icon: <HistoryIcon />, path: '/audit', adminOnly: true },
   { label: '系統設定', icon: <SettingsIcon />, path: '/settings' },
   { label: '订阅', icon: <WorkspacePremiumIcon />, path: '/pricing' },
 ];
 
+// Phase 14j: 管理后台分组 (仅 role=admin 可见)
+const NAV_ADMIN = [
+  { label: '会员管理', icon: <PeopleIcon />, path: '/admin/users' },
+  { label: '订阅收入', icon: <AttachMoneyIcon />, path: '/admin/revenue' },
+  { label: '跨用戶日誌', icon: <FactCheckIcon />, path: '/admin/audit' },
+  { label: '系統审计', icon: <HistoryIcon />, path: '/audit' },
+];
+
 function getNavItems(user) {
+  // Backwards-compat: 平铺所有可见 nav (mobile bottom nav 等用)
   const isAdmin = user?.role === 'admin';
-  return NAV_ITEMS_ALL.filter(it => !it.adminOnly || isAdmin);
+  return isAdmin ? [...NAV_MAIN, ...NAV_ADMIN] : NAV_MAIN;
 }
 
 const navIconMap = {
@@ -98,11 +110,11 @@ export default function Layout() {
         )}
       </Toolbar>
       <Divider sx={{ borderColor: palette.border }} />
-      <List sx={{ mt: 1, px: 1 }}>
-        {getNavItems(user).map(({ label, icon, path }) => {
-          const active = location.pathname === path;
+      {(() => {
+        const renderNavItem = ({ label, icon, path }, keyPrefix = '') => {
+          const active = location.pathname === path || (path !== '/' && location.pathname.startsWith(path + '/'));
           return (
-            <Tooltip key={path} title={open ? '' : label} placement="right">
+            <Tooltip key={keyPrefix + path} title={open ? '' : label} placement="right">
               <ListItem disablePadding sx={{ mb: 0.25 }}>
                 <ListItemButton
                   onClick={() => { navigate(path); if (isMobile) setMobileOpen(false); }}
@@ -115,7 +127,6 @@ export default function Layout() {
                     px: open ? 1.5 : 1.5,
                     py: 0.85,
                     transition: 'background-color 120ms ease',
-                    // active 左側 accent bar
                     ...(active && {
                       '&::before': {
                         content: '""',
@@ -150,8 +161,35 @@ export default function Layout() {
               </ListItem>
             </Tooltip>
           );
-        })}
-      </List>
+        };
+        const isAdmin = user?.role === 'admin';
+        return (
+          <>
+            <List sx={{ mt: 1, px: 1 }}>
+              {NAV_MAIN.map(it => renderNavItem(it, 'main-'))}
+            </List>
+            {isAdmin && (
+              <>
+                <Divider sx={{ borderColor: palette.border, mx: 1.5, my: 1.5 }} />
+                {open && (
+                  <Box sx={{ px: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <AdminPanelSettingsIcon sx={{ fontSize: 12, color: '#a78bfa' }} />
+                    <Typography variant="caption" sx={{
+                      fontSize: 10, fontWeight: 700, letterSpacing: 1.2,
+                      color: '#a78bfa', textTransform: 'uppercase',
+                    }}>
+                      管理后台
+                    </Typography>
+                  </Box>
+                )}
+                <List sx={{ px: 1, pt: 0 }}>
+                  {NAV_ADMIN.map(it => renderNavItem(it, 'admin-'))}
+                </List>
+              </>
+            )}
+          </>
+        );
+      })()}
       <Box sx={{ mt: 'auto', p: 1.5, borderTop: `1px solid ${palette.border}` }}>
         {open && (
           <Box sx={{
