@@ -32,6 +32,7 @@ import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import StatusChip from '../components/common/StatusChip';
+import { prettifyType } from '../utils/strategyTypeLabels';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -289,7 +290,10 @@ export default function Strategies() {
 
   const getTypeLabel = (type) => {
     const found = STRATEGY_TYPES.find((t) => t.value === type);
-    return found ? found.label : type;
+    if (found) return found.label;
+    // 兜底走 catalog util (cat_xxx / cat_xxx_uN_TS)
+    const p = prettifyType(type);
+    return p.label !== type ? (p.emoji ? `${p.emoji} ${p.label}` : p.label) : type;
   };
 
   // 按分類分組
@@ -336,7 +340,9 @@ export default function Strategies() {
                       <Typography variant="body2" fontWeight={600} sx={{ fontSize: 13 }}>{strategy.name}</Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip label={getTypeLabel(strategy.type)} size="small" variant="outlined" sx={{ fontSize: 10 }} />
+                      <Tooltip title={`原始 type: ${strategy.type || '—'}`} arrow>
+                        <Chip label={getTypeLabel(strategy.type)} size="small" variant="outlined" sx={{ fontSize: 10, cursor: 'help' }} />
+                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Chip label={strategy.timeframe} size="small" variant="outlined" color="info" sx={{ fontSize: 10 }} />

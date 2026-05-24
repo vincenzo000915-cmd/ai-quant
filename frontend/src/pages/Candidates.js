@@ -21,6 +21,7 @@ import ContentPasteIcon from '@mui/icons-material/ContentPaste';
 import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import { getUser } from '../auth';
+import { prettifyType } from '../utils/strategyTypeLabels';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -327,9 +328,11 @@ export default function Candidates() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Typography variant="caption" color="text.secondary">
-                        {c.candidate_type || '—'}
-                      </Typography>
+                      <Tooltip title={`原始 type: ${c.candidate_type || '—'}`} arrow>
+                        <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>
+                          {prettifyType(c.candidate_type).emoji} {prettifyType(c.candidate_type).label}
+                        </Typography>
+                      </Tooltip>
                       <Typography variant="caption" sx={{ display: 'block' }}>
                         {c.timeframe || '—'} · {c.category || '—'}
                       </Typography>
@@ -447,7 +450,8 @@ export default function Candidates() {
                     <InfoRow label="原作者" value={detail.source_author || '—'} />
                     <InfoRow label="原語言" value={detail.raw_lang || '—'} />
                     <InfoRow label="signal_fn_name" value={detail.signal_fn_name || '—'} />
-                    <InfoRow label="candidate_type" value={detail.candidate_type || '—'} />
+                    <InfoRow label="策略类型" value={`${prettifyType(detail.candidate_type).emoji} ${prettifyType(detail.candidate_type).label}`} />
+                    <InfoRow label="candidate_type (raw)" value={detail.candidate_type || '—'} />
                     <InfoRow label="分類" value={detail.category || '—'} />
                     <InfoRow label="Timeframe" value={detail.timeframe || '—'} />
                     <InfoRow label="LLM model" value={detail.llm_model || '—'} />

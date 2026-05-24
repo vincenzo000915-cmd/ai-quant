@@ -14,6 +14,7 @@ import TuneIcon from '@mui/icons-material/Tune';
 import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import { prettifyType } from '../utils/strategyTypeLabels';
 
 const PURPLE = '#a78bfa';
 
@@ -113,10 +114,15 @@ export default function AiPickPanel() {
           {/* Header */}
           <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1 }}>
             <Box sx={{ flexGrow: 1 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="subtitle1" fontWeight={700} sx={{ color: PURPLE }}>
-                  {it.candidate_type}
-                </Typography>
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                <Tooltip title={`原始 type: ${it.candidate_type || '—'}`} arrow>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ color: PURPLE, cursor: 'help' }}>
+                    {prettifyType(it.candidate_type).emoji} {prettifyType(it.candidate_type).label}
+                  </Typography>
+                </Tooltip>
+                {prettifyType(it.candidate_type).tag && (
+                  <Chip label={prettifyType(it.candidate_type).tag} size="small" sx={{ bgcolor: 'rgba(167,139,250,0.15)', color: PURPLE, fontSize: 10, height: 20 }} />
+                )}
                 <Chip label={it.symbol} size="small" variant="outlined" />
                 <Chip label={`${it.timeframe} ${it.category || ''}`} size="small" />
               </Stack>
@@ -354,7 +360,12 @@ function AdjustRiskDialog({ item, onClose, onApply }) {
   const setStr = (k, v) => setRisk(r => ({ ...r, [k]: v }));
   return (
     <Dialog open={!!item} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>调整 risk params — {item.candidate_type}</DialogTitle>
+      <DialogTitle>
+        调整 risk params — {prettifyType(item.candidate_type).emoji} {prettifyType(item.candidate_type).label}
+        <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mt: 0.5 }}>
+          {item.candidate_type}
+        </Typography>
+      </DialogTitle>
       <DialogContent>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
           AI 推荐: 杠杆 {item.risk_params?.leverage}x · SL {item.risk_params?.stop_loss_pct}% · TP {item.risk_params?.take_profit_pct}% · 仓位 ${item.risk_params?.position_size_usdt}
