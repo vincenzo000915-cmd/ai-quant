@@ -1294,6 +1294,19 @@ def update_system_config():
         # 通過，附帶記錄上鎖時間
         from app.services.telegram_service import send as _tg
         _tg('🟢 <b>TRADING MODE → LIVE</b>\nPre-flight 全過。實盤已啟動。\n下單會直接走 OKX。', force=True)
+    # Phase 14c: ai_decision_mode tier guard
+    if 'ai_decision_mode' in patch:
+        mode = patch['ai_decision_mode']
+        if mode not in ('manual', 'semi_auto', 'full_auto'):
+            return jsonify({'error': f'ai_decision_mode 必须是 manual / semi_auto / full_auto'}), 400
+        # Basic tier 只能 manual; Pro/admin 可以选所有
+        if mode != 'manual' and not has_ai_access():
+            return jsonify({
+                'error': f'mode {mode} 需 Pro 订阅 (Basic 仅 manual)',
+                'tier_required': 'pro',
+                'upgrade_hint': '/pricing',
+            }), 402
+
     # 範圍守衛
     if 'leverage' in patch and not (1 <= patch['leverage'] <= 100):
         return jsonify({'error': 'leverage out of range [1,100]'}), 400

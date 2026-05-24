@@ -14,6 +14,10 @@ import SizingAdvisorCard from '../components/SizingAdvisorCard';
 import SubscriptionCard from '../components/SubscriptionCard';
 import { PageSkeleton } from '../components/Skeleton';
 import PageHeader from '../components/common/PageHeader';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import { Radio, RadioGroup } from '@mui/material';
+import { getUser } from '../auth';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -120,6 +124,10 @@ export default function Settings() {
 
       {/* === Phase 11.5.12: AI 推荐仓位 === */}
       <SizingAdvisorCard onApplied={load} />
+
+      {/* === Phase 14c: AI 决策模式 === */}
+      <AiDecisionModeCard cfg={cfg} onChange={(v) => setCfg(c => ({ ...c, ai_decision_mode: v }))}
+        original={original?.ai_decision_mode} onSaved={load} />
 
       {/* === Trading Mode === */}
       <Card sx={{ mb: 3 }}>
@@ -326,6 +334,116 @@ export default function Settings() {
         </Button>
       </Stack>
     </Box>
+  );
+}
+
+
+// === Phase 14c: AI 决策模式 卡片 ===
+
+function AiDecisionModeCard({ cfg, onChange, original, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const user = getUser();
+  const isPro = (user?.subscription_tier === 'pro' || user?.subscription_tier === 'team' || user?.role === 'admin');
+  const currentMode = cfg.ai_decision_mode || 'manual';
+  const dirty = currentMode !== original;
+
+  const MODES = [
+    { value: 'manual', label: '手动审批', desc: 'AI 推荐放面板，你决定每一个上不上 — Basic 起可用' },
+    { value: 'semi_auto', label: '半自动（推荐）', desc: 'OOS Sharpe ≥ 2.5 自动上线，1.5-2.5 之间走面板 — Pro 解锁' },
+    { value: 'full_auto', label: '全自动（AI 量化经理）', desc: '合格 catalog 策略全自动应用 + 数据充分时 AI 可发明新策略 — Pro 解锁' },
+  ];
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`${API}/api/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ai_decision_mode: currentMode }),
+      });
+      const body = await r.json();
+      if (!r.ok) {
+        if (r.status === 402) {
+          setMsg({ type: 'warning', text: `${body.error}（升级 Pro 即可解锁）` });
+        } else {
+          setMsg({ type: 'error', text: body.error || `HTTP ${r.status}` });
+        }
+        return;
+      }
+      setMsg({ type: 'success', text: `AI 模式已切换到「${MODES.find(m => m.value === currentMode)?.label}」` });
+      if (onSaved) onSaved();
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card sx={{ mb: 3, border: '1px solid rgba(167,139,250,0.25)' }}>
+      <CardContent>
+        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
+          <AutoAwesomeIcon sx={{ color: '#a78bfa' }} />
+          <Typography variant="subtitle1" fontWeight={700}>AI 决策模式</Typography>
+          <Chip label={isPro ? 'Pro 全功能' : 'Basic'} size="small" color={isPro ? 'primary' : 'default'} variant="outlined" />
+        </Stack>
+
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+          选择 AI 多大程度自主决策上架策略。Catalog 策略已 vetted，全自动模式下 AI 还可发明新策略（数据充分时）。
+        </Typography>
+
+        {msg && <Alert severity={msg.type} sx={{ mb: 2 }} onClose={() => setMsg(null)}>{msg.text}</Alert>}
+
+        <RadioGroup value={currentMode} onChange={(e) => onChange(e.target.value)}>
+          {MODES.map(m => {
+            const locked = !isPro && m.value !== 'manual';
+            return (
+              <Box key={m.value} sx={{
+                p: 1.5, mb: 1, borderRadius: 1,
+                border: currentMode === m.value ? '1px solid #a78bfa' : '1px solid rgba(255,255,255,0.05)',
+                bgcolor: currentMode === m.value ? 'rgba(167,139,250,0.06)' : 'transparent',
+                opacity: locked ? 0.5 : 1,
+              }}>
+                <FormControlLabel
+                  value={m.value}
+                  control={<Radio sx={{ color: '#a78bfa', '&.Mui-checked': { color: '#a78bfa' } }} disabled={locked} />}
+                  label={
+                    <Box>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography variant="body2" fontWeight={600}>{m.label}</Typography>
+                        {locked && <LockOutlinedIcon sx={{ fontSize: 14, color: 'text.disabled' }} />}
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">{m.desc}</Typography>
+                    </Box>
+                  }
+                  sx={{ alignItems: 'flex-start', m: 0 }}
+                  disabled={locked}
+                />
+              </Box>
+            );
+          })}
+        </RadioGroup>
+
+        <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={handleSave}
+            disabled={!dirty || saving}
+            sx={{ bgcolor: '#a78bfa', '&:hover': { bgcolor: '#9472eb' } }}
+          >
+            {saving ? '保存中...' : '保存模式'}
+          </Button>
+          {!isPro && (
+            <Button size="small" onClick={() => window.location.href = '/pricing'} sx={{ ml: 'auto' }}>
+              升级 Pro
+            </Button>
+          )}
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }
 
