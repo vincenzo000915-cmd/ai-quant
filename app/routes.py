@@ -2442,3 +2442,345 @@ def admin_indexnow_ping():
     urls = data.get('urls')   # 可选：只推指定 URL；None = 推全
     r = notify_urls(urls)
     return jsonify(r)
+
+
+# ============================================================
+# Phase 14j: Admin 后台 API
+# 仅 role='admin' 可访问 — require_admin 守
+# ============================================================
+
+from app.services.user_scope import require_admin   # noqa: E402
+
+
+@api_bp.route('/admin/users', methods=['GET'])
+@require_actor
+@require_admin
+def admin_users_list():
+    """列出所有 user + 聚合 stats. Query: ?q=email_substring&limit=100"""
+    from app.models import User
+    from sqlalchemy import func
+
+    q_str = (request.args.get('q') or '').strip()
+    limit = int(request.args.get('limit') or 100)
+    query = User.query
+    if q_str:
+        query = query.filter(User.email.ilike(f'%{q_str}%'))
+    users = query.order_by(User.id.asc()).limit(limit).all()
+
+    # 一次性聚合 stats (avoid N+1)
+    user_ids = [u.id for u in users]
+    if not user_ids:
+        return jsonify({'users': [], 'total': 0})
+
+    strat_count = dict(
+        db.session.query(Strategy.user_id, func.count(Strategy.id))
+        .filter(Strategy.user_id.in_(user_ids))
+        .group_by(Strategy.user_id).all()
+    )
+    running_count = dict(
+        db.session.query(Strategy.user_id, func.count(Strategy.id))
+        .filter(Strategy.user_id.in_(user_ids), Strategy.status == 'running')
+        .group_by(Strategy.user_id).all()
+    )
+    trade_stats = dict(
+        ((row.user_id, (row.n, float(row.pnl or 0))) for row in
+         db.session.query(
+            Trade.user_id,
+            func.count(Trade.id).label('n'),
+            func.coalesce(func.sum(Trade.pnl), 0).label('pnl'),
+         ).filter(Trade.user_id.in_(user_ids)).group_by(Trade.user_id).all())
+    )
+
+    from app.models import OkxCredentials, LlmCredentials
+    okx_bound = set(
+        r[0] for r in db.session.query(OkxCredentials.user_id)
+        .filter(OkxCredentials.user_id.in_(user_ids)).distinct().all()
+    )
+    llm_bound = set(
+        r[0] for r in db.session.query(LlmCredentials.user_id)
+        .filter(LlmCredentials.user_id.in_(user_ids)).distinct().all()
+    )
+
+    out = []
+    for u in users:
+        n, pnl = trade_stats.get(u.id, (0, 0.0))
+        out.append({
+            'id': u.id,
+            'email': u.email,
+            'role': u.role or 'user',
+            'subscription_tier': u.subscription_tier or 'free',
+            'is_active': bool(u.is_active) if u.is_active is not None else True,
+            'created_at': u.created_at.isoformat() if u.created_at else None,
+            'last_login_at': u.last_login_at.isoformat() if u.last_login_at else None,
+            'strategies_count': strat_count.get(u.id, 0),
+            'strategies_running': running_count.get(u.id, 0),
+            'trades_count': n,
+            'total_pnl_usd': round(pnl, 2),
+            'okx_bound': u.id in okx_bound,
+            'llm_bound': u.id in llm_bound,
+        })
+
+    return jsonify({'users': out, 'total': len(out)})
+
+
+@api_bp.route('/admin/users/<int:uid>', methods=['GET'])
+@require_actor
+@require_admin
+def admin_user_detail(uid: int):
+    """单 user 详情 + 关联资源"""
+    from app.models import User, Subscription, OkxCredentials, LlmCredentials
+    from sqlalchemy import func
+
+    u = User.query.get(uid)
+    if not u:
+        return jsonify({'error': 'user not found'}), 404
+
+    # 当前 active subscription
+    sub = (Subscription.query.filter_by(user_id=uid, status='active')
+           .order_by(Subscription.expires_at.desc()).first())
+
+    # 策略 + trade 聚合
+    strategies = Strategy.query.filter_by(user_id=uid).order_by(Strategy.id.desc()).limit(50).all()
+    trade_agg = db.session.query(
+        func.count(Trade.id).label('n'),
+        func.coalesce(func.sum(Trade.pnl), 0).label('pnl'),
+        func.count(Trade.id).filter(Trade.pnl > 0).label('wins'),
+        func.count(Trade.id).filter(Trade.pnl < 0).label('losses'),
+        func.max(Trade.exit_time).label('last_trade'),
+    ).filter(Trade.user_id == uid).first()
+    recent_trades = (Trade.query.filter_by(user_id=uid)
+                     .order_by(Trade.id.desc()).limit(30).all())
+
+    # AI usage (audit_log filter)
+    ai_actions = (db.session.query(
+        AuditLog.event_type, func.count(AuditLog.id)
+    ).filter(AuditLog.user_id == uid,
+             AuditLog.event_type.in_(['strategy_ai_improve', 'llm_call', 'strategy_ai_generate']))
+     .group_by(AuditLog.event_type).all())
+
+    okx = OkxCredentials.query.filter_by(user_id=uid).first()
+    llm = LlmCredentials.query.filter_by(user_id=uid).all()
+
+    return jsonify({
+        'user': {
+            'id': u.id,
+            'email': u.email,
+            'role': u.role,
+            'subscription_tier': u.subscription_tier,
+            'is_active': u.is_active,
+            'created_at': u.created_at.isoformat() if u.created_at else None,
+            'last_login_at': u.last_login_at.isoformat() if u.last_login_at else None,
+        },
+        'subscription': {
+            'plan': sub.plan if sub else None,
+            'status': sub.status if sub else None,
+            'activated_at': sub.activated_at.isoformat() if sub and sub.activated_at else None,
+            'expires_at': sub.expires_at.isoformat() if sub and sub.expires_at else None,
+            'auto_renew': sub.auto_renew if sub else None,
+        },
+        'bindings': {
+            'okx_bound': bool(okx),
+            'llm_providers': [{'provider': l.provider, 'is_active': l.is_active} for l in llm],
+        },
+        'stats': {
+            'strategies_total': len(strategies),
+            'strategies_running': sum(1 for s in strategies if s.status == 'running'),
+            'trades_count': trade_agg.n or 0,
+            'trades_wins': trade_agg.wins or 0,
+            'trades_losses': trade_agg.losses or 0,
+            'total_pnl_usd': round(float(trade_agg.pnl or 0), 2),
+            'last_trade_at': trade_agg.last_trade.isoformat() if trade_agg.last_trade else None,
+            'ai_actions': dict(ai_actions),
+        },
+        'strategies': [{
+            'id': s.id, 'name': s.name, 'type': s.type, 'symbol': s.symbol,
+            'timeframe': s.timeframe, 'status': s.status, 'category': s.category,
+        } for s in strategies],
+        'recent_trades': [{
+            'id': t.id, 'strategy_id': t.strategy_id, 'symbol': t.symbol,
+            'side': t.side, 'pnl': round(float(t.pnl or 0), 2),
+            'pnl_percent': round(float(t.pnl_percent or 0), 2),
+            'entry_time': t.entry_time.isoformat() if t.entry_time else None,
+            'exit_time': t.exit_time.isoformat() if t.exit_time else None,
+            'reason': t.reason,
+        } for t in recent_trades],
+    })
+
+
+@api_bp.route('/admin/users/<int:uid>/tier', methods=['POST'])
+@require_actor
+@require_admin
+def admin_user_set_tier(uid: int):
+    """手动改 user 的 subscription_tier (legacy 字段). Body: {"tier": "free|basic|pro|team"}"""
+    from app.models import User
+    from app.services.audit import log as audit
+    u = User.query.get(uid)
+    if not u:
+        return jsonify({'error': 'user not found'}), 404
+    payload = request.get_json(silent=True) or {}
+    tier = (payload.get('tier') or '').lower()
+    if tier not in ('free', 'basic', 'pro', 'team'):
+        return jsonify({'error': 'invalid tier'}), 400
+    old = u.subscription_tier
+    u.subscription_tier = tier
+    db.session.commit()
+    audit('admin_user_tier_change', actor='admin',
+          target_user_id=uid, old_tier=old, new_tier=tier,
+          admin_user_id=current_user_id())
+    return jsonify({'ok': True, 'user_id': uid, 'old_tier': old, 'new_tier': tier})
+
+
+@api_bp.route('/admin/users/<int:uid>/toggle-active', methods=['POST'])
+@require_actor
+@require_admin
+def admin_user_toggle_active(uid: int):
+    """启停 user 账号. Body: {"is_active": bool}"""
+    from app.models import User
+    from app.services.audit import log as audit
+    u = User.query.get(uid)
+    if not u:
+        return jsonify({'error': 'user not found'}), 404
+    if u.role == 'admin' and uid == current_user_id():
+        return jsonify({'error': '不能封自己'}), 400
+    payload = request.get_json(silent=True) or {}
+    new_active = bool(payload.get('is_active'))
+    u.is_active = new_active
+    db.session.commit()
+    audit('admin_user_toggle_active', actor='admin',
+          target_user_id=uid, new_active=new_active,
+          admin_user_id=current_user_id())
+    return jsonify({'ok': True, 'user_id': uid, 'is_active': new_active})
+
+
+@api_bp.route('/admin/revenue', methods=['GET'])
+@require_actor
+@require_admin
+def admin_revenue():
+    """收入 / MRR / Pro 用户数 / 最近 invoices"""
+    from app.models import PaymentInvoice, Subscription, User
+    from sqlalchemy import func
+    import datetime as _dt
+
+    now = _dt.datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # 总确认收入
+    total_revenue = float(db.session.query(
+        func.coalesce(func.sum(PaymentInvoice.amount_due), 0)
+    ).filter(PaymentInvoice.status == 'confirmed').scalar() or 0)
+
+    # 本月新增收入
+    mtd_revenue = float(db.session.query(
+        func.coalesce(func.sum(PaymentInvoice.amount_due), 0)
+    ).filter(PaymentInvoice.status == 'confirmed',
+             PaymentInvoice.confirmed_at >= month_start).scalar() or 0)
+
+    # 活跃订阅 by plan
+    active_subs = dict(
+        db.session.query(Subscription.plan, func.count(Subscription.id))
+        .filter(Subscription.status == 'active',
+                Subscription.expires_at > now)
+        .group_by(Subscription.plan).all()
+    )
+
+    # 30 天每日收入
+    days = 30
+    daily = []
+    for i in range(days, -1, -1):
+        d_start = (now - _dt.timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        d_end = d_start + _dt.timedelta(days=1)
+        amt = float(db.session.query(
+            func.coalesce(func.sum(PaymentInvoice.amount_due), 0)
+        ).filter(PaymentInvoice.status == 'confirmed',
+                 PaymentInvoice.confirmed_at >= d_start,
+                 PaymentInvoice.confirmed_at < d_end).scalar() or 0)
+        daily.append({'date': d_start.strftime('%Y-%m-%d'), 'revenue_usdt': round(amt, 2)})
+
+    # 最近 invoices
+    recent = (PaymentInvoice.query.order_by(PaymentInvoice.created_at.desc()).limit(20).all())
+    recent_out = []
+    for inv in recent:
+        usr = User.query.get(inv.user_id)
+        recent_out.append({
+            'id': inv.id,
+            'user_id': inv.user_id,
+            'user_email': usr.email if usr else None,
+            'plan': inv.plan,
+            'months': inv.months,
+            'amount_due': float(inv.amount_due),
+            'chain': inv.chain,
+            'status': inv.status,
+            'created_at': inv.created_at.isoformat() if inv.created_at else None,
+            'confirmed_at': inv.confirmed_at.isoformat() if inv.confirmed_at else None,
+        })
+
+    # 总 user 数
+    total_users = User.query.count()
+    active_users_30d = User.query.filter(
+        User.last_login_at > now - _dt.timedelta(days=30)
+    ).count()
+
+    return jsonify({
+        'total_revenue_usdt': round(total_revenue, 2),
+        'mtd_revenue_usdt': round(mtd_revenue, 2),
+        'active_subscriptions_by_plan': active_subs,
+        'total_users': total_users,
+        'active_users_30d': active_users_30d,
+        'daily_revenue_30d': daily,
+        'recent_invoices': recent_out,
+    })
+
+
+@api_bp.route('/admin/audit-log', methods=['GET'])
+@require_actor
+@require_admin
+def admin_audit_log():
+    """跨 user audit log. Query: ?user_id=&event_type=&since=ISO&limit=200"""
+    from app.models import User
+    import datetime as _dt
+
+    q = AuditLog.query
+    user_id = request.args.get('user_id', type=int)
+    if user_id:
+        q = q.filter(AuditLog.user_id == user_id)
+    event_type = request.args.get('event_type', type=str)
+    if event_type:
+        q = q.filter(AuditLog.event_type == event_type)
+    since = request.args.get('since', type=str)
+    if since:
+        try:
+            since_dt = _dt.datetime.fromisoformat(since.replace('Z', ''))
+            q = q.filter(AuditLog.created_at >= since_dt)
+        except Exception:
+            pass
+    limit = min(int(request.args.get('limit') or 200), 500)
+    rows = q.order_by(AuditLog.created_at.desc()).limit(limit).all()
+
+    # 拉 user email 一次
+    uids = list({r.user_id for r in rows if r.user_id})
+    email_map = {}
+    if uids:
+        for u in User.query.filter(User.id.in_(uids)).all():
+            email_map[u.id] = u.email
+
+    # event_type 全分布 (做下拉用)
+    from sqlalchemy import func
+    event_types = [r[0] for r in db.session.query(AuditLog.event_type, func.count(AuditLog.id))
+                                  .group_by(AuditLog.event_type)
+                                  .order_by(func.count(AuditLog.id).desc())
+                                  .limit(50).all()]
+
+    return jsonify({
+        'rows': [{
+            'id': r.id,
+            'event_type': r.event_type,
+            'actor': r.actor,
+            'user_id': r.user_id,
+            'user_email': email_map.get(r.user_id),
+            'context': r.context,
+            'ip': r.ip,
+            'created_at': r.created_at.isoformat() if r.created_at else None,
+        } for r in rows],
+        'event_types': event_types,
+        'total': len(rows),
+    })
