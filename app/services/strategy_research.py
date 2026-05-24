@@ -486,7 +486,8 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
                    position_size_usdt: float | None = None,
                    stop_loss_pct: float | None = None,
                    take_profit_pct: float | None = None,
-                   cached_candles: list | None = None) -> dict:
+                   cached_candles: list | None = None,
+                   order_type: str | None = None) -> dict:
     """内存跑 walk-forward 回测，**不写 DB** — 给 LLM 迭代自测用。
 
     Phase 12.42 v8: 接受 risk_params overrides — LLM 写的 leverage/SL/TP/pos 直接进回测。
@@ -521,13 +522,21 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
     if not candles or len(candles) < 200:
         return {'ok': False, 'error': f'candles 太少 {len(candles) if candles else 0} < 200', 'metrics': None}
 
-    # 4. run walk-forward (Phase 12.42: 传 risk_params)
+    # 4. run walk-forward (Phase 12.42: 传 risk_params; Phase 13: order_type 影响 fee)
     cfg = get_config()
+    # Phase 13: fee 基于 order_type
+    fee_map = {
+        'market': 0.05,                  # OKX SWAP taker
+        'maker': 0.02,                   # OKX SWAP maker (post_only)
+        'maker_with_fallback': 0.025,    # 80% maker + 20% taker blend
+    }
+    fee_pct = fee_map.get(order_type, cfg.get('backtest_fee_pct', 0.05))
+
     bt_kwargs = {
         'timeframe': timeframe,
         'signal_fn': signal_fn,
         'slippage_pct': cfg.get('backtest_slippage_pct', 0.05),
-        'fee_pct': cfg.get('backtest_fee_pct', 0.05),
+        'fee_pct': fee_pct,
     }
     # Safety caps (绝不超出 user 系统级 max)
     max_leverage_cap = float(cfg.get('leverage', 15.0))   # user 当前设定的 leverage 当上限
@@ -581,6 +590,8 @@ def quick_backtest(parsed_signal: str, signal_fn_name: str, params: dict,
             'position_size_usdt': bt_kwargs.get('position_size_usdt'),
             'stop_loss_pct': bt_kwargs.get('stop_loss_pct'),
             'take_profit_pct': bt_kwargs.get('take_profit_pct'),
+            'order_type': order_type or 'market',
+            'fee_pct_used': fee_pct,
         },
         'trade_patterns': {
             'sl_hit_pct': round(sl_hits * 100 / max(len(oos_trades), 1), 1),

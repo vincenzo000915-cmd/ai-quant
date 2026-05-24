@@ -1724,6 +1724,9 @@ def candidate_promote_and_start(cid):
     user_risk = data.get('risk_params') or {}
     # final risk = user override > AI推荐 > 缺省
     final_risk = {**ai_risk, **user_risk}
+    # Phase 13: order_type 透传
+    if 'order_type' not in final_risk:
+        final_risk['order_type'] = 'market'
 
     # Symbol 优先级: body > AI meta > candidate
     symbol = data.get('symbol') or meta.get('symbol') or 'BTC/USDT'
@@ -1749,6 +1752,7 @@ def candidate_promote_and_start(cid):
                 'stop_loss_pct': final_risk.get('stop_loss_pct'),
                 'take_profit_pct': final_risk.get('take_profit_pct'),
                 'position_size_usdt': final_risk.get('position_size_usdt'),
+                'order_type': final_risk.get('order_type'),    # Phase 13
                 'reasoning': final_risk.get('reasoning'),
             }.items() if v is not None
         }

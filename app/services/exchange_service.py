@@ -527,6 +527,175 @@ def cancel_order(order_id, symbol):
     return exchange.cancel_order(order_id, symbol)
 
 
+# === Phase 13: Maker order (post_only limit + wait fill + fallback) ===
+
+def _okx_fetch_books(inst_id: str) -> dict:
+    """GET /api/v5/market/books — best bid/ask"""
+    data = _okx_get('/api/v5/market/books', {'instId': inst_id, 'sz': '1'})
+    if not data:
+        raise RuntimeError(f'books empty for {inst_id}')
+    book = data[0]
+    bids = book.get('bids') or []
+    asks = book.get('asks') or []
+    if not bids or not asks:
+        raise RuntimeError(f'no bid/ask for {inst_id}')
+    return {
+        'best_bid': float(bids[0][0]),
+        'best_ask': float(asks[0][0]),
+        'spread_pct': (float(asks[0][0]) - float(bids[0][0])) / float(bids[0][0]) * 100,
+    }
+
+
+def _okx_order_status(inst_id: str, cl_ord_id: str,
+                      api_key: str, secret: str, passphrase: str) -> dict:
+    """GET /api/v5/trade/order?instId=...&clOrdId=..."""
+    path = f'/api/v5/trade/order?instId={inst_id}&clOrdId={cl_ord_id}'
+    data = _okx_get_signed(path, api_key, secret, passphrase)
+    return data[0] if data else {}
+
+
+def place_order_maker_live(symbol: str, side: str, size_usdt: float, leverage: float = 5.0,
+                            client_order_id: str | None = None,
+                            max_wait_sec: int = 60,
+                            fallback: str = 'cancel',
+                            pos_side: str | None = None,
+                            creds: dict | None = None) -> dict:
+    """Phase 13: 真實下 maker (post_only limit) — OKX 给 maker rebate / 较低 fee。
+
+    流程:
+      1. 设 leverage
+      2. fetch books → 拿 best bid/ask
+      3. 下 post_only limit:
+         - buy → price=best_bid (挂买单等成交)
+         - sell → price=best_ask (挂卖单等成交)
+      4. 轮询 order status 每 3s，最多 max_wait_sec
+      5. 成交 → 返回
+      6. 超时 → cancel；fallback='taker' 则 fallback 到 market 单
+
+    fallback:
+      'cancel' (默认) — 超时取消，返回 ok=False
+      'taker' — 超时取消后下 market 单（保证成交，但是 taker fee）
+
+    返回与 place_order_live 兼容的 dict，加 'ord_type': 'maker' 标识。
+    """
+    import time as _time
+    if creds is None:
+        creds = _env_creds()
+    api_key = creds.get('api_key')
+    secret = creds.get('secret')
+    passphrase = creds.get('passphrase')
+    if not (api_key and secret and passphrase):
+        raise RuntimeError('OKX API credentials missing')
+
+    from app.services.symbols import get_inst_id, get_contract_size
+    inst_id = get_inst_id(symbol)
+    contract_size = get_contract_size(symbol)
+    cl_ord_id = client_order_id or _gen_client_order_id()
+
+    # 1. set leverage (idempotent)
+    try:
+        _okx_post_signed('/api/v5/account/set-leverage',
+                         {'instId': inst_id, 'lever': str(int(leverage)), 'mgnMode': 'cross'},
+                         api_key, secret, passphrase)
+    except Exception as e:
+        if 'leverage' not in str(e).lower():
+            raise
+
+    # 2. fetch books
+    books = _okx_fetch_books(inst_id)
+    px = books['best_bid'] if side == 'buy' else books['best_ask']
+
+    # 3. 计算合约张数
+    notional = size_usdt * leverage
+    base_amount = notional / px
+    contracts = max(1, round(base_amount / contract_size, 0))
+
+    body = {
+        'instId': inst_id,
+        'tdMode': 'cross',
+        'side': side,
+        'ordType': 'post_only',   # 关键：只挂单不吃，OKX 拒绝若 would-take
+        'sz': str(int(contracts)),
+        'px': str(px),
+        'clOrdId': cl_ord_id,
+    }
+    body['posSide'] = pos_side if pos_side else ('long' if side == 'buy' else 'short')
+
+    # 4. 下单
+    try:
+        data = _okx_post_signed('/api/v5/trade/order', body, api_key, secret, passphrase)
+    except Exception as e:
+        # post_only 失败常见原因: 价格被秒抢跑 (would take) → OKX 拒
+        return {
+            'ok': False,
+            'error': f'post_only place fail: {str(e)[:200]}',
+            'inst_id': inst_id,
+            'client_order_id': cl_ord_id,
+            'ord_type': 'maker',
+            'attempted_px': px,
+        }
+
+    ord_resp = data[0] if data else {}
+    ord_id = ord_resp.get('ordId')
+
+    # 5. 轮询 fill (every 3s)
+    poll_interval = 3
+    elapsed = 0
+    final_state = 'unknown'
+    while elapsed < max_wait_sec:
+        try:
+            status = _okx_order_status(inst_id, cl_ord_id, api_key, secret, passphrase)
+            state = status.get('state', '')
+            if state == 'filled':
+                final_state = 'filled'
+                return {
+                    'ok': True,
+                    'okx': status,
+                    'inst_id': inst_id,
+                    'contracts': contracts,
+                    'notional_usdt': notional,
+                    'entry_price_est': px,
+                    'client_order_id': cl_ord_id,
+                    'ord_type': 'maker',
+                    'wait_sec': elapsed,
+                }
+            if state == 'canceled':
+                final_state = 'canceled_externally'
+                break
+            # state in ('live', 'partially_filled') — 继续等
+        except Exception:
+            pass
+        _time.sleep(poll_interval)
+        elapsed += poll_interval
+
+    # 6. 超时 — cancel
+    try:
+        _okx_post_signed('/api/v5/trade/cancel-order',
+                         {'instId': inst_id, 'clOrdId': cl_ord_id},
+                         api_key, secret, passphrase)
+    except Exception:
+        pass
+
+    if fallback == 'taker':
+        # fallback 到 market 单（确保成交）
+        from time import sleep as _slp
+        _slp(0.5)
+        return place_order_live(symbol, side, size_usdt, leverage=leverage,
+                                client_order_id=cl_ord_id + '_t',
+                                pos_side=pos_side, creds=creds)
+
+    return {
+        'ok': False,
+        'error': f'maker order 超时 {max_wait_sec}s 未成交 (state={final_state})',
+        'inst_id': inst_id,
+        'contracts': contracts,
+        'attempted_px': px,
+        'client_order_id': cl_ord_id,
+        'ord_type': 'maker',
+        'wait_sec': elapsed,
+    }
+
+
 def fetch_ohlcv_history(symbol='BTC/USDT', timeframe='4h', total_limit=2000):
     """為回測拉大量歷史 K 線（不寫入 Candle 表，純記憶體返回）
 

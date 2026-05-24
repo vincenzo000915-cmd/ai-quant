@@ -38,17 +38,16 @@ def _simulated_order(symbol, side, amount_usdt, price):
 
 
 def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0,
-                 pos_side: str | None = None, user_id: int | None = None):
-    """Phase 6.5 + 11.1.4 + 11.2.2: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
+                 pos_side: str | None = None, user_id: int | None = None,
+                 order_type: str = 'market'):
+    """Phase 6.5 + 11.1.4 + 11.2.2 + 13: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
+
+    Phase 13 新加 order_type:
+      'market'                — taker (现 default，fee 0.05%/side)
+      'maker'                  — post_only limit, 60s timeout 后 cancel
+      'maker_with_fallback'    — maker 优先，超时 fallback taker
+
     失敗時 fallback 寫 telegram，return None。
-
-    pos_side: 'long' | 'short' — 平倉時 caller 必須顯式傳；開倉若不傳會由 side 推。
-
-    Phase 11.2.2: per-user OKX key 解析：
-      - user_id == 1 (admin) → 用 env OKX key
-      - user_id != 1 + 有綁 active OKX creds → 用 user creds 下 user OKX 帳號
-      - user_id != 1 + 沒綁 → 強制 paper + audit 'live_order_blocked_no_okx_key'
-      - user_id is None (legacy / Celery system) → 用 env (admin) 路徑
     """
     effective_mode = mode
     user_creds = None
@@ -68,12 +67,40 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
 
     if effective_mode == 'live':
         try:
+            if order_type in ('maker', 'maker_with_fallback'):
+                # Phase 13: maker order
+                from app.services.exchange_service import place_order_maker_live
+                fallback = 'taker' if order_type == 'maker_with_fallback' else 'cancel'
+                res = place_order_maker_live(
+                    symbol, side, amount_usdt, leverage=leverage,
+                    max_wait_sec=60, fallback=fallback,
+                    pos_side=pos_side, creds=user_creds,
+                )
+                if not res.get('ok'):
+                    # maker fail (no fallback or fallback also failed)
+                    err_msg = res.get('error', 'maker fail')
+                    from app.services.telegram_service import send
+                    send(f'🟡 <b>maker order 未成交</b>\n{symbol} {side} ${amount_usdt}\n{err_msg[:200]}',
+                         event_key='maker_timeout')
+                    return None
+                return {
+                    'id': res['okx'].get('ordId', 'maker_unknown') if isinstance(res.get('okx'), dict) else 'maker_unknown',
+                    'symbol': symbol, 'side': side, 'type': res.get('ord_type', 'maker'),
+                    'amount': res.get('contracts', 0) * 0.01,
+                    'price': res.get('entry_price_est', price),
+                    'cost': amount_usdt,
+                    'inst_id': res.get('inst_id'),
+                    'simulated': False,
+                    'okx_raw': res.get('okx'),
+                    'wait_sec': res.get('wait_sec', 0),
+                }
+            # default: market (taker)
             from app.services.exchange_service import place_order_live
             res = place_order_live(symbol, side, amount_usdt, leverage=leverage, pos_side=pos_side, creds=user_creds)
             return {
                 'id': res['okx'].get('ordId', 'live_unknown'),
                 'symbol': symbol, 'side': side, 'type': 'market',
-                'amount': res['contracts'] * 0.01,   # contract size
+                'amount': res['contracts'] * 0.01,
                 'price': res['entry_price_est'],
                 'cost': amount_usdt,
                 'inst_id': res['inst_id'],
@@ -146,18 +173,19 @@ def _run_signals(strategy_id=None, category_filter=None):
     mode = cfg.get('trading_mode', 'paper')
 
     def _resolve_risk(s):
-        """Phase 12.42 v8: 优先 strategy.params.risk_params > SystemConfig 默认"""
+        """Phase 12.42 v8 + 13: 优先 strategy.params.risk_params > SystemConfig 默认"""
         rp = (s.params or {}).get('risk_params') or {}
         return (
             rp.get('position_size_usdt') or trade_size_default,
             rp.get('leverage') or lev_default,
             rp.get('stop_loss_pct') or sl_pct_default,
             rp.get('take_profit_pct') or tp_pct_default,
+            rp.get('order_type') or 'market',   # Phase 13: 'market' | 'maker' | 'maker_with_fallback'
         )
 
     results = []
     for s in strategies:
-        trade_size, lev, sl_pct, tp_pct = _resolve_risk(s)
+        trade_size, lev, sl_pct, tp_pct, ord_type = _resolve_risk(s)
         try:
             # 取得K線
             candles = Candle.query.filter_by(
@@ -270,7 +298,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         continue
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side, user_id=s.user_id)
+                order = _place_order(s.symbol, okx_side, effective_size, price, mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -319,7 +347,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side, user_id=s.user_id)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type)
 
                 # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order and not order.get('simulated'):

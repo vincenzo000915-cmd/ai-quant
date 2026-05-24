@@ -344,12 +344,14 @@ function AdjustRiskDialog({ item, onClose, onApply }) {
         position_size_usdt: item._customRisk?.position_size_usdt || item.risk_params?.position_size_usdt || 6,
         stop_loss_pct: item._customRisk?.stop_loss_pct || item.risk_params?.stop_loss_pct || 5,
         take_profit_pct: item._customRisk?.take_profit_pct || item.risk_params?.take_profit_pct || 10,
+        order_type: item._customRisk?.order_type || item.risk_params?.order_type || 'market',
       });
     }
   }, [item]);
   if (!item) return null;
 
   const setNum = (k, v) => setRisk(r => ({ ...r, [k]: Number(v) }));
+  const setStr = (k, v) => setRisk(r => ({ ...r, [k]: v }));
   return (
     <Dialog open={!!item} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>调整 risk params — {item.candidate_type}</DialogTitle>
@@ -394,6 +396,20 @@ function AdjustRiskDialog({ item, onClose, onApply }) {
             size="small"
             fullWidth
           />
+          <TextField
+            select
+            label="订单类型 (Phase 13)"
+            value={risk.order_type || 'market'}
+            onChange={(e) => setStr('order_type', e.target.value)}
+            size="small"
+            fullWidth
+            SelectProps={{ native: true }}
+            helperText="maker = post_only 限价 (fee 0.02%)；market = 市价 (fee 0.05%)"
+          >
+            <option value="market">市价 (taker 0.05%) - 立即成交</option>
+            <option value="maker">挂单 (maker 0.02%) - 60s 超时 cancel</option>
+            <option value="maker_with_fallback">挂单 + 超时改市价 (0.025%)</option>
+          </TextField>
         </Stack>
       </DialogContent>
       <DialogActions>
