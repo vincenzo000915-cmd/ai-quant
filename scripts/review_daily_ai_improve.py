@@ -89,8 +89,9 @@ def main() -> int:
         log_lines.append(f'  {r[3]}: {r[0]} / {r[1]}')
 
     # 2. 拉最近 2h 内 qualified candidates (AI v6/v7/v8 出的)
+    # 注：strategy_candidates 没 symbol 列，存在 source_meta jsonb (Phase 12.39)
     cand_rows = psql("""
-        SELECT id, candidate_type, symbol, timeframe, category, status,
+        SELECT id, candidate_type, timeframe, category, status,
                source_name, source_meta::text, created_at,
                backtest_result_id
         FROM strategy_candidates
@@ -103,7 +104,7 @@ def main() -> int:
     candidates = []
     for row in cand_rows:
         try:
-            meta = json.loads(row[7] or '{}')
+            meta = json.loads(row[6] or '{}')
         except Exception:
             meta = {}
         est = meta.get('self_estimate', {}) or {}
@@ -113,11 +114,11 @@ def main() -> int:
         candidates.append({
             'id': int(row[0]),
             'type': row[1],
-            'symbol': meta.get('symbol') or row[2],
-            'timeframe': row[3],
-            'category': row[4],
-            'status': row[5],
-            'created_at': row[8],
+            'symbol': meta.get('symbol') or '?',
+            'timeframe': row[2],
+            'category': row[3],
+            'status': row[4],
+            'created_at': row[7],
             'estimate': est,
             'actual': actual,
             'risk_params': rp,

@@ -1203,11 +1203,11 @@ def auto_ai_improve_strategies():
     try:
         r = improve_strategies_v8(user_id=1, max_iterations=3, target_count=3, enable_external_research=True)
     except Exception as e:
-        audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v6',
+        audit('auto_ai_improve_error', actor='auto:daily_ai_improve_v8',
               error=f'{type(e).__name__}: {e}')
         return f'auto-ai-improve-v6 error: {type(e).__name__}: {e}'
     if not r.get('ok'):
-        audit('auto_ai_improve_skipped', actor='auto:daily_ai_improve_v6',
+        audit('auto_ai_improve_skipped', actor='auto:daily_ai_improve_v8',
               reason=r.get('error'))
         return f'auto-ai-improve-v6 skipped: {r.get("error")}'
 
@@ -1215,7 +1215,7 @@ def auto_ai_improve_strategies():
     rejected = r.get('rejected', [])
     iters = r.get('iterations_used', 0)
 
-    audit('auto_ai_improve_done', actor='auto:daily_ai_improve_v6',
+    audit('auto_ai_improve_done', actor='auto:daily_ai_improve_v8',
           submitted_count=len(submitted),
           rejected_count=len(rejected),
           iterations_used=iters,
