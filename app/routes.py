@@ -1295,6 +1295,7 @@ def update_system_config():
         from app.services.telegram_service import send as _tg
         _tg('🟢 <b>TRADING MODE → LIVE</b>\nPre-flight 全過。實盤已啟動。\n下單會直接走 OKX。', force=True)
     # Phase 14c: ai_decision_mode tier guard
+    mode_changed_to_auto = False
     if 'ai_decision_mode' in patch:
         mode = patch['ai_decision_mode']
         if mode not in ('manual', 'semi_auto', 'full_auto'):
@@ -1306,6 +1307,11 @@ def update_system_config():
                 'tier_required': 'pro',
                 'upgrade_hint': '/pricing',
             }), 402
+        # Phase 14c.1: 切到 semi_auto/full_auto 时立即触发 recommend (不等 cron)
+        from app.services.config_service import get
+        prev_mode = get('ai_decision_mode', 'manual')
+        if prev_mode == 'manual' and mode in ('semi_auto', 'full_auto'):
+            mode_changed_to_auto = True
 
     # 範圍守衛
     if 'leverage' in patch and not (1 <= patch['leverage'] <= 100):
@@ -1352,6 +1358,16 @@ def update_system_config():
         actor='user',
         patch=patch,
     )
+
+    # Phase 14c.1: 切到 semi_auto/full_auto 时立即触发 recommend (异步)
+    if mode_changed_to_auto:
+        try:
+            from app.tasks.strategy_tasks import auto_ai_improve_strategies
+            auto_ai_improve_strategies.delay()
+            new_cfg['_recommend_triggered'] = True
+        except Exception:
+            pass
+
     return jsonify(new_cfg)
 
 

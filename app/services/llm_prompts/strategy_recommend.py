@@ -38,6 +38,59 @@ def _user_running_summary(user_id: int) -> dict:
     }
 
 
+def _get_user_capital() -> float:
+    """拉 admin OKX USDT (其他 user 拉自己 OKX 帐户)"""
+    try:
+        from app.services.exchange_service import fetch_balance, _env_creds
+        bal = fetch_balance(creds=_env_creds())
+        return float(bal.get('USDT', {}).get('total', 0)) if isinstance(bal.get('USDT'), dict) else float(bal.get('USDT', 0))
+    except Exception:
+        return 0.0
+
+
+def _get_ticker_price_cache() -> dict[str, float]:
+    """批量拉 4 主流币 ticker price (失败 silent return empty)"""
+    from app.services.exchange_service import get_ticker
+    prices = {}
+    for sym in ('BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'AVAX/USDT'):
+        try:
+            t = get_ticker(sym)
+            prices[sym] = float(t.get('price', 0))
+        except Exception:
+            pass
+    return prices
+
+
+def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: dict, trade_size_usdt: float = 10) -> tuple[bool, str, str | None]:
+    """Phase 14e: 检查 user 资金能否下单该 catalog 策略
+    返回 (feasible, reason, best_symbol)
+    """
+    from app.services.symbols import get_contract_size
+    cm = entry.catalog_meta or {}
+    fit_symbols = cm.get('fit_symbols') or []
+    rec_risk = cm.get('recommended_risk') or {}
+    lev = float(rec_risk.get('leverage') or 3)
+
+    # 每笔 USDT × lev = notional 上限
+    max_notional = trade_size_usdt * lev
+
+    best_sym = None
+    for sym in fit_symbols:
+        contract_size = get_contract_size(sym)
+        price = prices.get(sym, 0)
+        if not price or not contract_size:
+            continue
+        min_contract_notional = contract_size * price
+        # 留 50% buffer (real_notional/intended_notional > 1.5 trigger 跳过守门)
+        if max_notional >= min_contract_notional * 0.67:    # 至少能开 1 contract
+            best_sym = sym
+            return True, f'{sym}: min ${min_contract_notional:.0f}, max ${max_notional:.0f} OK', sym
+
+    if not fit_symbols:
+        return True, 'no fit_symbols constraint', None
+    return False, f'capital ${user_capital:.0f} × lev {lev}x = ${max_notional:.0f} < smallest contract', None
+
+
 def _detect_user_regimes(user_symbols: list[str]) -> dict[str, str]:
     """每 symbol 当前 regime label"""
     try:
@@ -115,13 +168,40 @@ def _score_catalog_entry(entry: StrategyCandidate, user: dict, regimes: dict) ->
     return score, reasons
 
 
-def _pick_symbol_for_recommendation(entry: StrategyCandidate, user_symbols: list[str]) -> str:
-    """从 catalog 的 fit_symbols ∩ user 当前 symbols 选；都无则取 fit_symbols[0]"""
+def _pick_symbol_for_recommendation(entry: StrategyCandidate, user_symbols: list[str],
+                                      prices: dict | None = None,
+                                      capital: float = 0,
+                                      trade_size_usdt: float = 10) -> str:
+    """从 catalog 的 fit_symbols 选最 fit 且**资金可行**的 symbol
+    优先级: feasible fit ∩ user_symbols > feasible fit > user_symbols[0] > 'AVAX/USDT'
+    """
+    from app.services.symbols import get_contract_size
     fit = (entry.catalog_meta or {}).get('fit_symbols') or []
+    rec_risk = (entry.catalog_meta or {}).get('recommended_risk') or {}
+    lev = float(rec_risk.get('leverage') or 3)
+    max_notional = trade_size_usdt * lev
+
+    def _feasible(sym):
+        if not prices:
+            return True
+        cs = get_contract_size(sym)
+        price = prices.get(sym, 0)
+        if not price or not cs:
+            return False
+        return max_notional >= cs * price * 0.67
+
+    # 1. fit ∩ user_symbols 中 feasible
+    for s in (user_symbols or []):
+        if s in fit and _feasible(s):
+            return s
+    # 2. fit 中 feasible 的
+    for s in fit:
+        if _feasible(s):
+            return s
+    # 3. user_symbols 第一个
     if user_symbols:
-        for s in user_symbols:
-            if s in fit:
-                return s
+        return user_symbols[0]
+    # 4. 默认
     if fit:
         return fit[0]
     return 'AVAX/USDT'
@@ -260,14 +340,40 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
 
     user = _user_running_summary(user_id)
     regimes = _detect_user_regimes(user['symbols'])
+    # Phase 14e: capital feasibility check
+    user_capital = _get_user_capital()
+    prices = _get_ticker_price_cache()
+    trade_size = float(cfg.get('trade_size_usdt') or 10)
 
     catalog = StrategyCandidate.query.filter_by(source='catalog', status='qualified').all()
     if not catalog:
         return {'ok': False, 'error': 'catalog 为空，先跑 seed_catalog.py'}
 
-    # Score 所有 catalog
-    scored = []
+    # Phase 14e: 先 filter 不 feasible 的
+    feasible_catalog = []
+    infeasible = []
     for entry in catalog:
+        ok, reason, _ = _is_capital_feasible(entry, user_capital, prices, trade_size)
+        if ok:
+            feasible_catalog.append(entry)
+        else:
+            infeasible.append({'type': entry.candidate_type, 'reason': reason})
+
+    if not feasible_catalog:
+        return {
+            'ok': True,
+            'mode': mode,
+            'recommendations': [],
+            'user_state': user,
+            'user_capital_usdt': user_capital,
+            'infeasible_count': len(infeasible),
+            'infeasible_examples': infeasible[:5],
+            'message': f'资金 ${user_capital:.0f} 不足以下单任何 catalog 策略最小合约。建议加资金或降 lev/trade_size',
+        }
+
+    # Score 所有 feasible catalog
+    scored = []
+    for entry in feasible_catalog:
         s, reasons = _score_catalog_entry(entry, user, regimes)
         scored.append((entry, s, reasons))
     scored.sort(key=lambda x: -x[1])
@@ -276,7 +382,7 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
     # Clone top N + maybe auto-apply
     recommendations = []
     for entry, score, reasons in top:
-        sym = _pick_symbol_for_recommendation(entry, user['symbols'])
+        sym = _pick_symbol_for_recommendation(entry, user['symbols'], prices, user_capital, trade_size)
         clone = _clone_catalog_to_candidate(entry, user_id, sym)
         auto = _maybe_auto_apply(clone, user_id, mode, cfg)
         recommendations.append({
@@ -352,6 +458,8 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
         'user_state': user,
         'regimes': regimes,
         'catalog_size': len(catalog),
+        'feasible_catalog_count': len(feasible_catalog),
+        'user_capital_usdt': user_capital,
         'recommendations': recommendations,
         'invent_result': invent_result,
     }
