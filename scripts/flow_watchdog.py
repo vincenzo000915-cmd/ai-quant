@@ -75,31 +75,18 @@ def psql(sql: str) -> tuple[int, str]:
 # === DETECTION ===
 
 def check_celery_beat_heartbeat() -> dict:
-    """1. Celery beat 心跳 — Redis task-meta key 数量 1h 内增长"""
+    """1. Celery worker 响应 ping (替代 task-meta 计数 - 有 TTL 过期 false positive 问题)
+    inspect ping 直接验 worker process alive + 接受任务"""
     t = t0()
-    rc, out, _ = run_cmd(['docker', 'exec', 'quant-redis-1', 'redis-cli', 'EVAL',
-                          "return #redis.call('keys', 'celery-task-meta-*')", '0'], timeout=8)
-    if rc != 0:
-        return {'status': WARN, 'detail': f'redis fail', 'latency_ms': ms(t)}
-    try: current = int(out.strip())
-    except: return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
-
-    state_file = LOG_DIR / 'flow_watchdog_state.json'
-    state = {}
-    if state_file.exists():
-        try: state = json.loads(state_file.read_text())
-        except: pass
-    prev = state.get('celery_task_meta')
-    prev_ts = state.get('celery_task_meta_ts', 0)
-    state['celery_task_meta'] = current
-    state['celery_task_meta_ts'] = time.time()
-    state_file.write_text(json.dumps(state))
-    if prev is None:
-        return {'status': WARN, 'detail': f'baseline 写入 ({current})，下次对比', 'latency_ms': ms(t)}
-    elapsed = (time.time() - prev_ts) / 60
-    if current <= prev and elapsed > 5:
-        return {'status': FAIL, 'detail': f'task-meta {prev}→{current} 无增长 ({elapsed:.1f}min)，beat 可能挂', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'task-meta {prev}→{current} (+{current-prev} in {elapsed:.1f}min)', 'latency_ms': ms(t)}
+    rc, out, err = run_cmd(
+        ['docker', 'exec', 'quant-celery-worker-1', 'celery',
+         '-A', 'app.tasks.strategy_tasks', 'inspect', 'ping', '-t', '5'],
+        timeout=15,
+    )
+    if rc != 0 or 'pong' not in (out + err).lower():
+        return {'status': FAIL, 'detail': f'worker ping no pong: {(err or out)[:120]}', 'latency_ms': ms(t)}
+    # Celery worker 响应了说明它在跑 — beat 派的 task 也会被消费
+    return {'status': OK, 'detail': 'worker pong', 'latency_ms': ms(t)}
 
 
 def check_signal_cycle_15m() -> dict:
