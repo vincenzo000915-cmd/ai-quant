@@ -16,3 +16,4 @@ anthropic==0.42.0
 flask-jwt-extended==4.6.0
 bcrypt==4.1.2
 cryptography==42.0.5
+hyperliquid-python-sdk==0.23.0

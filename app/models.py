@@ -98,6 +98,46 @@ class LlmCredentials(db.Model):
         }
 
 
+class HyperliquidCredentials(db.Model):
+    """Phase 14k: per-user Hyperliquid agent wallet (Fernet 加密 private key)
+
+    HL 设计: user 在 hyperliquid 网站派生 agent wallet — agent 只能 trade,
+    无法 transfer/withdraw, 主钱包永远不暴露给系统.
+
+    agent_address — 0x... agent 钱包地址 (用于 sign user-of-record)
+    main_address  — 0x... 主钱包地址 (用于 query positions/balance, info API)
+    encrypted_agent_private_key — agent 钱包私钥 (ECDSA secp256k1, 32 bytes hex)
+    """
+    __tablename__ = 'hyperliquid_credentials'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True, index=True)
+    agent_address = db.Column(db.String(60), nullable=False)
+    main_address = db.Column(db.String(60), nullable=False)
+    encrypted_agent_private_key = db.Column(db.Text, nullable=False)
+    network = db.Column(db.String(10), default='mainnet')   # 'mainnet' | 'testnet'
+    verified_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        """永远不返回 private key, 仅 address/状态."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'agent_address': self.agent_address,
+            'main_address': self.main_address,
+            'network': self.network,
+            'verified_at': self.verified_at.isoformat() if self.verified_at else None,
+            'last_error': self.last_error,
+            'is_active': bool(self.is_active),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class User(db.Model):
     """Phase 11.1: SaaS 用戶 — bcrypt 密碼，每 user 有自己的 strategies / positions / trades
 
