@@ -60,8 +60,10 @@ def save_for_user(user_id: int, agent_address: str, main_address: str,
                   agent_expires_at: datetime.datetime | None = None) -> HyperliquidCredentials:
     """新增或更新某 user 的 HL agent 凭据. idempotent.
 
-    Phase 14k-6: agent_expires_at 默认 now + 180 天 (HL 平台 enforce).
-    user 也可显式传 (绑了 old agent 时手动指定 actual expiry).
+    Phase 14k-8: agent_expires_at 动态从 HL info extraAgents 读 actual validUntil.
+    - 调 HL 找 main_address 下匹配 agent_address 的 entry, 用真实 validUntil
+    - 找不到 agent (未授权 HL) → raise ValueError 强制 user 先去 HL Authorize
+    - HL API 失败 → fallback 180 天默认值
     """
     if not _ADDR_RE.match(agent_address.strip()):
         raise ValueError(f'agent_address 不是合法 0x 地址: {agent_address}')
@@ -72,6 +74,25 @@ def save_for_user(user_id: int, agent_address: str, main_address: str,
     if network not in ('mainnet', 'testnet'):
         raise ValueError(f'network 必须 mainnet 或 testnet, got: {network}')
 
+    # 14k-8: 从 HL 查 agent 是否真授权 + 真 validUntil
+    if agent_expires_at is None:
+        try:
+            from app.services.hyperliquid_service import fetch_agent_validity
+            info = fetch_agent_validity(main_address.strip(), agent_address.strip(), network)
+            if info is None:
+                # 没在 HL extraAgents 列表里找到 → 未授权或地址不对
+                raise ValueError(
+                    f'HL 上没找到 agent {agent_address[:10]}… 授权给 main {main_address[:10]}…. '
+                    f'去 hyperliquid.xyz/API 检查: 1) main wallet 是否对的 2) agent address 是否已 Authorize/Generate'
+                )
+            if info.get('valid_until_dt'):
+                agent_expires_at = info['valid_until_dt']
+        except ValueError:
+            raise
+        except Exception as e:
+            # HL info API 失败 — fallback 180d 默认
+            print(f'[hl_creds] fetch_agent_validity failed, fallback 180d: {e}')
+
     rec = HyperliquidCredentials.query.filter_by(user_id=user_id).first()
     if rec is None:
         rec = HyperliquidCredentials(user_id=user_id, is_active=True)
@@ -80,7 +101,6 @@ def save_for_user(user_id: int, agent_address: str, main_address: str,
     rec.main_address = main_address.strip().lower()
     rec.encrypted_agent_private_key = _encrypt(_normalize_privkey(agent_private_key))
     rec.network = network
-    # 14k-6: 默认 180 天有效
     rec.agent_expires_at = agent_expires_at or (datetime.datetime.utcnow() + datetime.timedelta(days=180))
     rec.expiry_warned_at = None    # 重新绑定 → 清除警告记录
     rec.verified_at = None

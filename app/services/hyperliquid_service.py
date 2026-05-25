@@ -125,6 +125,38 @@ def fetch_balance(creds: dict) -> dict:
     }
 
 
+def fetch_agent_validity(main_address: str, agent_address: str,
+                          network: str = 'mainnet') -> dict | None:
+    """查 HL info extraAgents — 找 main_address 下匹配 agent_address 的条目.
+
+    返回 {address, name, valid_until_ms, valid_until_dt} 或 None (未授权)
+    """
+    if not main_address or not agent_address:
+        return None
+    info = _info_client(network)
+    try:
+        # SDK 的 post() 是底层 http; type=extraAgents 是 HL info API
+        agents = info.post('/info', {'type': 'extraAgents', 'user': main_address})
+    except Exception:
+        return None
+    if not isinstance(agents, list):
+        return None
+    target = agent_address.lower()
+    import datetime as _dt
+    for a in agents:
+        if not isinstance(a, dict):
+            continue
+        if (a.get('address') or '').lower() == target:
+            ts_ms = a.get('validUntil')
+            return {
+                'address': a.get('address'),
+                'name': a.get('name'),
+                'valid_until_ms': ts_ms,
+                'valid_until_dt': _dt.datetime.utcfromtimestamp(ts_ms / 1000) if ts_ms else None,
+            }
+    return None
+
+
 def fetch_positions(creds: dict) -> list[dict]:
     """[{inst_id, pos_contracts, side, avg_px, upl, ...}] — 兼容 OKX shape."""
     if not creds or not creds.get('main_address'):
