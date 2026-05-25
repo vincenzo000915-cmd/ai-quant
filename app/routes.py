@@ -51,6 +51,7 @@ def create_strategy():
         params=data.get('params', {}),
         symbol=data.get('symbol', 'BTC/USDT'),
         timeframe=data.get('timeframe', '4h'),
+        exchange=(data.get('exchange') or 'okx').lower(),     # Phase 14k
         max_positions=data.get('max_positions', 1),
         max_daily_loss=data.get('max_daily_loss', 10.0),
     )
@@ -66,7 +67,7 @@ def update_strategy(id):
     strategy = _owned_strategy(id)
     data = request.get_json()
     for field in ['name', 'type', 'category', 'params', 'symbol', 'timeframe',
-                  'max_positions', 'max_daily_loss']:
+                  'exchange', 'max_positions', 'max_daily_loss']:
         if field in data:
             setattr(strategy, field, data[field])
     db.session.commit()

@@ -4,7 +4,7 @@ import {
   TableContainer, TableHead, TableRow, Paper, Chip, Button, IconButton,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
-  LinearProgress, Tooltip, Alert, Snackbar, Grid, Checkbox,
+  LinearProgress, Tooltip, Alert, Snackbar, Grid, Checkbox, Stack,
 } from '@mui/material';
 import PodcastsIcon from '@mui/icons-material/Podcasts';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -87,7 +87,7 @@ export default function Strategies() {
   const [editingStrategy, setEditingStrategy] = useState(null);
   const [form, setForm] = useState({
     name: '', type: 'ma_crossover', category: 'swing', symbol: 'BTC/USDT',
-    timeframe: '4h', params: '{}', active: false,
+    timeframe: '4h', params: '{}', active: false, exchange: 'okx',
   });
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [estimateDialog, setEstimateDialog] = useState(false);
@@ -251,12 +251,14 @@ export default function Strategies() {
         timeframe: strategy.timeframe || '4h',
         params: strategy.params ? JSON.stringify(strategy.params, null, 2) : '{}',
         active: strategy.active || false,
+        exchange: strategy.exchange || 'okx',
       });
     } else {
       setEditingStrategy(null);
       setForm({
         name: '', type: 'ma_crossover', category: 'swing',
         symbol: 'BTC/USDT', timeframe: '4h', params: '{}', active: false,
+        exchange: 'okx',
       });
     }
     setDialogOpen(true);
@@ -368,7 +370,18 @@ export default function Strategies() {
                       <Chip label={strategy.timeframe} size="small" variant="outlined" color="info" sx={{ fontSize: 10 }} />
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>{strategy.symbol}</Typography>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        <Typography variant="body2" fontWeight={600} sx={{ fontSize: 12 }}>{strategy.symbol}</Typography>
+                        {strategy.exchange === 'hyperliquid' ? (
+                          <Tooltip title="Hyperliquid DEX" arrow>
+                            <Chip label="HL" size="small" sx={{ fontSize: 9, height: 16, bgcolor: 'rgba(167,139,250,0.2)', color: '#a78bfa', fontWeight: 700 }} />
+                          </Tooltip>
+                        ) : (
+                          <Tooltip title="OKX CEX" arrow>
+                            <Chip label="OKX" size="small" sx={{ fontSize: 9, height: 16, bgcolor: 'rgba(96,165,250,0.15)', color: '#60a5fa' }} />
+                          </Tooltip>
+                        )}
+                      </Stack>
                     </TableCell>
                     <TableCell>
                       {strategy.status === 'retired' ? (
@@ -620,6 +633,13 @@ export default function Strategies() {
                     </Typography>}
                   </MenuItem>
                 ))}
+              </Select>
+            </FormControl>
+            <FormControl fullWidth size="small">
+              <InputLabel>交易所</InputLabel>
+              <Select value={form.exchange || 'okx'} onChange={(e) => setForm(f => ({...f, exchange: e.target.value}))} label="交易所">
+                <MenuItem value="okx">OKX (CEX 永续合约)</MenuItem>
+                <MenuItem value="hyperliquid">Hyperliquid (DEX, 手续费低 30%+)</MenuItem>
               </Select>
             </FormControl>
             <TextField label="策略參數 (JSON)" value={form.params} onChange={(e) => setForm(f => ({...f, params: e.target.value}))} fullWidth size="small" multiline rows={3} />
