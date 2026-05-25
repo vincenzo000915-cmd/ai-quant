@@ -2474,6 +2474,34 @@ def me_profit_target_set():
 
     target_pct = float(data.get('target_pct', 20.0))
     days = int(data.get('days', 30))
+
+    # Phase 14k-25: realistic 守 — 防 user 设 120% 月化梦幻目标
+    if days < 7:
+        return jsonify({'error': '周期不能少于 7 天', 'tier_required': None}), 400
+    if days > 365:
+        return jsonify({'error': '周期不能超过 365 天 (1 年)'}), 400
+    if target_pct <= 0:
+        return jsonify({'error': '目标增幅必须 > 0%'}), 400
+    # 折算月化等价: monthly_eq = ((1+target_pct/100)^(30/days) - 1) × 100
+    monthly_eq = (((1 + target_pct / 100) ** (30.0 / days)) - 1) * 100
+    if monthly_eq > 50:
+        return jsonify({
+            'error': (
+                f'目标 +{target_pct}% / {days} 天 = 月化 {monthly_eq:.0f}%, '
+                f'超出系统支持上限 (月化 50%). 一流量化基金年化 30% 左右. '
+                f'建议: 拆成多个 30% 月化目标, 或拉长周期.'
+            ),
+            'monthly_equiv_pct': round(monthly_eq, 1),
+            'max_monthly_pct': 50,
+        }), 400
+    # DD 配置 sanity
+    max_dd = float(data.get('max_dd_pct', 15.0))
+    if max_dd < 5 or max_dd > 50:
+        return jsonify({'error': '最大回撤须在 5-50%'}), 400
+    daily_halt = float(data.get('daily_loss_halt_pct', 5.0))
+    if daily_halt < 2 or daily_halt > 20:
+        return jsonify({'error': '单日止血须在 2-20%'}), 400
+
     import datetime as _dt
     deadline = _dt.datetime.utcnow() + _dt.timedelta(days=days)
 
@@ -2484,8 +2512,8 @@ def me_profit_target_set():
         deadline=deadline,
         current_equity_usdt=float(start_cap),
         peak_equity_usdt=float(start_cap),
-        max_dd_pct=float(data.get('max_dd_pct', 15.0)),
-        daily_loss_halt_pct=float(data.get('daily_loss_halt_pct', 5.0)),
+        max_dd_pct=max_dd,
+        daily_loss_halt_pct=daily_halt,
         status='active',
     )
     db.session.add(t)

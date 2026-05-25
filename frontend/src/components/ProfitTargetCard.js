@@ -253,11 +253,54 @@ export default function ProfitTargetCard() {
 }
 
 function TargetDialog({ open, onClose, form, setForm, onSave, busy, title, existing }) {
+  // 14k-25: 现实性等级判定
+  const monthlyEq = form.days > 0
+    ? (Math.pow(1 + form.target_pct / 100, 30 / form.days) - 1) * 100
+    : 0;
+  let level = 'safe', levelColor = '#34d399', levelLabel = '🟢 稳健';
+  let warning = '';
+  if (monthlyEq > 50) {
+    level = 'reject'; levelColor = '#f87171'; levelLabel = '⛔ 超出上限';
+    warning = `月化 ${monthlyEq.toFixed(0)}% 超出系统支持上限 (50%). 一流量化年化 ~30%, 此设置不切实际. 请降目标或拉长周期.`;
+  } else if (monthlyEq > 30) {
+    level = 'aggressive'; levelColor = '#f87171'; levelLabel = '🔴 激进';
+    warning = `月化 ${monthlyEq.toFixed(0)}% 属顶级量化水平, 停损会非常频繁. 需要 user 心理承受波动.`;
+  } else if (monthlyEq > 15) {
+    level = 'ambitious'; levelColor = '#fbbf24'; levelLabel = '🟡 进取';
+    warning = `月化 ${monthlyEq.toFixed(0)}% 高于一线基金平均 (年化 30% ≈ 月 2.4%), 现实但有挑战.`;
+  } else {
+    levelLabel = '🟢 稳健';
+  }
+  const canSave = level !== 'reject';
+  const needsConfirm = level === 'aggressive';
+  const [confirmed, setConfirmed] = useState(false);
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
+          {/* 14k-25: 现实性 live preview */}
+          <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: `${levelColor}15`, border: `1px solid ${levelColor}55` }}>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+              <Typography variant="body2" fontWeight={700}>难度等级:</Typography>
+              <Chip label={levelLabel} size="small" sx={{ bgcolor: `${levelColor}33`, color: levelColor, fontWeight: 700 }} />
+              <Box sx={{ flex: 1 }} />
+              <Typography variant="caption" color="text.secondary">月化 ≈ {monthlyEq.toFixed(1)}%</Typography>
+            </Stack>
+            {warning && (
+              <Typography variant="caption" sx={{ color: levelColor, display: 'block' }}>
+                {warning}
+              </Typography>
+            )}
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0.5, mt: 1, fontSize: 10 }}>
+              <Box sx={{ textAlign: 'center', color: '#34d399' }}>≤15% 🟢</Box>
+              <Box sx={{ textAlign: 'center', color: '#fbbf24' }}>15-30% 🟡</Box>
+              <Box sx={{ textAlign: 'center', color: '#f87171' }}>30-50% 🔴</Box>
+              <Box sx={{ textAlign: 'center', color: '#94a3b8' }}>{'>'}50% ⛔</Box>
+            </Box>
+          </Box>
+
           <Alert severity="info" sx={{ fontSize: 12 }}>
             <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>🤖 启用后 AI 全权管理:</Typography>
             <Box component="ul" sx={{ pl: 2, m: 0, fontSize: 11.5, lineHeight: 1.6 }}>
@@ -269,9 +312,6 @@ function TargetDialog({ open, onClose, form, setForm, onSave, busy, title, exist
               <li>资金跨 $100/$500/$2000 → 自动扩张策略数</li>
               <li>每周日 复盘: 淘汰亏损 + 补新</li>
             </Box>
-            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.disabled' }}>
-              新目标会替换当前 active 目标. 暂停后现有策略仍在运行, 只是 AI 不再主动调整.
-            </Typography>
           </Alert>
           {existing && (
             <Typography variant="caption" color="text.secondary">
@@ -306,11 +346,28 @@ function TargetDialog({ open, onClose, form, setForm, onSave, busy, title, exist
           />
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={busy}>取消</Button>
-        <Button onClick={onSave} variant="contained" disabled={busy} sx={{ bgcolor: PURPLE }}>
-          保存
-        </Button>
+      <DialogActions sx={{ flexDirection: 'column', alignItems: 'stretch', gap: 1, px: 3, py: 2 }}>
+        {needsConfirm && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <input
+              type="checkbox"
+              id="confirm-aggressive"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />
+            <Typography component="label" htmlFor="confirm-aggressive" variant="caption" sx={{ color: '#f87171', cursor: 'pointer' }}>
+              我已理解月化 {monthlyEq.toFixed(0)}% 是激进目标, 停损会很频繁, 可能短期内频繁触发 DD halt
+            </Typography>
+          </Box>
+        )}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          <Button onClick={onClose} disabled={busy}>取消</Button>
+          <Button onClick={onSave} variant="contained"
+                   disabled={busy || !canSave || (needsConfirm && !confirmed)}
+                   sx={{ bgcolor: canSave ? PURPLE : 'grey.500' }}>
+            {!canSave ? '超出上限, 不能保存' : (busy ? '保存中…' : '保存')}
+          </Button>
+        </Box>
       </DialogActions>
     </Dialog>
   );
