@@ -44,6 +44,13 @@ def list_strategies():
 @require_tier('basic')
 def create_strategy():
     data = request.get_json()
+    # Phase 14k-5: exchange 字段非 team user 忽略 payload, 强制 = user 主交易所
+    from app.services.exchange_binding import is_team_tier, primary_exchange
+    _uid = current_user_id() or 1
+    if is_team_tier(_uid):
+        _exchange = (data.get('exchange') or primary_exchange(_uid) or 'okx').lower()
+    else:
+        _exchange = primary_exchange(_uid)
     strategy = Strategy(
         name=data['name'],
         type=data['type'],
@@ -51,7 +58,7 @@ def create_strategy():
         params=data.get('params', {}),
         symbol=data.get('symbol', 'BTC/USDT'),
         timeframe=data.get('timeframe', '4h'),
-        exchange=(data.get('exchange') or 'okx').lower(),     # Phase 14k
+        exchange=_exchange,
         max_positions=data.get('max_positions', 1),
         max_daily_loss=data.get('max_daily_loss', 10.0),
     )
@@ -66,10 +73,16 @@ def create_strategy():
 def update_strategy(id):
     strategy = _owned_strategy(id)
     data = request.get_json()
+    # Phase 14k-5: 非 team user 不能改 exchange
+    from app.services.exchange_binding import is_team_tier
+    _uid = current_user_id() or 1
+    _allow_exchange_edit = is_team_tier(_uid)
     for field in ['name', 'type', 'category', 'params', 'symbol', 'timeframe',
-                  'exchange', 'max_positions', 'max_daily_loss']:
+                  'max_positions', 'max_daily_loss']:
         if field in data:
             setattr(strategy, field, data[field])
+    if _allow_exchange_edit and 'exchange' in data:
+        strategy.exchange = (data['exchange'] or 'okx').lower()
     db.session.commit()
     return jsonify(strategy.to_dict())
 
@@ -2040,10 +2053,15 @@ def me_okx_get():
 def me_okx_bind():
     """綁定 / 更新 user OKX key。{api_key, secret, passphrase}"""
     from app.services.okx_creds import save_for_user
+    from app.services.exchange_binding import can_bind
     from app.services.audit import log as audit
     uid = _me_user_id()
     if uid == 1:
         return jsonify({'error': 'admin 走 .env 系統 key，不在 UI 修改'}), 400
+    # Phase 14k-5: 非 team user 只能绑 1 个交易所
+    ok, reason = can_bind(uid, 'okx')
+    if not ok:
+        return jsonify({'error': reason, 'tier_required': 'team'}), 402
     data = request.get_json(silent=True) or {}
     ak = (data.get('api_key') or '').strip()
     sk = (data.get('secret') or '').strip()
@@ -2130,8 +2148,13 @@ def me_hl_get():
 def me_hl_bind():
     """绑定 / 更新 HL agent. {agent_address, main_address, agent_private_key, network='mainnet'|'testnet'}"""
     from app.services.hyperliquid_creds import save_for_user
+    from app.services.exchange_binding import can_bind
     from app.services.audit import log as audit
     uid = _me_user_id()
+    # Phase 14k-5: 非 team user 只能绑 1 个交易所
+    ok, reason = can_bind(uid, 'hyperliquid')
+    if not ok:
+        return jsonify({'error': reason, 'tier_required': 'team'}), 402
     data = request.get_json(silent=True) or {}
     try:
         rec = save_for_user(
@@ -2188,6 +2211,27 @@ def me_hl_delete():
         return jsonify({'error': '尚未绑定 HL'}), 404
     audit('hl_creds_deleted', actor='user', user_id=uid)
     return jsonify({'bound': False}), 200
+
+
+# ===== Phase 14k-5: 交易所绑定 summary (前端用) =====
+
+@api_bp.route('/me/exchange-binding', methods=['GET'])
+@require_actor
+def me_exchange_binding():
+    """返回 user 交易所绑定状态:
+      { bound: ['okx'|'hyperliquid'], primary: str, is_team: bool, can_bind_multi: bool }
+    前端用此决定 Settings 显单卡 / 双卡, Strategies dialog 是否显示 exchange Select.
+    """
+    from app.services.exchange_binding import bound_exchanges, primary_exchange, is_team_tier
+    uid = _me_user_id()
+    bound = bound_exchanges(uid)
+    is_team = is_team_tier(uid)
+    return jsonify({
+        'bound': bound,
+        'primary': primary_exchange(uid),
+        'is_team': is_team,
+        'can_bind_multi': is_team,
+    })
 
 
 # ===== Phase 11.5.1: per-user BYO LLM key =====
