@@ -1877,16 +1877,19 @@ def weekly_strategy_review():
 
 @celery_app.task(name='app.tasks.strategy_tasks.retry_stuck_ai_recommendations')
 def retry_stuck_ai_recommendations():
-    """Phase 14k-20: 重试卡在 panel 的 AI 推荐 qualified clones.
+    """Phase 14k-20/26: 重试卡在 panel 的 AI 推荐 qualified clones.
 
     场景: _maybe_auto_apply 推荐时被 cap/concentration 挡, 之后条件改变 (cap 提升 /
     老策略停) → clones 永远不会重新检查, 卡死在 panel.
     解决: 每 5 min iterate panel 上的 qualified clone 重跑 _maybe_auto_apply.
+
+    14k-26: 超过 24h 还 concentration 卡住的 clone → 自动 dismiss (避免永远 panel 堆积)
     """
     from app.models import StrategyCandidate
     from app.services.config_service import get_config
     from app.services.llm_prompts.strategy_recommend import _maybe_auto_apply
     from app.extensions import db as _db
+    import datetime as _dt
 
     cfg = get_config()
     mode = cfg.get('ai_decision_mode', 'manual')
@@ -1902,11 +1905,24 @@ def retry_stuck_ai_recommendations():
     if not stuck:
         return 'no stuck clones'
 
+    now = _dt.datetime.utcnow()
     promoted = 0
     still_blocked = 0
+    auto_dismissed = 0
     for c in stuck:
+        # 14k-26: > 24h 仍卡 concentration 的 clone → 自动 dismiss
+        age_hours = (now - c.created_at).total_seconds() / 3600 if c.created_at else 0
+        sm_now = c.source_meta or {}
+        old_reason = sm_now.get('auto_skip_reason', '') or ''
+        if age_hours > 24 and '已 running 同' in old_reason:
+            c.status = 'dismissed'
+            c.error_log = f'auto-dismiss after 24h concentration: {old_reason[:100]}'
+            _db.session.commit()
+            auto_dismissed += 1
+            continue
+
         # 默认 user_id=1 (admin); per-user 推荐继承 source_meta.user_id
-        user_id = (c.source_meta or {}).get('cloned_for_user') or 1
+        user_id = sm_now.get('cloned_for_user') or 1
         try:
             res = _maybe_auto_apply(c, user_id, mode, cfg)
         except Exception as e:
@@ -1914,20 +1930,18 @@ def retry_stuck_ai_recommendations():
             continue
         if res and res.get('applied'):
             promoted += 1
-            # 清掉 skip reason
             sm = dict(c.source_meta or {})
             sm.pop('auto_skip_reason', None)
             c.source_meta = sm
             _db.session.commit()
         elif res and res.get('skipped'):
-            # 更新 skip reason (可能从 cap 满变成 concentration 等)
             sm = dict(c.source_meta or {})
             sm['auto_skip_reason'] = res.get('reason', '')
             c.source_meta = sm
             _db.session.commit()
             still_blocked += 1
 
-    return f'retry: promoted={promoted}, still_blocked={still_blocked}, total={len(stuck)}'
+    return f'retry: promoted={promoted}, still_blocked={still_blocked}, auto_dismissed={auto_dismissed}, total={len(stuck)}'
 
 
 @celery_app.task(name='app.tasks.strategy_tasks.check_hl_agent_expiry')
