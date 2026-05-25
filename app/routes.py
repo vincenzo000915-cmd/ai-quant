@@ -2051,23 +2051,41 @@ def me_okx_get():
 @api_bp.route('/me/okx', methods=['POST'])
 @require_actor
 def me_okx_bind():
-    """綁定 / 更新 user OKX key。{api_key, secret, passphrase}"""
+    """綁定 / 更新 user OKX key。{api_key, secret, passphrase}
+
+    Phase 14k-7: 非 team user 已绑 HL 时, 自动走 atomic switch (迁移策略 +
+    解绑 HL + 写 OKX), user 无需手动解绑.
+    """
     from app.services.okx_creds import save_for_user
-    from app.services.exchange_binding import can_bind
+    from app.services.exchange_binding import needs_switch
+    from app.services.exchange_switch import switch_to_okx
     from app.services.audit import log as audit
     uid = _me_user_id()
     if uid == 1:
         return jsonify({'error': 'admin 走 .env 系統 key，不在 UI 修改'}), 400
-    # Phase 14k-5: 非 team user 只能绑 1 个交易所
-    ok, reason = can_bind(uid, 'okx')
-    if not ok:
-        return jsonify({'error': reason, 'tier_required': 'team'}), 402
     data = request.get_json(silent=True) or {}
     ak = (data.get('api_key') or '').strip()
     sk = (data.get('secret') or '').strip()
     pp = (data.get('passphrase') or '').strip()
     if not (ak and sk and pp):
         return jsonify({'error': 'api_key / secret / passphrase 都必填'}), 400
+
+    # Phase 14k-7: 非 team user 已绑 HL → atomic switch
+    should_switch, from_exchange = needs_switch(uid, 'okx')
+    if should_switch:
+        try:
+            res = switch_to_okx(uid, ak, sk, pp)
+            from app.services.okx_creds import get_for_user
+            rec = get_for_user(uid)
+            return jsonify({
+                'bound': True, 'source': 'user',
+                'switch': res,    # {ok, switched_to, migrated_strategies, message}
+                **(rec.to_dict() if rec else {}),
+            }), 201
+        except Exception as e:
+            return jsonify({'error': f'switch failed: {type(e).__name__}: {e}'}), 500
+
+    # 普通绑定 (team 多绑 / 首次绑 / update 同一个)
     try:
         rec = save_for_user(uid, ak, sk, pp)
     except Exception as e:
@@ -2146,16 +2164,42 @@ def me_hl_get():
 @api_bp.route('/me/hyperliquid', methods=['POST'])
 @require_actor
 def me_hl_bind():
-    """绑定 / 更新 HL agent. {agent_address, main_address, agent_private_key, network='mainnet'|'testnet'}"""
+    """绑定 / 更新 HL agent. {agent_address, main_address, agent_private_key, network='mainnet'|'testnet'}
+
+    Phase 14k-7: 非 team user 已绑 OKX 时, 自动 atomic switch (迁移策略 +
+    解绑 OKX + 写 HL), user 无需手动解绑.
+    """
     from app.services.hyperliquid_creds import save_for_user
-    from app.services.exchange_binding import can_bind
+    from app.services.exchange_binding import needs_switch
+    from app.services.exchange_switch import switch_to_hyperliquid
     from app.services.audit import log as audit
     uid = _me_user_id()
-    # Phase 14k-5: 非 team user 只能绑 1 个交易所
-    ok, reason = can_bind(uid, 'hyperliquid')
-    if not ok:
-        return jsonify({'error': reason, 'tier_required': 'team'}), 402
     data = request.get_json(silent=True) or {}
+
+    # Phase 14k-7: 非 team user 已绑 OKX → atomic switch
+    should_switch, from_exchange = needs_switch(uid, 'hyperliquid')
+    if should_switch:
+        try:
+            res = switch_to_hyperliquid(
+                uid,
+                agent_address=data.get('agent_address') or '',
+                main_address=data.get('main_address') or '',
+                agent_private_key=data.get('agent_private_key') or '',
+                network=data.get('network') or 'mainnet',
+            )
+            from app.services.hyperliquid_creds import get_for_user
+            rec = get_for_user(uid)
+            return jsonify({
+                'bound': True,
+                'switch': res,
+                **(rec.to_dict() if rec else {}),
+            }), 201
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        except Exception as e:
+            return jsonify({'error': f'switch failed: {type(e).__name__}: {e}'}), 500
+
+    # 普通绑定 (team 多绑 / 首次绑 / update 同一个)
     try:
         rec = save_for_user(
             uid,

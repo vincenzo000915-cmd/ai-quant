@@ -45,29 +45,32 @@ def primary_exchange(user_id: int) -> str:
     return bound[0]
 
 
+def needs_switch(user_id: int, target_exchange: str) -> tuple[bool, str | None]:
+    """非 team user 绑新交易所时, 检查是否需要走 atomic switch 流程.
+
+    返回 (needs_switch, from_exchange_or_None).
+    - True, 'okx'/'hyperliquid' — 是非 team, 已绑另一个, 应走 switch
+    - False, None — team / 没绑过 / 绑的是同一个, 走普通 save
+    """
+    target = (target_exchange or '').lower()
+    if is_team_tier(user_id):
+        return False, None
+    current = bound_exchanges(user_id)
+    if not current:
+        return False, None
+    if target in current:
+        return False, None
+    # 非 team, 已绑别的, 不是同一个 → 需 switch
+    return True, current[0]
+
+
 def can_bind(user_id: int, target_exchange: str) -> tuple[bool, str]:
-    """检查 user 能否绑 target_exchange.
-    返回 (allowed, reason_if_blocked).
-    普通 user 已绑另一个 → 拒绝 + 提示升级或解绑.
+    """检查 user 能否绑 target_exchange (legacy — 仅 team 路径用).
+
+    Phase 14k-7: 非 team user 改走 needs_switch 自动 atomic 切换,
+    所以这里只用来挡完全异常的输入.
     """
     target = (target_exchange or '').lower()
     if target not in ('okx', 'hyperliquid'):
         return False, f'未知 exchange: {target_exchange}'
-
-    if is_team_tier(user_id):
-        return True, ''   # team 随便绑
-
-    current = bound_exchanges(user_id)
-    if not current:
-        return True, ''   # 没绑过, 第一次绑 OK
-
-    if target in current:
-        return True, ''   # 已绑同一个, update 也 OK
-
-    # 普通 user 已经绑了另一个 → 拒绝
-    other_name = 'OKX' if current[0] == 'okx' else 'Hyperliquid'
-    target_name = 'OKX' if target == 'okx' else 'Hyperliquid'
-    return False, (
-        f'你已绑定 {other_name}, 普通账户仅支持 1 个交易所. '
-        f'要换到 {target_name}: 先解绑 {other_name}, 或升级团队版 (team 可绑多个交易所).'
-    )
+    return True, ''

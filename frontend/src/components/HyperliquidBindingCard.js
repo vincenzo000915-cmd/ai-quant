@@ -21,7 +21,7 @@ import ExchangeRiskDialog from './ExchangeRiskDialog';
 
 const PURPLE = '#a78bfa';
 
-export default function HyperliquidBindingCard() {
+export default function HyperliquidBindingCard({ onSaved }) {
   const [riskOpen, setRiskOpen] = useState(false);
   const [state, setState] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -61,10 +61,14 @@ export default function HyperliquidBindingCard() {
       if (!r.ok) {
         setMsg({ type: 'error', text: body.error || `HTTP ${r.status}` });
       } else {
-        setMsg({ type: 'success', text: '已保存。点「测试」拉余额验证。' });
+        // Phase 14k-7: 切换 atomic 响应
+        const switchInfo = body?.switch;
+        const successMsg = switchInfo?.message || '已保存。点「测试」拉余额验证。';
+        setMsg({ type: 'success', text: successMsg });
         setEditing(false);
         setAgent(''); setMain(''); setPK('');
         setState(body);
+        if (onSaved) onSaved(body);
       }
     } finally { setBusy(false); }
   };

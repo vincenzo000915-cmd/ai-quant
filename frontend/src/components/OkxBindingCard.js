@@ -16,7 +16,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { getUser } from '../auth';
 import ExchangeRiskDialog from './ExchangeRiskDialog';
 
-export default function OkxBindingCard() {
+export default function OkxBindingCard({ onSaved }) {
   const [riskOpen, setRiskOpen] = useState(false);
   const [state, setState] = useState(null);   // server 状态：{bound, source, ...}
   const [editing, setEditing] = useState(false);
@@ -60,10 +60,14 @@ export default function OkxBindingCard() {
       if (!r.ok) {
         setMsg({ type: 'error', text: body.error || `HTTP ${r.status}` });
       } else {
-        setMsg({ type: 'success', text: '已保存。点「测试」验证 key 是否有效。' });
+        // Phase 14k-7: 切换 atomic 响应 → 显切换 toast (父组件管理)
+        const switchInfo = body?.switch;
+        const successMsg = switchInfo?.message || '已保存。点「测试」验证 key 是否有效。';
+        setMsg({ type: 'success', text: successMsg });
         setEditing(false);
         setApiKey(''); setSecret(''); setPassphrase('');
         setState(body);
+        if (onSaved) onSaved(body);
       }
     } finally { setBusy(false); }
   };
