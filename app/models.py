@@ -175,6 +175,9 @@ class ProfitTarget(db.Model):
     daily_loss_halt_pct = db.Column(db.Float, default=5.0)          # 单日亏损达此 % 当日 halt
     # 警告去重
     last_lag_warned_at = db.Column(db.DateTime)                     # 上次"进度落后"警告时间
+    last_tier_triggered_at = db.Column(db.DateTime)                 # 上次资金跨档 trigger
+    last_tier_value = db.Column(db.Integer)                         # 上次跨过的档位 ($100/$500/$2000)
+    last_ai_review_at = db.Column(db.DateTime)                      # 上次主动 trigger AI review
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
     def target_equity(self) -> float:

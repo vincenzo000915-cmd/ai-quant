@@ -1730,6 +1730,11 @@ def profit_progress_monitor():
         # C) 进度对比 — 落后警告 (24h 去重)
         expected = t.expected_equity_now()
         lag_pct = (expected - total) / expected * 100 if expected > 0 else 0
+        ai_review_cooldown_h = 6      # AI review 全局 cooldown (避免与 daily AI improve 重复)
+        recently_reviewed = (
+            t.last_ai_review_at
+            and (now - t.last_ai_review_at).total_seconds() < ai_review_cooldown_h * 3600
+        )
         if lag_pct > 5:
             recently_warned = (
                 t.last_lag_warned_at
@@ -1742,42 +1747,42 @@ def profit_progress_monitor():
                     f'用户 {user.email}\n'
                     f'当前 ${total:.2f} · 应到 ${expected:.2f} · 落后 {lag_pct:.1f}%\n'
                     f'已用 {t.days_elapsed()}/{t.days_elapsed() + t.days_remaining()} 天, 完成 {progress}%\n'
-                    f'AI 将于 24h 内主动 review 策略',
+                    + ('AI 将于 24h 内主动 review 策略' if not recently_reviewed else 'AI 最近已 review (cooldown 中)'),
                     event_key=f'target_lag_{t.id}_{now.strftime("%Y%m%d")}',
                 )
                 t.last_lag_warned_at = now
-                # 主动触发 AI improve 帮加策略
-                try:
-                    from app.services.llm_prompts.strategy_recommend import recommend_strategies
-                    recommend_strategies(t.user_id)
-                except Exception:
-                    pass
-                actions.append(f'lag warn user={user.email}')
+                # 主动触发 AI improve, 但走 cooldown 防与 daily 重复
+                if not recently_reviewed:
+                    try:
+                        from app.services.llm_prompts.strategy_recommend import recommend_strategies
+                        recommend_strategies(t.user_id)
+                        t.last_ai_review_at = now
+                        actions.append(f'lag→ai_review user={user.email}')
+                    except Exception:
+                        pass
 
-        # D) 资金扩展 trigger (跨档自动加策略)
-        # 14k-20 已在 recommend 阶段按 capital 算 max_recommend, 这里只 trigger
+        # D) 资金扩展 trigger — 真 cooldown 防反复触发
         thresholds = [100, 500, 2000]
         crossed = next((th for th in thresholds
-                          if t.start_capital_usdt < th <= total), None)
+                          if t.start_capital_usdt < th <= total
+                          and (t.last_tier_value or 0) < th), None)
         if crossed:
-            # 24h 内只 trigger 一次
-            recently_triggered = (
-                t.last_progress_check_at and t.last_lag_warned_at
-                and (now - t.last_lag_warned_at).total_seconds() < 24 * 3600
-            )
-            if not recently_triggered:
-                try:
-                    from app.services.llm_prompts.strategy_recommend import recommend_strategies
+            try:
+                from app.services.llm_prompts.strategy_recommend import recommend_strategies
+                if not recently_reviewed:
                     recommend_strategies(t.user_id)
-                    tg_send(
-                        f'📈 <b>资金跨档</b> ${crossed}\n'
-                        f'用户 {user.email}\n'
-                        f'AI 自动扩展策略数 (现 ${total:.2f})',
-                        event_key=f'capital_tier_{t.id}_{crossed}',
-                    )
-                    actions.append(f'tier {crossed} triggered user={user.email}')
-                except Exception:
-                    pass
+                    t.last_ai_review_at = now
+                t.last_tier_triggered_at = now
+                t.last_tier_value = crossed
+                tg_send(
+                    f'📈 <b>资金跨档</b> ${crossed}\n'
+                    f'用户 {user.email}\n'
+                    f'AI 自动扩展策略数 (现 ${total:.2f})',
+                    event_key=f'capital_tier_{t.id}_{crossed}',
+                )
+                actions.append(f'tier {crossed} triggered user={user.email}')
+            except Exception:
+                pass
 
         db.session.commit()
 
