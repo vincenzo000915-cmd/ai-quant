@@ -167,18 +167,29 @@ export default function AiPickPanel() {
           <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap', gap: 0.5 }}>
             <Chip
               size="small"
-              label={`OOS Sharpe ${fmtNum(m.oos_sharpe)}`}
+              label={`Sharpe ${fmtNum(m.oos_sharpe)}`}
               color={(m.oos_sharpe || 0) >= 2 ? 'success' : 'default'}
               variant="outlined"
             />
             <Chip size="small" label={`PF ${fmtNum(m.oos_profit_factor)}`} variant="outlined" />
-            <Chip size="small" label={`${m.oos_total_trades || 0} trades`} variant="outlined" />
-            <Chip size="small" label={`AR ${fmtNum(m.oos_annual_return_pct)}%`} variant="outlined" />
-            <Chip size="small" label={`MaxDD ${fmtNum(m.oos_max_drawdown_pct)}%`} variant="outlined" />
+            {m.oos_total_trades != null && <Chip size="small" label={`${m.oos_total_trades} trades`} variant="outlined" />}
+            {m.oos_annual_return_pct != null && <Chip size="small" label={`AR ${fmtNum(m.oos_annual_return_pct)}%`} variant="outlined" />}
+            {m.oos_max_drawdown_pct != null && <Chip size="small" label={`MaxDD ${fmtNum(m.oos_max_drawdown_pct)}%`} variant="outlined" />}
             {m.decay_pct != null && (
               <Chip size="small" label={`decay ${fmtNum(m.decay_pct)}%`} variant="outlined" />
             )}
+            {m.source_label && (
+              <Chip size="small" label={m.source_label}
+                color={m.metric_source === 'catalog_seed' ? 'warning' : 'info'}
+                variant="outlined" />
+            )}
           </Stack>
+          {/* Phase 14k-15: 文献验证 (非本地回测) 警告 */}
+          {m.metric_warning && (
+            <Alert severity="warning" sx={{ mb: 1, py: 0.3, fontSize: 11 }}>
+              ⚠️ {m.metric_warning}
+            </Alert>
+          )}
 
           {/* Risk params box (AI recommendation) */}
           <Box sx={{
@@ -190,8 +201,9 @@ export default function AiPickPanel() {
               💼 AI 推荐 risk params
             </Typography>
             <Typography variant="body2" sx={{ mt: 0.5 }}>
-              杠杆 <b>{rp.leverage || '?'}x</b>　·　仓位 <b>${rp.position_size_usdt || '?'}</b>　·
-              SL <b>{rp.stop_loss_pct || '?'}%</b>　·　TP <b>{rp.take_profit_pct || '?'}%</b>
+              杠杆 <b>{rp.leverage ?? '—'}x</b>　·　仓位 <b>${rp.position_size_usdt ?? '自适应'}</b>　·
+              SL <b>{(rp.stop_loss_pct ?? rp.sl_pct) ?? '—'}%</b>　·　TP <b>{(rp.take_profit_pct ?? rp.tp_pct) ?? '—'}%</b>
+              {rp.order_type && (<span style={{ marginLeft: 8, opacity: 0.6, fontSize: 11 }}>({rp.order_type})</span>)}
             </Typography>
             {rp.reasoning && (
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.3 }}>
@@ -280,8 +292,17 @@ export default function AiPickPanel() {
             )}
           </Collapse>
 
+          {/* Phase 14k-15: 没自动上架原因 */}
+          {it.auto_skip_reason && (
+            <Box sx={{ mb: 1, p: 0.8, borderRadius: 1, bgcolor: 'rgba(251,191,36,0.08)', border: '1px dashed rgba(251,191,36,0.3)' }}>
+              <Typography variant="caption" sx={{ color: '#fbbf24' }}>
+                🛑 未自动上架原因: {it.auto_skip_reason}
+              </Typography>
+            </Box>
+          )}
+
           {/* Actions */}
-          <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+          <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }}>
             <Button
               variant="contained"
               size="small"
@@ -301,6 +322,29 @@ export default function AiPickPanel() {
               sx={{ borderColor: PURPLE, color: PURPLE }}
             >
               调整后应用
+            </Button>
+            {/* Phase 14k-15: 一键回测 */}
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={async () => {
+                setActioning(s => ({ ...s, [it.id]: 'backtest' }));
+                try {
+                  const r = await fetch(`/api/candidates/${it.id}/run-backtest`, { method: 'POST' });
+                  const body = await r.json();
+                  if (body.ok) {
+                    alert(`回测完成. ${body.message || ''}`);
+                    await refresh();
+                  } else {
+                    alert(`回测失败: ${body.error || 'unknown'}`);
+                  }
+                } catch (e) { alert(`回测异常: ${e.message}`); }
+                finally { setActioning(s => ({ ...s, [it.id]: null })); }
+              }}
+              disabled={actioning[it.id] === 'backtest' || isApplying || isRejecting}
+              color="info"
+            >
+              {actioning[it.id] === 'backtest' ? '回测中…' : '🔬 跑回测'}
             </Button>
             <Box sx={{ flexGrow: 1 }} />
             <Button

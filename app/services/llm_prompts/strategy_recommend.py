@@ -577,14 +577,42 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         remaining = [(e, s, r) for e, s, r in scored if (e, s, r) not in top]
         top.extend(remaining[:max_recommend - len(top)])
 
-    # Clone top N + maybe auto-apply (14k-13: target_exchange 透传 → promote 走对应交易所)
+    # 14k-15: backtest-first 流程
+    # 1. 创建 clone (status='backtesting')
+    # 2. 立即跑 walkforward, 用真实数据
+    # 3. pass 门槛 → 'qualified', 进 panel; fail → 'rejected', 不显示
+    # 4. qualified 才走 _maybe_auto_apply (full_auto 模式直接上架)
+    from app.services.candidate_pipeline import backtest_candidate
     recommendations = []
     for entry, score, reasons in top:
         sym = _pick_symbol_for_recommendation(entry, user['symbols'], prices, user_capital, trade_size)
         clone = _clone_catalog_to_candidate(entry, user_id, sym, user_capital, prices, trade_size,
                                               target_exchange=target_exchange)
+        # 立即跑真实回测 — 取代 catalog seed 的 verified_sharpe
+        bt_summary = {}
+        try:
+            bt_res = backtest_candidate(clone.id, symbol=sym, candle_limit=2000)
+            bt_summary = bt_res
+            # candidate.status 已被 backtest_candidate 改 (qualified / rejected)
+            db.session.refresh(clone)
+        except Exception as e:
+            print(f'[recommend] backtest fail for clone {clone.id}: {e}')
+            clone.status = 'error'
+            clone.error_log = f'auto-backtest fail: {type(e).__name__}: {e}'
+            db.session.commit()
+
         adapted_risk = (clone.source_meta or {}).get('risk_params') or {}
-        auto = _maybe_auto_apply(clone, user_id, mode, cfg)
+        # 只对 qualified 走 auto-apply; rejected/error 直接 skip
+        if clone.status == 'qualified':
+            auto = _maybe_auto_apply(clone, user_id, mode, cfg)
+        else:
+            auto = {'skipped': True, 'reason': f'backtest 未通过 (status={clone.status})'}
+        # 14k-15: 把 skip 原因写进 source_meta 让 panel 显示
+        if auto and auto.get('skipped'):
+            sm = dict(clone.source_meta or {})
+            sm['auto_skip_reason'] = auto.get('reason', '')
+            clone.source_meta = sm
+            db.session.commit()
         recommendations.append({
             'catalog_id': entry.id,
             'catalog_type': entry.candidate_type,

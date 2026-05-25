@@ -515,6 +515,37 @@ def ai_improve_strategies():
     return jsonify(r), 201
 
 
+@api_bp.route('/candidates/<int:cid>/run-backtest', methods=['POST'])
+@require_actor
+def candidate_run_backtest(cid):
+    """Phase 14k-15: 立即跑回测验证 catalog clone (panel 一键).
+    会跑 walkforward + 更新 candidate.backtest_result_id, 后续 panel 显真实 metrics.
+    """
+    c = StrategyCandidate.query.get(cid)
+    if not c:
+        return jsonify({'error': 'candidate not found'}), 404
+    if not c.parsed_signal or not c.signal_fn_name:
+        return jsonify({'error': 'candidate 没 parsed_signal'}), 400
+    sym = (c.source_meta or {}).get('symbol') or 'AVAX/USDT'
+    target_ex = (c.source_meta or {}).get('target_exchange') or 'okx'
+    try:
+        from app.services.candidate_pipeline import backtest_candidate
+        r = backtest_candidate(cid, symbol=sym)
+        if not r.get('ok'):
+            return jsonify({'ok': False, 'error': r.get('error')}), 502
+        return jsonify({
+            'ok': True,
+            'candidate_id': cid,
+            'symbol': sym,
+            'target_exchange': target_ex,
+            'backtest_id': r.get('backtest_id'),
+            'metrics': r.get('metrics', {}),
+            'message': f'回测完成. Sharpe={r.get("metrics", {}).get("sharpe_ratio")}',
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
 @api_bp.route('/me/recommendation-explain', methods=['POST'])
 @require_actor
 @require_pro_tier
@@ -1852,20 +1883,37 @@ def candidates_ai_picks():
         wf = (bt.walkforward_json or {}) if bt else {}
         oos = wf.get('out_sample') or {}
 
-        # Phase 14: catalog clone 用 verified_sharpe (没 actual backtest)
-        # AI improve 输出 用 actual oos
+        # Phase 14: catalog clone metrics 来源:
+        # Phase 14k-15: backtest-first 后, clone 都有真 backtest_result_id, 用真 OOS metrics
+        # 仅 backtest 尚未跑 (旧数据) 时 fallback catalog_seed verified_sharpe
         is_catalog_clone = c.source == 'catalog_clone'
         if is_catalog_clone:
-            metrics = {
-                'oos_sharpe': cat_meta.get('verified_oos_sharpe'),
-                'oos_profit_factor': cat_meta.get('verified_pf'),
-                'oos_total_trades': None,
-                'oos_win_rate': None,
-                'oos_annual_return_pct': None,
-                'oos_max_drawdown_pct': None,
-                'decay_pct': None,
-                'source_label': 'vetted catalog',
-            }
+            if oos and oos.get('sharpe_ratio') is not None:
+                # 已经有真 walkforward backtest
+                metrics = {
+                    'oos_sharpe': oos.get('sharpe_ratio'),
+                    'oos_profit_factor': oos.get('profit_factor'),
+                    'oos_total_trades': oos.get('total_trades'),
+                    'oos_win_rate': oos.get('win_rate'),
+                    'oos_annual_return_pct': oos.get('annual_return_pct'),
+                    'oos_max_drawdown_pct': oos.get('max_drawdown_pct'),
+                    'decay_pct': wf.get('decay_pct'),
+                    'source_label': '本地 walkforward 回测',
+                    'metric_source': 'walkforward',
+                }
+            else:
+                metrics = {
+                    'oos_sharpe': cat_meta.get('verified_oos_sharpe'),
+                    'oos_profit_factor': cat_meta.get('verified_pf'),
+                    'oos_total_trades': None,
+                    'oos_win_rate': None,
+                    'oos_annual_return_pct': None,
+                    'oos_max_drawdown_pct': None,
+                    'decay_pct': None,
+                    'source_label': '文献验证 (未本地回测)',
+                    'metric_source': 'catalog_seed',
+                    'metric_warning': '此 Sharpe 来自策略文献. 旧数据, 上架前建议跑回测.',
+                }
             risk = cat_meta.get('recommended_risk') or meta.get('risk_params') or {}
         else:
             metrics = {
@@ -1879,6 +1927,14 @@ def candidates_ai_picks():
                 'source_label': 'AI invented',
             }
             risk = meta.get('risk_params') or {}
+
+        # Phase 14k-15: 字段命名统一 — catalog 用 sl_pct/tp_pct, UI 用 stop_loss_pct/take_profit_pct
+        if isinstance(risk, dict):
+            risk = dict(risk)
+            if 'sl_pct' in risk and 'stop_loss_pct' not in risk:
+                risk['stop_loss_pct'] = risk['sl_pct']
+            if 'tp_pct' in risk and 'take_profit_pct' not in risk:
+                risk['take_profit_pct'] = risk['tp_pct']
 
         out.append({
             'id': c.id,
@@ -1902,6 +1958,8 @@ def candidates_ai_picks():
             'risk_params': risk,
             'self_estimate': meta.get('self_estimate') or {},
             'metrics': metrics,
+            'auto_skip_reason': meta.get('auto_skip_reason'),    # 14k-15
+            'source_meta': meta,                                  # 14k-15: 让 panel debug
             'trade_patterns': meta.get('trade_patterns') or {},
         })
     return jsonify({'count': len(out), 'items': out})
