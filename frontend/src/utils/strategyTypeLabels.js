@@ -76,18 +76,28 @@ const LEGACY_LABELS = {
   bollinger: '经典-布林带',
 };
 
-// 从 type string 中提取 catalog base (cat_xxx) — 兼容 cat_xxx_u<id>_<ts>
+// 从 type string 中提取 catalog base (cat_xxx) — 兼容多种前缀:
+//   cat_xxx                — catalog 模板原型
+//   cat_xxx_u<id>_<ts>     — AI 推荐 clone (candidates 表)
+//   cand_cat_xxx           — promote_candidate 后 strategy.type 默认前缀
+//   cand_cat_xxx_u<id>_<ts> — promote 自 clone 时
 function extractCatalogBase(type) {
   if (!type || typeof type !== 'string') return null;
   // 直接命中
   if (CATALOG_TYPE_LABELS[type]) return type;
+  // 14k-18: 兼容 cand_ 前缀 (promote 后 strategy.type)
+  let t = type;
+  if (t.startsWith('cand_cat_')) {
+    t = t.substring(5);    // 砍掉 'cand_' 前缀
+  }
+  if (CATALOG_TYPE_LABELS[t]) return t;
   // clone 后缀: cat_xxx_u<digits>_<digits>
-  const m = type.match(/^(cat_[a-z0-9_]+?)_u\d+_\d+$/);
+  const m = t.match(/^(cat_[a-z0-9_]+?)_u\d+_\d+$/);
   if (m && CATALOG_TYPE_LABELS[m[1]]) return m[1];
   // 退一步：找最长 cat_ 前缀
-  if (type.startsWith('cat_')) {
+  if (t.startsWith('cat_')) {
     for (const key of Object.keys(CATALOG_TYPE_LABELS)) {
-      if (type.startsWith(key + '_') || type === key) return key;
+      if (t.startsWith(key + '_') || t === key) return key;
     }
   }
   return null;

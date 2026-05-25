@@ -36,6 +36,7 @@ import PageHeader from '../components/common/PageHeader';
 import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import AiStatusBar from '../components/AiStatusBar';
+import { prettifyType } from '../utils/strategyTypeLabels';
 // Phase 12.20: NeuralBackdrop 已下架（装饰过头）
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -1199,11 +1200,13 @@ function StrategyLiveStateGrid({ C }) {
               </>
             )}
 
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.3, pt: 0.4, borderTop: '1px dashed rgba(255,255,255,0.06)' }}>
-              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem' }}>
-                type={s.type}
-              </Typography>
-              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.3, pt: 0.4, borderTop: '1px dashed rgba(255,255,255,0.06)', gap: 1 }}>
+              <Tooltip title={`类型: ${s.type || '—'}`} arrow>
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem', cursor: 'help', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {prettifyType(s.type).emoji} {prettifyType(s.type).label}
+                </Typography>
+              </Tooltip>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>
                 上次成交: {fmtAge(s.last_trade)}
               </Typography>
             </Box>
