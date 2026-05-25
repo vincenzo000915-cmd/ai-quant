@@ -1004,20 +1004,20 @@ def backtest_and_maybe_start(strategy_id: int):
     oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
     is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
 
-    msg_head = f'兄弟回測 #{strategy.id} {strategy.name} ({strategy.symbol} {strategy.timeframe})'
+    msg_head = f'<b>兄弟策略回测</b> #{strategy.id} {strategy.name}\n交易对 {strategy.symbol} · {strategy.timeframe}'
     if oos is None:
-        _tg(f'🟡 {msg_head}：OOS Sharpe 無法計算（樣本太少），保持 stopped')
+        _tg(f'🟡 {msg_head}\n样本太少, OOS Sharpe 无法计算, 保持停止状态')
         return 'oos None, kept stopped'
 
     if oos >= min_sharpe:
         if auto_start:
             strategy.status = 'running'
             db.session.commit()
-            _tg(f'🟢 {msg_head}：OOS Sharpe={oos:.2f} (IS={is_sh}) ≥ {min_sharpe} → 已自動啟動')
+            _tg(f'🟢 {msg_head}\nOOS Sharpe {oos:.2f} ≥ 门槛 {min_sharpe} → 已自动启动')
             return f'started, oos={oos:.2f}'
-        _tg(f'🟢 {msg_head}：OOS Sharpe={oos:.2f} 通過，但 fan_out_auto_start=off，請手動啟動')
+        _tg(f'🟢 {msg_head}\nOOS Sharpe {oos:.2f} 通过, 但已关闭自动启动, 请手动开启')
         return f'passed but auto_start off, oos={oos:.2f}'
-    _tg(f'🔴 {msg_head}：OOS Sharpe={oos:.2f} < {min_sharpe} → 未啟動（行情不適合）')
+    _tg(f'🔴 {msg_head}\nOOS Sharpe {oos:.2f} < 门槛 {min_sharpe}, 行情不适合, 未启动')
     return f'rejected, oos={oos:.2f}'
 
 
@@ -1237,10 +1237,11 @@ def auto_revive_retired_strategies():
                 db.session.commit()
                 revived += 1
                 _tg(
-                    f'🌱 <b>策略自動復活</b>\n'
-                    f'#{s.id} {s.name} ({s.symbol} {s.timeframe})\n'
-                    f'最新 walk-forward OOS Sharpe = {oos_sh:.2f} > {REVIVE_MIN_OOS_SHARPE}\n'
-                    f'已 status=stopped，請至策略表審視後啟動。'
+                    f'🌱 <b>策略自动复活</b>\n'
+                    f'#{s.id} {s.name}\n'
+                    f'交易对 {s.symbol} · {s.timeframe}\n'
+                    f'最新回测 OOS Sharpe {oos_sh:.2f} (门槛 {REVIVE_MIN_OOS_SHARPE})\n'
+                    f'已设为已停止状态, 请去策略表审视后手动启动'
                 )
                 audit('strategy_revive', actor='auto:weekly_revive',
                       strategy_id=s.id, name=s.name, oos_sharpe=oos_sh,
@@ -1353,20 +1354,28 @@ def auto_ai_improve_strategies():
         for x in recs[:3]:
             mark = '🚀' if (x.get('auto_apply') or {}).get('applied') else '👀'
             rp = x.get('recommended_risk') or {}
+            # Phase 14k-18: 文案美化, 不显 raw catalog_type
+            ctype_raw = x.get('catalog_type', '')
+            pretty = ctype_raw.replace('cat_', '').replace('_', ' ').title()
+            lev = rp.get('leverage')
+            sh = x.get('verified_sharpe')
             lines.append(
-                f'{mark} <code>{x["catalog_type"]}</code> ({x["symbol"]} {x["timeframe"]}/{x["category"]}) '
-                f'Sharpe={x.get("verified_sharpe")} · score={x["score"]} · lev={rp.get("leverage")}x'
+                f'{mark} <b>{pretty}</b> · {x["symbol"]} {x["timeframe"]}'
+                + (f' · Sharpe {sh}' if sh else '')
+                + (f' · 杠杆 {lev}x' if lev else '')
             )
+        mode_zh = {'manual': '手动', 'semi_auto': '半自动', 'full_auto': '全自动'}.get(mode, mode)
         if auto_applied:
             _tg(
-                f'🤖 <b>AI 推荐 ({mode}): 自动上线 {len(auto_applied)} / 候选 {len(recs)}</b>\n'
+                f'🤖 <b>AI 自动上线策略</b> ({mode_zh}模式)\n'
+                f'已上架 {len(auto_applied)} 个 / 推荐 {len(recs)} 个\n\n'
                 + '\n'.join(lines)
                 + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">面板查看</a>',
                 event_key='ai_improve_daily',
             )
         elif awaiting:
             _tg(
-                f'🤖 <b>AI 推荐 ({mode}): {len(awaiting)} 个待审 (手动 mode)</b>\n'
+                f'🤖 <b>AI 推荐 {len(awaiting)} 个策略待审核</b> ({mode_zh}模式)\n\n'
                 + '\n'.join(lines)
                 + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键应用</a>',
                 event_key='ai_improve_daily',

@@ -1885,12 +1885,13 @@ def promote_candidate(cid):
 @require_pro_tier
 def candidates_ai_picks():
     """List AI-recommended qualified candidates pending user review.
-    Phase 14: 排除 catalog 模板自身（source='catalog'），只显示 clone + AI improve 输出
+    Phase 14k-18: 仅显示 catalog_clone (真 AI 推荐) — 不显示老的 translated 外部候选
+    (它们没 risk_params/AI metadata, UI 显示一堆 '—' 没意义)
     """
     rows = StrategyCandidate.query.filter(
         StrategyCandidate.status == 'qualified',
         StrategyCandidate.promoted_strategy_id.is_(None),
-        StrategyCandidate.source != 'catalog',     # 排除 catalog 模板
+        StrategyCandidate.source == 'catalog_clone',     # 14k-18: 仅 AI 推荐 clone
     ).order_by(StrategyCandidate.created_at.desc()).limit(20).all()
 
     out = []

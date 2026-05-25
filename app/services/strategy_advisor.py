@@ -277,18 +277,33 @@ def build_recommendations() -> dict:
         # check: OOS Sharpe 必須過 promote 門檻（跟 executor / auto_promote_min_oos_sharpe 同步）
         if oos < PROMOTE_MIN_OOS_SHARPE:
             continue
+        # Phase 14k-18: target_symbol 优先从 candidate.source_meta.symbol 拿
+        # (catalog clone 自带), 没的话用候选自己回测的 symbol, 兜底 BTC/USDT
+        meta = c.source_meta or {}
+        target_symbol = meta.get('symbol')
+        if not target_symbol and c.backtest_result_id:
+            try:
+                from app.models import BacktestResult
+                bt = BacktestResult.query.get(c.backtest_result_id)
+                if bt and bt.symbol:
+                    target_symbol = bt.symbol
+            except Exception:
+                pass
+        target_symbol = target_symbol or 'BTC/USDT'
         # check: dedup — 同類型同 symbol 已存在 → 跳過
-        target_symbol = 'BTC/USDT'
         if (c.candidate_type, target_symbol) in existing_types:
             continue
+        # 14k-18: 友好措辞 — 去 raw candidate_type, 加 symbol
+        pretty_type = (c.candidate_type or '').replace('cat_', '').replace('_', ' ').title()
         items.append({
             'action': 'promote_candidate',
             'strategy_id': None,
-            'strategy_name': c.source_name or f'候選 #{c.id}',
+            'strategy_name': c.source_name or f'候选 #{c.id}',
             'severity': 'info',
             'reason': (
-                f'候選 #{c.id} ({c.candidate_type}) 已通過 walk-forward 驗證 — '
-                f'OOS Sharpe = {oos:.2f} ≥ {PROMOTE_MIN_OOS_SHARPE}。建議 promote 上線。'
+                f'候选 #{c.id} 「{pretty_type}」回测通过 — '
+                f'OOS Sharpe {oos:.2f} ≥ 门槛 {PROMOTE_MIN_OOS_SHARPE}, '
+                f'建议上线 {target_symbol}'
             ),
             'meta': {
                 'candidate_id': c.id,

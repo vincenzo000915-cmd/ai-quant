@@ -434,15 +434,33 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
         pass
 
     # Telegram (admin 用 admin chat，其他 user 暂不通知)
+    # Phase 14k-18: 措辞美化, 去 raw 字段名
     try:
         from app.services.telegram_service import send as _tg
         if user_id == 1:
+            # Pretty name from catalog_meta description or candidate_type
+            cm = clone.catalog_meta or {}
+            pretty_name = cm.get('description', '').split('—')[0].strip() or clone.candidate_type
+            # 字段命名兼容: sl_pct / stop_loss_pct, tp_pct / take_profit_pct
+            lev = rp.get('leverage')
+            sl = rp.get('stop_loss_pct') or rp.get('sl_pct')
+            tp = rp.get('take_profit_pct') or rp.get('tp_pct')
+            ord_type = {'market': '市价', 'maker': '挂单', 'maker_with_fallback': '挂单+市价'}.get(
+                rp.get('order_type', 'market'), rp.get('order_type', '市价'))
+            mode_zh = {'manual': '手动', 'semi_auto': '半自动', 'full_auto': '全自动'}.get(mode, mode)
+            risk_line_parts = []
+            if lev: risk_line_parts.append(f'杠杆 {lev}x')
+            if sl: risk_line_parts.append(f'止损 {sl}%')
+            if tp: risk_line_parts.append(f'止盈 {tp}%')
+            risk_line_parts.append(f'{ord_type}')
+            risk_line = ' · '.join(risk_line_parts)
+
             _tg(
-                f'🤖 <b>AI 自动上线策略</b> (mode={mode})\n'
-                f'#{sid} {clone.candidate_type}\n'
-                f'symbol={sym} | OOS Sharpe={sharpe} (verified catalog)\n'
-                f'lev={rp.get("leverage")}x SL={rp.get("stop_loss_pct")}% TP={rp.get("take_profit_pct")}% order={rp.get("order_type", "market")}\n\n'
-                f'→ 已 running。<a href="https://ai-quant.medias-ai.cloud/">面板查看</a> · 不同意可立即 stop',
+                f'🤖 <b>AI 自动上线策略</b> ({mode_zh}模式)\n'
+                f'#{sid} {pretty_name}\n'
+                f'交易对 {sym} · OOS Sharpe {sharpe}\n'
+                f'{risk_line}\n\n'
+                f'已开启运行 · <a href="https://ai-quant.medias-ai.cloud/">面板查看</a>',
                 event_key='auto_apply'
             )
     except Exception:

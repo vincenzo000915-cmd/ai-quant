@@ -85,11 +85,12 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         if cfg.get('trading_mode') == 'live':
             # Phase 10.9: 不再靜默 — 推 Telegram 告訴 user「該退役但跳過」
             _telegram_safe(
-                f'⚠️ <b>智能托管建議退役但跳過（LIVE 模式安全網）</b>\n'
-                f'#{sid} {strategy.name}\n原因：{item.get("reason", "")[:200]}\n'
-                f'若同意，請手動到策略表 🪦 退役。'
+                f'⚠️ <b>AI 托管: 建议退役但已跳过</b> (LIVE 模式安全网)\n'
+                f'#{sid} {strategy.name}\n'
+                f'原因: {item.get("reason", "")[:200]}\n'
+                f'若同意, 请手动到策略表退役'
             )
-            return False, 'LIVE 模式禁止自動 retire — 已推 Telegram 提醒手動處理'
+            return False, 'LIVE 模式禁止自动 retire, 已推 Telegram 提醒手动处理'
         if strategy.status == 'retired':
             return False, '已 retired'
         reason = f"auto: {item.get('reason', '')[:200]}"
