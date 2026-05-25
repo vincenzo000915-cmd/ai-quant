@@ -16,10 +16,13 @@ import LinkOffIcon from '@mui/icons-material/LinkOff';
 import ScienceIcon from '@mui/icons-material/Science';
 import SaveIcon from '@mui/icons-material/Save';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import ExchangeRiskDialog from './ExchangeRiskDialog';
 
 const PURPLE = '#a78bfa';
 
 export default function HyperliquidBindingCard() {
+  const [riskOpen, setRiskOpen] = useState(false);
   const [state, setState] = useState(null);
   const [editing, setEditing] = useState(false);
   const [agent_address, setAgent] = useState('');
@@ -131,7 +134,7 @@ export default function HyperliquidBindingCard() {
         </Stack>
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          HL 是 DEX (链上 perp)，费率 ~0.035% taker 比 OKX 低 30%+，self-custody 不被锁仓。
+          HL 是链上结算的非托管交易所，费率 ~0.035% taker 比 OKX 低 30%+，自托管不被冻结。
           需在 Hyperliquid 网站派生 <strong>agent wallet</strong> (只能 trade，无法 transfer)。
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 2 }}>
@@ -153,6 +156,24 @@ export default function HyperliquidBindingCard() {
 
         {state.bound && !editing && (
           <Box>
+            {/* Phase 14k-6: 180 天授权倒计时 */}
+            {state.expired ? (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                ⛔ Agent 已过期 ({state.agent_expires_at?.slice(0, 10)}). 所有 LIVE 策略已转 paper.
+                点「更新」重新派生 agent + 贴新 private key.
+              </Alert>
+            ) : state.expiring_soon ? (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                ⚠️ Agent <strong>{state.days_remaining} 天</strong>后过期 ({state.agent_expires_at?.slice(0, 10)}).
+                提前去 <Link href="https://app.hyperliquid.xyz/API" target="_blank" rel="noopener">hyperliquid.xyz/API</Link> 重新派生.
+              </Alert>
+            ) : state.days_remaining != null && (
+              <Box sx={{ mb: 2, p: 1, borderRadius: 1, bgcolor: 'rgba(96,165,250,0.06)', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="caption" color="text.secondary">授权倒计时:</Typography>
+                <Chip label={`${state.days_remaining} 天`} size="small" color="info" sx={{ fontSize: 10, fontWeight: 700 }} />
+                <Typography variant="caption" color="text.disabled">到期 {state.agent_expires_at?.slice(0, 10)} · HL 平台限制 180 天</Typography>
+              </Box>
+            )}
             <Stack spacing={0.5} sx={{ mb: 2 }}>
               <Typography variant="caption">
                 <strong>Main wallet:</strong> <code>{state.main_address}</code>
@@ -258,6 +279,18 @@ export default function HyperliquidBindingCard() {
             </Alert>
           </>
         )}
+
+        {/* Phase 14k-6: 风险声明小字 */}
+        <Box sx={{ mt: 2, pt: 1, borderTop: '1px dashed rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <WarningAmberIcon sx={{ fontSize: 12, color: 'text.disabled' }} />
+          <Typography variant="caption" color="text.disabled">
+            HL 链上结算 + agent 180 天到期 ·{' '}
+            <Typography component="span" variant="caption" sx={{ color: PURPLE, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setRiskOpen(true)}>
+              点这里了解平台风险
+            </Typography>
+          </Typography>
+        </Box>
+        <ExchangeRiskDialog open={riskOpen} onClose={() => setRiskOpen(false)} exchange="hyperliquid" />
       </CardContent>
     </Card>
   );

@@ -12,9 +12,12 @@ import VerifiedIcon from '@mui/icons-material/Verified';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import ScienceIcon from '@mui/icons-material/Science';
 import SaveIcon from '@mui/icons-material/Save';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { getUser } from '../auth';
+import ExchangeRiskDialog from './ExchangeRiskDialog';
 
 export default function OkxBindingCard() {
+  const [riskOpen, setRiskOpen] = useState(false);
   const [state, setState] = useState(null);   // server 状态：{bound, source, ...}
   const [editing, setEditing] = useState(false);
   const [api_key, setApiKey] = useState('');
@@ -260,6 +263,18 @@ export default function OkxBindingCard() {
             </Alert>
           </>
         )}
+
+        {/* Phase 14k-6: 风险声明小字 */}
+        <Box sx={{ mt: 2, pt: 1, borderTop: '1px dashed rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <WarningAmberIcon sx={{ fontSize: 12, color: 'text.disabled' }} />
+          <Typography variant="caption" color="text.disabled">
+            OKX 是中心化交易所 ·{' '}
+            <Typography component="span" variant="caption" sx={{ color: '#60a5fa', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setRiskOpen(true)}>
+              点这里了解平台风险
+            </Typography>
+          </Typography>
+        </Box>
+        <ExchangeRiskDialog open={riskOpen} onClose={() => setRiskOpen(false)} exchange="okx" />
       </CardContent>
     </Card>
   );

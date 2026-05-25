@@ -59,7 +59,7 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
 
     if mode == 'live':
         if exchange == 'hyperliquid':
-            from app.services.hyperliquid_creds import get_decrypted_for_user as _hl_creds
+            from app.services.hyperliquid_creds import get_decrypted_for_user as _hl_creds, is_expired as _hl_expired
             user_creds = _hl_creds(user_id)
             if not user_creds or not user_creds.get('agent_private_key'):
                 effective_mode = 'paper'
@@ -71,6 +71,21 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                 except Exception:
                     pass
                 print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — 未綁 Hyperliquid agent')
+            elif _hl_expired(user_id):
+                # Phase 14k-6: HL agent 已过期 → 强制 paper + Telegram 告警
+                effective_mode = 'paper'
+                user_creds = None
+                try:
+                    from app.services.audit import log as _audit
+                    _audit('live_order_blocked_hl_expired', actor='system',
+                           user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
+                           reason='Phase 14k-6 — HL agent 180 天授权已过期, 需重新签名')
+                    from app.services.telegram_service import send as _tg
+                    _tg(f'🔴 <b>HL agent 已过期</b>\nuser_id={user_id}: agent wallet 授权过期, 已停 LIVE. 去 Settings 重新绑定.',
+                        event_key=f'hl_expired_{user_id}')
+                except Exception:
+                    pass
+                print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — HL agent 已过期')
         else:
             from app.services.exchange_service import _resolve_creds
             user_creds = _resolve_creds(user_id)
@@ -1542,3 +1557,75 @@ def internal_health_monitor():
             'chains_configured': chains_configured,
         },
     }
+
+
+@celery_app.task(name='app.tasks.strategy_tasks.check_hl_agent_expiry')
+def check_hl_agent_expiry():
+    """Phase 14k-6: 每天 09:00 UTC 检查所有 HL agent 过期状态.
+
+    - <=14 天到期 + 未近期警告 → Telegram + 标记 expiry_warned_at
+    - <=0 天 (已过期) → 强制 is_active=false, 永远转 paper, Telegram 通知一次
+    """
+    from app.models import HyperliquidCredentials, User
+    from app.services.telegram_service import send as tg_send
+    import datetime as _dt
+
+    now = _dt.datetime.utcnow()
+    warn_threshold_days = 14
+    rewarn_after_hours = 24    # 同 user 24h 内不重复 warn
+
+    all_creds = HyperliquidCredentials.query.filter(
+        HyperliquidCredentials.agent_expires_at.isnot(None),
+    ).all()
+
+    warned = 0
+    expired = 0
+    for rec in all_creds:
+        days = (rec.agent_expires_at - now).total_seconds() / 86400
+
+        # 1. 已过期 → 自动 disable + Telegram (一次)
+        if days <= 0 and rec.is_active:
+            rec.is_active = False
+            rec.last_error = f'agent 过期于 {rec.agent_expires_at.isoformat()}, 自动转 paper'
+            try:
+                user = User.query.get(rec.user_id)
+                email = user.email if user else f'user#{rec.user_id}'
+                tg_send(
+                    f'🔴 <b>HL agent 已过期</b>\n'
+                    f'user: {email}\n'
+                    f'过期时间: {rec.agent_expires_at.strftime("%Y-%m-%d %H:%M UTC")}\n'
+                    f'所有 LIVE 策略已转 paper. 去 Settings 重新绑定.',
+                    event_key=f'hl_expired_{rec.user_id}',
+                )
+            except Exception as e:
+                print(f'[hl_expiry] tg send failed for user {rec.user_id}: {e}')
+            db.session.commit()
+            expired += 1
+            continue
+
+        # 2. <=14 天 → warn (per-user 24h 去重)
+        if 0 < days <= warn_threshold_days:
+            already_warned_recently = (
+                rec.expiry_warned_at
+                and (now - rec.expiry_warned_at).total_seconds() < rewarn_after_hours * 3600
+            )
+            if already_warned_recently:
+                continue
+            try:
+                user = User.query.get(rec.user_id)
+                email = user.email if user else f'user#{rec.user_id}'
+                tg_send(
+                    f'🟡 <b>HL agent 即将过期</b>\n'
+                    f'user: {email}\n'
+                    f'剩余: {int(days)} 天\n'
+                    f'过期时间: {rec.agent_expires_at.strftime("%Y-%m-%d %H:%M UTC")}\n'
+                    f'到期后自动转 paper. 提前去 hyperliquid.xyz/API 重新派生 agent + Settings 更新.',
+                    event_key=f'hl_expiring_{rec.user_id}_{int(days)}',
+                )
+            except Exception as e:
+                print(f'[hl_expiry] tg warn failed for user {rec.user_id}: {e}')
+            rec.expiry_warned_at = now
+            db.session.commit()
+            warned += 1
+
+    return {'warned': warned, 'expired': expired, 'checked': len(all_creds)}

@@ -56,8 +56,13 @@ def _normalize_privkey(pk: str) -> str:
 
 
 def save_for_user(user_id: int, agent_address: str, main_address: str,
-                  agent_private_key: str, network: str = 'mainnet') -> HyperliquidCredentials:
-    """新增或更新某 user 的 HL agent 凭据. idempotent."""
+                  agent_private_key: str, network: str = 'mainnet',
+                  agent_expires_at: datetime.datetime | None = None) -> HyperliquidCredentials:
+    """新增或更新某 user 的 HL agent 凭据. idempotent.
+
+    Phase 14k-6: agent_expires_at 默认 now + 180 天 (HL 平台 enforce).
+    user 也可显式传 (绑了 old agent 时手动指定 actual expiry).
+    """
     if not _ADDR_RE.match(agent_address.strip()):
         raise ValueError(f'agent_address 不是合法 0x 地址: {agent_address}')
     if not _ADDR_RE.match(main_address.strip()):
@@ -75,11 +80,31 @@ def save_for_user(user_id: int, agent_address: str, main_address: str,
     rec.main_address = main_address.strip().lower()
     rec.encrypted_agent_private_key = _encrypt(_normalize_privkey(agent_private_key))
     rec.network = network
+    # 14k-6: 默认 180 天有效
+    rec.agent_expires_at = agent_expires_at or (datetime.datetime.utcnow() + datetime.timedelta(days=180))
+    rec.expiry_warned_at = None    # 重新绑定 → 清除警告记录
     rec.verified_at = None
     rec.last_error = None
     rec.updated_at = datetime.datetime.utcnow()
     db.session.commit()
     return rec
+
+
+def is_expired(user_id: int) -> bool:
+    """检查 user HL agent 是否已过期."""
+    rec = get_for_user(user_id)
+    if not rec or not rec.agent_expires_at:
+        return False
+    return rec.agent_expires_at <= datetime.datetime.utcnow()
+
+
+def days_until_expiry(user_id: int) -> int | None:
+    """返回距过期天数. None = 未绑."""
+    rec = get_for_user(user_id)
+    if not rec or not rec.agent_expires_at:
+        return None
+    delta = (rec.agent_expires_at - datetime.datetime.utcnow()).total_seconds()
+    return max(0, int(delta // 86400))
 
 
 def get_for_user(user_id: int) -> HyperliquidCredentials | None:

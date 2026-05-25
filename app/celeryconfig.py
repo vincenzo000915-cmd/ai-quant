@@ -147,4 +147,12 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.internal_health_monitor',
         'schedule': 300.0,   # 每 300s = 5 min
     },
+
+    # === Phase 14k-6: HL agent 180 天过期检查 (每天 09:00 UTC = 北京 17:00)
+    # iter 所有 HL 绑定 user, <=14 天 → Telegram 警告 (per-user 去重);
+    # 已过期 → 自动 set is_active=false + 通知
+    'check-hl-agent-expiry': {
+        'task': 'app.tasks.strategy_tasks.check_hl_agent_expiry',
+        'schedule': crontab(hour='9', minute='0'),
+    },
 }

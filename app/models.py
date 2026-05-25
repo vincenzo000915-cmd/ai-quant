@@ -116,6 +116,9 @@ class HyperliquidCredentials(db.Model):
     main_address = db.Column(db.String(60), nullable=False)
     encrypted_agent_private_key = db.Column(db.Text, nullable=False)
     network = db.Column(db.String(10), default='mainnet')   # 'mainnet' | 'testnet'
+    # Phase 14k-6: HL agent wallet 默认 180 天有效
+    agent_expires_at = db.Column(db.DateTime, nullable=True)
+    expiry_warned_at = db.Column(db.DateTime, nullable=True)   # last Telegram warning timestamp (dedup)
     verified_at = db.Column(db.DateTime, nullable=True)
     last_error = db.Column(db.Text, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
@@ -124,12 +127,20 @@ class HyperliquidCredentials(db.Model):
 
     def to_dict(self):
         """永远不返回 private key, 仅 address/状态."""
+        days_remaining = None
+        if self.agent_expires_at:
+            delta = (self.agent_expires_at - datetime.datetime.utcnow()).total_seconds()
+            days_remaining = max(0, int(delta // 86400))
         return {
             'id': self.id,
             'user_id': self.user_id,
             'agent_address': self.agent_address,
             'main_address': self.main_address,
             'network': self.network,
+            'agent_expires_at': self.agent_expires_at.isoformat() if self.agent_expires_at else None,
+            'days_remaining': days_remaining,
+            'expired': days_remaining is not None and days_remaining <= 0,
+            'expiring_soon': days_remaining is not None and 0 < days_remaining <= 14,
             'verified_at': self.verified_at.isoformat() if self.verified_at else None,
             'last_error': self.last_error,
             'is_active': bool(self.is_active),

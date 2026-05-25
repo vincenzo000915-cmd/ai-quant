@@ -155,6 +155,10 @@ def fetch_positions(creds: dict) -> list[dict]:
 # Signed actions (place / cancel order)
 # ============================================================
 
+class ExpiredAgentError(RuntimeError):
+    """HL agent wallet 已过期 (180 天). user 需重新授权."""
+
+
 def place_order_live(
     symbol: str,
     side: str,
@@ -170,6 +174,9 @@ def place_order_live(
 
     side: 'buy' (long) | 'sell' (short)
     size_usdt: 名义 USDT, 实际 = size_usdt * leverage / price 张
+
+    Phase 14k-6: caller 先 check expiry — _place_order in strategy_tasks
+    用 user_id 拉 days_until_expiry, 已过期 → 直接 raise (而不是签名失败)
     """
     if not creds:
         raise RuntimeError('HL creds 必填 (per-user only; admin 用 OKX path)')
