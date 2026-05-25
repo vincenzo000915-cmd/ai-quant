@@ -351,9 +351,21 @@ function AiDecisionModeCard({ cfg, onChange, original, onSaved }) {
   const dirty = currentMode !== original;
 
   const MODES = [
-    { value: 'manual', label: '手动审批', desc: 'AI 推荐放面板，你决定每一个上不上 — Basic 起可用' },
-    { value: 'semi_auto', label: '半自动（推荐）', desc: 'OOS Sharpe ≥ 2.5 自动上线，1.5-2.5 之间走面板 — Pro 解锁' },
-    { value: 'full_auto', label: '全自动（AI 量化经理）', desc: '合格 catalog 策略全自动应用 + 数据充分时 AI 可发明新策略 — Pro 解锁' },
+    {
+      value: 'manual',
+      label: '手动审批',
+      desc: 'AI 推荐放面板, 你点击应用每一个 — Basic 起可用'
+    },
+    {
+      value: 'semi_auto',
+      label: '半自动 · 智能驾驶',
+      desc: '高 Sharpe (≥2.5) 自动上线, 中低 Sharpe 走面板等审 — Pro 解锁'
+    },
+    {
+      value: 'full_auto',
+      label: '全自动 · AI 智能驾驶',
+      desc: '所有合格 catalog 策略 AI 自动应用 (无目标驱动). 想加目标 + DD 保护 + 策略轮换? 见 Dashboard 顶部「启用 AI 自动托管」— Pro 解锁'
+    },
   ];
 
   const handleSave = async () => {

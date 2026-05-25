@@ -2485,7 +2485,7 @@ def me_profit_target_set():
 @require_actor
 @require_pro_tier
 def me_profit_target_cancel(tid):
-    """取消当前 target (status=paused)"""
+    """取消当前 target (status=paused, AI 暂停托管)"""
     from app.models import ProfitTarget
     from app.services.audit import log as audit
     uid = _me_user_id()
@@ -2494,8 +2494,46 @@ def me_profit_target_cancel(tid):
         return jsonify({'error': 'target not found'}), 404
     t.status = 'paused'
     db.session.commit()
-    audit('profit_target_cancelled', actor='user', user_id=uid, target_id=tid)
+    audit('profit_target_paused', actor='user', user_id=uid, target_id=tid)
     return jsonify({'target': t.to_dict()}), 200
+
+
+@api_bp.route('/me/profit-target/<int:tid>/resume', methods=['POST'])
+@require_actor
+@require_pro_tier
+def me_profit_target_resume(tid):
+    """恢复 paused 目标 → active (AI 重新接管)"""
+    from app.models import ProfitTarget
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    t = ProfitTarget.query.filter_by(id=tid, user_id=uid).first()
+    if not t:
+        return jsonify({'error': 'target not found'}), 404
+    if t.status not in ('paused', 'expired'):
+        return jsonify({'error': f'当前状态 {t.status}, 无需恢复'}), 400
+    # expired 自动延长 30 天给 user 一次机会
+    if t.status == 'expired':
+        import datetime as _dt
+        t.deadline = _dt.datetime.utcnow() + _dt.timedelta(days=30)
+        t.expired_at = None
+    t.status = 'active'
+    db.session.commit()
+    audit('profit_target_resumed', actor='user', user_id=uid, target_id=tid)
+    return jsonify({'target': t.to_dict()}), 200
+
+
+@api_bp.route('/me/profit-target/paused', methods=['GET'])
+@require_actor
+@require_pro_tier
+def me_profit_target_paused_list():
+    """列出可恢复的 paused/expired 目标 (供 UI '恢复' 选项)"""
+    from app.models import ProfitTarget
+    uid = _me_user_id()
+    rows = ProfitTarget.query.filter(
+        ProfitTarget.user_id == uid,
+        ProfitTarget.status.in_(('paused', 'expired')),
+    ).order_by(ProfitTarget.id.desc()).limit(5).all()
+    return jsonify({'targets': [t.to_dict() for t in rows]})
 
 
 @api_bp.route('/me/exchange-binding', methods=['GET'])

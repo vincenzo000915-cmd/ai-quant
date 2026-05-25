@@ -5,11 +5,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Card, CardContent, Typography, Stack, Chip, LinearProgress,
   IconButton, Button, Dialog, DialogTitle, DialogContent, DialogActions,
-  TextField, Alert,
+  TextField, Alert, Tooltip,
 } from '@mui/material';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import EditIcon from '@mui/icons-material/Edit';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
+import PauseCircleIcon from '@mui/icons-material/PauseCircle';
+import PlayCircleIcon from '@mui/icons-material/PlayCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import { useNavigate } from 'react-router-dom';
 
 const PURPLE = '#a78bfa';
@@ -61,6 +64,31 @@ export default function ProfitTargetCard() {
     } finally { setBusy(false); }
   };
 
+  const handlePause = async () => {
+    if (!target) return;
+    if (!window.confirm('暂停 AI 托管? 监控 / DD 保护 / 周轮换 都会停止. 你可以随时恢复.')) return;
+    setBusy(true);
+    try {
+      await fetch(`/api/me/profit-target/${target.id}`, { method: 'DELETE' });
+      await refresh();
+    } finally { setBusy(false); }
+  };
+
+  const handleResume = async () => {
+    setBusy(true);
+    try {
+      // 找最近 paused/expired 的恢复
+      const paused = await fetch('/api/me/profit-target/paused').then(r => r.json());
+      const t = (paused.targets || [])[0];
+      if (!t) {
+        setEditOpen(true);  // 没有可恢复 → 设新的
+        return;
+      }
+      await fetch(`/api/me/profit-target/${t.id}/resume`, { method: 'POST' });
+      await refresh();
+    } finally { setBusy(false); }
+  };
+
   // 需要 Pro 订阅
   if (needsPro) {
     return (
@@ -108,18 +136,24 @@ export default function ProfitTargetCard() {
           <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <TrackChangesIcon sx={{ color: PURPLE }} />
             <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Typography variant="body2" fontWeight={700}>🤖 启用 AI 量化经理</Typography>
+              <Typography variant="body2" fontWeight={700}>🤖 启用 AI 自动托管</Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                设个目标 (例 +20% / 30 天), AI 自动跟踪 + 回撤保护 + 策略轮换
+                设个目标 (例 +20% / 30 天), AI 跟踪 + 回撤保护 + 策略轮换 + 资金跨档扩张
               </Typography>
             </Box>
-            <Button size="small" variant="contained" sx={{ bgcolor: PURPLE }} onClick={() => setEditOpen(true)}>
-              开始托管
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button size="small" variant="outlined" startIcon={<PlayCircleIcon />} onClick={handleResume} disabled={busy}
+                       sx={{ borderColor: PURPLE, color: PURPLE }}>
+                恢复上次
+              </Button>
+              <Button size="small" variant="contained" sx={{ bgcolor: PURPLE }} onClick={() => setEditOpen(true)}>
+                开始托管
+              </Button>
+            </Stack>
           </CardContent>
         </Card>
         <TargetDialog open={editOpen} onClose={() => setEditOpen(false)}
-                       form={form} setForm={setForm} onSave={handleSet} busy={busy} title="启用 AI 量化经理" />
+                       form={form} setForm={setForm} onSave={handleSet} busy={busy} title="启用 AI 自动托管" />
       </>
     );
   }
@@ -138,7 +172,7 @@ export default function ProfitTargetCard() {
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
             <TrackChangesIcon sx={{ color: PURPLE, fontSize: 20 }} />
             <Typography variant="subtitle1" fontWeight={700}>
-              AI 目标驱动
+              AI 自动托管中
             </Typography>
             <Chip
               label={`+${target.target_pct}% / ${target.days_elapsed + target.days_remaining}天`}
@@ -146,9 +180,16 @@ export default function ProfitTargetCard() {
               sx={{ bgcolor: `${PURPLE}22`, color: PURPLE, fontSize: 11 }}
             />
             <Box sx={{ flex: 1 }} />
-            <IconButton size="small" onClick={() => setEditOpen(true)}>
-              <EditIcon fontSize="small" />
-            </IconButton>
+            <Tooltip title="改目标">
+              <IconButton size="small" onClick={() => setEditOpen(true)}>
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="暂停 AI 托管 (停止监控 / DD / 周轮换, 现有 running 策略不受影响)">
+              <IconButton size="small" color="warning" onClick={handlePause} disabled={busy}>
+                <PauseCircleIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Stack>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1.5, alignItems: { sm: 'baseline' } }}>
