@@ -1258,8 +1258,29 @@ def btc_price():
 
 @api_bp.route('/symbols', methods=['GET'])
 def list_supported_symbols():
-    """Phase 9.1: 系統支援的 OKX SWAP 交易對清單"""
+    """Phase 9.1+14k-17: 系統支援的交易對清單.
+    ?exchange=okx → OKX SWAP 列表
+    ?exchange=hyperliquid → HL perps (14 主流), 内部 hl_base mapping
+    无参 → user primary_exchange (登入 user) 或 'okx' 默认
+    """
     from app.services.symbols import supported_list
+    from app.services.exchange_binding import primary_exchange
+
+    ex = (request.args.get('exchange') or '').lower()
+    if not ex:
+        try:
+            uid = current_user_id() or 1
+            ex = primary_exchange(uid)
+        except Exception:
+            ex = 'okx'
+
+    if ex == 'hyperliquid':
+        from app.services.hyperliquid_service import _HL_BASE_FROM_SYM
+        return jsonify([
+            {'symbol': sym, 'base': base, 'exchange': 'hyperliquid'}
+            for sym, base in _HL_BASE_FROM_SYM.items()
+        ])
+
     return jsonify(supported_list())
 
 

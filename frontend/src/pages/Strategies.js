@@ -243,8 +243,18 @@ export default function Strategies() {
   useEffect(() => {
     fetchStrategies();
     fetch(`${API}/api/config`).then(r => r.json()).then(setConfig).catch(() => {});
+    // Phase 14k-17: 拉 user primary exchange 的 symbol 列表 (HL 14 perps / OKX 7)
     fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
   }, [fetchStrategies]);
+
+  // 14k-17: binding 变 → 重拉对应 exchange 的 symbol 列表
+  useEffect(() => {
+    if (!binding?.primary) return;
+    fetch(`${API}/api/symbols?exchange=${binding.primary}`)
+      .then(r => r.json())
+      .then(d => setSupportedSymbols(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [binding?.primary]);
 
   const handleOpenDialog = (strategy = null) => {
     if (strategy) {
