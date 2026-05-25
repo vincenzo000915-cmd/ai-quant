@@ -181,6 +181,8 @@ class Strategy(db.Model):
     symbol = db.Column(db.String(20), default='BTC/USDT')
     timeframe = db.Column(db.String(10), default='4h')
     status = db.Column(db.String(20), default='stopped')  # running / paused / stopped
+    # Phase 14k: 交易所 — 'okx' (CEX swap, 默认) | 'hyperliquid' (DEX perp)
+    exchange = db.Column(db.String(20), default='okx', index=True)
     max_positions = db.Column(db.Integer, default=1)
     max_daily_loss = db.Column(db.Float, default=10.0)
     # Phase 4.6: 從候選池 promote 來的策略，連回 candidate 方便溯源
@@ -213,7 +215,7 @@ class Strategy(db.Model):
             'timeframe': self.timeframe,
             'active': self.status == 'running',
             'status': self.status,
-            'exchange': 'OKX',
+            'exchange': self.exchange or 'okx',
             'max_positions': self.max_positions,
             'max_daily_loss': self.max_daily_loss,
             'candidate_id': self.candidate_id,

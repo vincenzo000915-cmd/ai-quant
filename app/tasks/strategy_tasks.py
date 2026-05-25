@@ -39,39 +39,82 @@ def _simulated_order(symbol, side, amount_usdt, price):
 
 def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0,
                  pos_side: str | None = None, user_id: int | None = None,
-                 order_type: str = 'market'):
-    """Phase 6.5 + 11.1.4 + 11.2.2 + 13: 模式分派 — paper → 模擬，live → OKX swap 真實下單。
+                 order_type: str = 'market', exchange: str = 'okx'):
+    """Phase 6.5 + 11.1.4 + 11.2.2 + 13 + 14k: 模式 + 交易所分派.
 
-    Phase 13 新加 order_type:
-      'market'                — taker (现 default，fee 0.05%/side)
-      'maker'                  — post_only limit, 60s timeout 后 cancel
-      'maker_with_fallback'    — maker 优先，超时 fallback taker
+    mode:
+      paper — 模擬 (no exchange call)
+      live  — 真实下单 (走 exchange 参数指定的交易所)
 
+    exchange (Phase 14k):
+      okx          — OKX swap 永续合约 (cross margin) [默认]
+      hyperliquid  — Hyperliquid DEX perp (ECDSA agent wallet)
+
+    order_type: market / maker / maker_with_fallback (HL 暂只支持 market)
     失敗時 fallback 寫 telegram，return None。
     """
     effective_mode = mode
     user_creds = None
-
-    # Phase 14d: 检查 strategy paper_only_until (AI 发明策略需 7 天 paper dry-run)
-    # 注：caller (run_signals) 没传 strategy_id；只能通过 user_id 间接推 — 这块在 caller 加 ord_type 时一起做
-    # 实际守门在 caller 检查更准确
+    exchange = (exchange or 'okx').lower()
 
     if mode == 'live':
-        from app.services.exchange_service import _resolve_creds
-        user_creds = _resolve_creds(user_id)
-        if not user_creds or not (user_creds.get('api_key') and user_creds.get('secret') and user_creds.get('passphrase')):
-            effective_mode = 'paper'
-            try:
-                from app.services.audit import log as _audit
-                _audit('live_order_blocked_no_okx_key', actor='system',
-                       user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
-                       reason='Phase 11.2.2 — user has no active OKX credentials')
-            except Exception:
-                pass
-            print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — 未綁 OKX key 或已停用')
+        if exchange == 'hyperliquid':
+            from app.services.hyperliquid_creds import get_decrypted_for_user as _hl_creds
+            user_creds = _hl_creds(user_id)
+            if not user_creds or not user_creds.get('agent_private_key'):
+                effective_mode = 'paper'
+                try:
+                    from app.services.audit import log as _audit
+                    _audit('live_order_blocked_no_hl_key', actor='system',
+                           user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
+                           reason='Phase 14k — user has no active Hyperliquid agent')
+                except Exception:
+                    pass
+                print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — 未綁 Hyperliquid agent')
+        else:
+            from app.services.exchange_service import _resolve_creds
+            user_creds = _resolve_creds(user_id)
+            if not user_creds or not (user_creds.get('api_key') and user_creds.get('secret') and user_creds.get('passphrase')):
+                effective_mode = 'paper'
+                try:
+                    from app.services.audit import log as _audit
+                    _audit('live_order_blocked_no_okx_key', actor='system',
+                           user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
+                           reason='Phase 11.2.2 — user has no active OKX credentials')
+                except Exception:
+                    pass
+                print(f'[guard] user_id={user_id} LIVE→paper ({symbol} {side}) — 未綁 OKX key 或已停用')
 
     if effective_mode == 'live':
         try:
+            # Phase 14k: Hyperliquid 分支 (DEX perp, ECDSA agent)
+            if exchange == 'hyperliquid':
+                from app.services.hyperliquid_service import place_order_live as hl_place
+                # HL 不支持 maker post_only via 该接口, 全走 market IOC
+                if order_type in ('maker', 'maker_with_fallback'):
+                    print(f'[HL] order_type={order_type} 暂不支持, 降级 market')
+                hl_res = hl_place(symbol, side, amount_usdt, leverage=leverage, creds=user_creds)
+                if not hl_res.get('ok'):
+                    from app.services.telegram_service import send
+                    send(f'🔴 <b>HL order FAILED</b>\n{symbol} {side} ${amount_usdt}\n{hl_res.get("raw")}',
+                         event_key='hl_order_error')
+                    return None
+                raw = hl_res.get('raw') or {}
+                response_data = (raw.get('response', {}).get('data', {}).get('statuses') or [{}])[0]
+                filled = response_data.get('filled') or {}
+                return {
+                    'id': str(filled.get('oid') or 'hl_unknown'),
+                    'symbol': symbol, 'side': side, 'type': 'market',
+                    'amount': hl_res.get('size_base'),
+                    'price': float(filled.get('avgPx') or price),
+                    'cost': amount_usdt,
+                    'inst_id': f"{hl_res.get('base')}-PERP",
+                    'simulated': False,
+                    'hl_raw': raw,
+                    'exchange': 'hyperliquid',
+                }
+
+            # ─── OKX (默认) ───
             if order_type in ('maker', 'maker_with_fallback'):
                 # Phase 13: maker order
                 from app.services.exchange_service import place_order_maker_live
@@ -82,7 +125,6 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                     pos_side=pos_side, creds=user_creds,
                 )
                 if not res.get('ok'):
-                    # maker fail (no fallback or fallback also failed)
                     err_msg = res.get('error', 'maker fail')
                     from app.services.telegram_service import send
                     send(f'🟡 <b>maker order 未成交</b>\n{symbol} {side} ${amount_usdt}\n{err_msg[:200]}',
@@ -319,7 +361,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         continue
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, strategy_mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type)
+                order = _place_order(s.symbol, okx_side, effective_size, price, strategy_mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -368,7 +410,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
 
                 # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order and not order.get('simulated'):
@@ -497,7 +539,8 @@ def check_stop_loss():
                 tp_hit = pnl_pct >= tp_pct
 
             if sl_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id)
+                _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 # Phase 12.10: live 用 OKX 真實 balChg 覆寫 PnL（含手續費）
                 if mode == 'live' and order and not order.get('simulated'):
@@ -535,7 +578,8 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif tp_hit:
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id)
+                _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 if mode == 'live' and order and not order.get('simulated'):
                     try:
