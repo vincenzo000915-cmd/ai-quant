@@ -37,6 +37,7 @@ import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import AiStatusBar from '../components/AiStatusBar';
 import { prettifyType } from '../utils/strategyTypeLabels';
+import ProfitTargetCard from '../components/ProfitTargetCard';
 // Phase 12.20: NeuralBackdrop 已下架（装饰过头）
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -502,6 +503,9 @@ export default function Dashboard() {
           </Typography>
         </Box>
       )}
+
+      {/* Phase 14k-22: AI 目标驱动 — 顶部 */}
+      <ProfitTargetCard />
 
       {/* === KPI bar — 6 cells，无 emoji 无 sparkline 高度统一（专业 trader 风）=== */}
       <Grid container spacing={1} sx={{ mb: 2.5 }}>

@@ -1117,11 +1117,38 @@ def daily_advisor_summary():
 
     lines = [
         f'📊 <b>日報 {today.isoformat()}</b>',
+    ]
+    # Phase 14k-22: 加目标进度 (admin user_id=1)
+    try:
+        from app.models import ProfitTarget
+        t = ProfitTarget.query.filter_by(user_id=1, status='active').first()
+        if t:
+            cur = t.current_equity_usdt or t.start_capital_usdt
+            gain = cur - t.start_capital_usdt
+            expected = t.expected_equity_now()
+            lag = expected - cur
+            lag_sign = '✅ 领先' if lag <= 0 else f'🟡 落后 ${lag:.2f}'
+            lines.append(
+                f'🎯 <b>目标 +${t.target_equity() - t.start_capital_usdt:.2f}</b> '
+                f'({t.target_pct}% / {t.days_elapsed() + t.days_remaining()} 天)'
+            )
+            lines.append(
+                f'  当前 ${cur:.2f} (起 ${t.start_capital_usdt:.2f}, '
+                f'+${gain:.2f}, 完成 {t.progress_pct()}%)'
+            )
+            lines.append(f'  应到 ${expected:.2f} · {lag_sign} · 余 {t.days_remaining()} 天')
+            if t.dd_pct() > 0:
+                lines.append(f'  📉 当前回撤 {t.dd_pct()}% (上限 {t.max_dd_pct}%)')
+            lines.append('')
+    except Exception:
+        pass
+
+    lines.extend([
         f'• 運行策略: {running} 個 / 持倉: {open_pos}',
         f'• 今日 PnL: <b>{today_pnl:+.2f}</b> USDT ({today_trades} 筆)',
         f'• 未實現: {unrealized:+.2f} USDT',
         f'• 智能托管執行: {auto_count} 次',
-    ]
+    ])
     if halts_today:
         lines.append(f'⚠️ 今日有 {halts_today} 次 halt / kill 事件')
     if auto_rows:
@@ -1582,6 +1609,265 @@ def internal_health_monitor():
             'chains_configured': chains_configured,
         },
     }
+
+
+@celery_app.task(name='app.tasks.strategy_tasks.profit_progress_monitor')
+def profit_progress_monitor():
+    """Phase 14k-22 (核心): 每小时跑 AI 量化经理大脑.
+
+    跟踪 active profit_targets:
+    A) 更新 current_equity / peak_equity
+    B) DD 检查: 当前 DD > max_dd_pct → halt all + 紧急 Telegram
+    C) 进度对比: 实际 vs 目标曲线, 落后 >5% → Telegram 警告 (24h 去重)
+    D) 资金扩展 trigger: equity 跨过 $100/$500/$2000 → AI 自动加策略
+    E) 目标达成 → status='achieved' + 庆祝 Telegram
+    F) deadline 过 → status='expired' + 复盘 Telegram
+    """
+    from app.models import ProfitTarget, User
+    from app.services.telegram_service import send as tg_send
+    from app.services.audit import log as audit
+    import datetime as _dt
+
+    now = _dt.datetime.utcnow()
+    actions = []
+
+    targets = ProfitTarget.query.filter_by(status='active').all()
+    for t in targets:
+        user = User.query.get(t.user_id)
+        if not user:
+            continue
+
+        # A) 拉当前 equity
+        try:
+            from app.services.exchange_binding import bound_exchanges
+            bound = bound_exchanges(t.user_id)
+            total = 0.0
+            if 'hyperliquid' in bound:
+                from app.services.hyperliquid_creds import get_decrypted_for_user as _hc
+                from app.services.hyperliquid_service import fetch_balance as _hb
+                c = _hc(t.user_id)
+                if c:
+                    bal = _hb(creds=c)
+                    total += bal['USDT']['total']
+            if 'okx' in bound:
+                from app.services.exchange_service import fetch_balance as _ob, _env_creds, _resolve_creds
+                _ob_creds = _env_creds() if t.user_id == 1 else _resolve_creds(t.user_id)
+                bal = _ob(creds=_ob_creds) if _ob_creds else {}
+                for v in bal.values():
+                    total += v.get('total', 0)
+        except Exception as e:
+            print(f'[profit_monitor] equity fetch fail uid={t.user_id}: {e}')
+            continue
+
+        t.current_equity_usdt = round(total, 4)
+        if not t.peak_equity_usdt or total > t.peak_equity_usdt:
+            t.peak_equity_usdt = round(total, 4)
+        t.last_progress_check_at = now
+
+        # B) DD 检查 — 触发 halt
+        dd = t.dd_pct()
+        if dd >= t.max_dd_pct:
+            try:
+                from app.services.config_service import update_config
+                update_config({'halted': True, 'halt_reason': f'profit_target DD {dd:.1f}% >= {t.max_dd_pct}%'})
+            except Exception:
+                pass
+            tg_send(
+                f'🚨 <b>紧急: 触发回撤保护</b>\n'
+                f'用户 {user.email}\n'
+                f'当前 ${total:.2f} / 峰值 ${t.peak_equity_usdt:.2f}\n'
+                f'回撤 {dd:.1f}% ≥ 上限 {t.max_dd_pct}%\n'
+                f'已 HALT 全部新开仓. 请人工 review.',
+                event_key=f'dd_halt_{t.id}',
+            )
+            audit('profit_target_dd_halt', actor='system',
+                  user_id=t.user_id, target_id=t.id, dd_pct=dd,
+                  current=total, peak=t.peak_equity_usdt)
+            actions.append(f'DD halt user={user.email}')
+            db.session.commit()
+            continue
+
+        # E) 目标达成
+        if total >= t.target_equity():
+            t.status = 'achieved'
+            t.achieved_at = now
+            tg_send(
+                f'🎉 <b>目标达成!</b>\n'
+                f'用户 {user.email}\n'
+                f'起始 ${t.start_capital_usdt:.2f} → 现 ${total:.2f}\n'
+                f'增益 ${total - t.start_capital_usdt:.2f} (+{(total/t.start_capital_usdt-1)*100:.1f}%)\n'
+                f'用时 {t.days_elapsed()} 天 / 计划 {t.days_elapsed() + t.days_remaining()} 天',
+                event_key=f'target_achieved_{t.id}',
+            )
+            audit('profit_target_achieved', actor='system',
+                  user_id=t.user_id, target_id=t.id,
+                  start=t.start_capital_usdt, end=total)
+            actions.append(f'achieved user={user.email}')
+            db.session.commit()
+            continue
+
+        # F) deadline 过期
+        if t.deadline and now >= t.deadline:
+            t.status = 'expired'
+            t.expired_at = now
+            actual_gain = total - t.start_capital_usdt
+            target_gain = t.target_equity() - t.start_capital_usdt
+            achieve_pct = (actual_gain / target_gain * 100) if target_gain else 0
+            tg_send(
+                f'⏰ <b>目标周期结束</b>\n'
+                f'用户 {user.email}\n'
+                f'起始 ${t.start_capital_usdt:.2f} → 现 ${total:.2f}\n'
+                f'达成 {achieve_pct:.1f}% (目标 +{t.target_pct}% / 实际 +{(total/t.start_capital_usdt-1)*100:.1f}%)\n'
+                f'去 Settings 设新目标, 或让 AI 复盘改策略',
+                event_key=f'target_expired_{t.id}',
+            )
+            audit('profit_target_expired', actor='system',
+                  user_id=t.user_id, target_id=t.id, achieve_pct=achieve_pct)
+            actions.append(f'expired user={user.email}')
+            db.session.commit()
+            continue
+
+        # C) 进度对比 — 落后警告 (24h 去重)
+        expected = t.expected_equity_now()
+        lag_pct = (expected - total) / expected * 100 if expected > 0 else 0
+        if lag_pct > 5:
+            recently_warned = (
+                t.last_lag_warned_at
+                and (now - t.last_lag_warned_at).total_seconds() < 24 * 3600
+            )
+            if not recently_warned:
+                progress = t.progress_pct()
+                tg_send(
+                    f'🟡 <b>目标进度落后</b>\n'
+                    f'用户 {user.email}\n'
+                    f'当前 ${total:.2f} · 应到 ${expected:.2f} · 落后 {lag_pct:.1f}%\n'
+                    f'已用 {t.days_elapsed()}/{t.days_elapsed() + t.days_remaining()} 天, 完成 {progress}%\n'
+                    f'AI 将于 24h 内主动 review 策略',
+                    event_key=f'target_lag_{t.id}_{now.strftime("%Y%m%d")}',
+                )
+                t.last_lag_warned_at = now
+                # 主动触发 AI improve 帮加策略
+                try:
+                    from app.services.llm_prompts.strategy_recommend import recommend_strategies
+                    recommend_strategies(t.user_id)
+                except Exception:
+                    pass
+                actions.append(f'lag warn user={user.email}')
+
+        # D) 资金扩展 trigger (跨档自动加策略)
+        # 14k-20 已在 recommend 阶段按 capital 算 max_recommend, 这里只 trigger
+        thresholds = [100, 500, 2000]
+        crossed = next((th for th in thresholds
+                          if t.start_capital_usdt < th <= total), None)
+        if crossed:
+            # 24h 内只 trigger 一次
+            recently_triggered = (
+                t.last_progress_check_at and t.last_lag_warned_at
+                and (now - t.last_lag_warned_at).total_seconds() < 24 * 3600
+            )
+            if not recently_triggered:
+                try:
+                    from app.services.llm_prompts.strategy_recommend import recommend_strategies
+                    recommend_strategies(t.user_id)
+                    tg_send(
+                        f'📈 <b>资金跨档</b> ${crossed}\n'
+                        f'用户 {user.email}\n'
+                        f'AI 自动扩展策略数 (现 ${total:.2f})',
+                        event_key=f'capital_tier_{t.id}_{crossed}',
+                    )
+                    actions.append(f'tier {crossed} triggered user={user.email}')
+                except Exception:
+                    pass
+
+        db.session.commit()
+
+    return f'profit_monitor: {len(targets)} targets, actions: {actions}'
+
+
+@celery_app.task(name='app.tasks.strategy_tasks.weekly_strategy_review')
+def weekly_strategy_review():
+    """Phase 14k-22 (B): 每周日 23:00 UTC 跑.
+    - 7 日 Sharpe<0 且亏损>$5 的 running 策略 → pause
+    - 30 天无 trade 策略 → retire (信号死循环)
+    - 触发 AI improve 补新策略
+    """
+    from app.models import Strategy, Trade
+    from app.services.telegram_service import send as tg_send
+    from app.services.audit import log as audit
+    from sqlalchemy import func
+    import datetime as _dt
+    import statistics
+
+    now = _dt.datetime.utcnow()
+    week_ago = now - _dt.timedelta(days=7)
+    month_ago = now - _dt.timedelta(days=30)
+
+    running = Strategy.query.filter_by(status='running').all()
+    paused = []
+    retired = []
+    for s in running:
+        # 7 日 trades
+        week_trades = (Trade.query.filter(Trade.strategy_id == s.id,
+                                            Trade.exit_time > week_ago)
+                       .all())
+        # 30 天 trades
+        month_count = (Trade.query.filter(Trade.strategy_id == s.id,
+                                            Trade.exit_time > month_ago)
+                       .count())
+
+        # 死循环 — 30 天 0 trade (上线 > 30 天的策略)
+        days_old = (now - s.created_at).total_seconds() / 86400 if s.created_at else 0
+        if month_count == 0 and days_old > 30:
+            s.status = 'retired'
+            s.retired_at = now
+            s.retire_reason = 'weekly_review: 30 天 0 trade (signal_dead)'
+            retired.append(s)
+            audit('weekly_review_retire', actor='system',
+                  strategy_id=s.id, reason='signal_dead_30d')
+            continue
+
+        # 7 日 Sharpe<0 + 亏>$5
+        if len(week_trades) >= 3:
+            pnls = [float(t.pnl or 0) for t in week_trades]
+            net = sum(pnls)
+            mean = statistics.mean(pnls) if pnls else 0
+            stdev = statistics.stdev(pnls) if len(pnls) > 1 else 1
+            sharpe = mean / stdev if stdev > 0 else 0
+            if sharpe < 0 and net < -5:
+                s.status = 'stopped'
+                paused.append((s, sharpe, net))
+                audit('weekly_review_pause', actor='system',
+                      strategy_id=s.id, sharpe_7d=round(sharpe, 2), net_pnl=round(net, 2))
+
+    db.session.commit()
+
+    # 触发 AI improve 补
+    refilled = 0
+    if paused or retired:
+        try:
+            from app.services.llm_prompts.strategy_recommend import recommend_strategies
+            r = recommend_strategies(1)    # admin 视角
+            refilled = sum(1 for x in r.get('recommendations', []) if (x.get('auto_apply') or {}).get('applied'))
+        except Exception as e:
+            print(f'[weekly_review] AI refill failed: {e}')
+
+    # Telegram 周报
+    msg_lines = [f'📊 <b>AI 周度策略复盘</b>', '']
+    if paused:
+        msg_lines.append(f'<b>暂停 {len(paused)} 个亏损策略</b>:')
+        for s, sh, net in paused[:5]:
+            msg_lines.append(f'  • #{s.id} {s.name[:30]} Sharpe {sh:.2f} 亏 ${net:.2f}')
+    if retired:
+        msg_lines.append(f'<b>退役 {len(retired)} 个信号死循环</b>:')
+        for s in retired[:5]:
+            msg_lines.append(f'  • #{s.id} {s.name[:30]} (30 天无交易)')
+    if refilled:
+        msg_lines.append(f'<b>AI 自动补充 {refilled} 个新策略</b>')
+    if not paused and not retired:
+        msg_lines.append('本周所有策略表现 OK, 无操作.')
+
+    tg_send('\n'.join(msg_lines), event_key='weekly_review')
+    return f'review: paused={len(paused)}, retired={len(retired)}, refilled={refilled}'
 
 
 @celery_app.task(name='app.tasks.strategy_tasks.retry_stuck_ai_recommendations')

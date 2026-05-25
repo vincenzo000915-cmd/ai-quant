@@ -2394,6 +2394,107 @@ def me_hl_delete():
 
 # ===== Phase 14k-5: 交易所绑定 summary (前端用) =====
 
+# ===== Phase 14k-22: 利润目标 (AI 自动跟踪 + 风控) =====
+
+@api_bp.route('/me/profit-target', methods=['GET'])
+@require_actor
+def me_profit_target_get():
+    """当前 active profit target (None 若未设)"""
+    from app.models import ProfitTarget
+    uid = _me_user_id()
+    t = ProfitTarget.query.filter_by(user_id=uid, status='active').order_by(ProfitTarget.id.desc()).first()
+    if not t:
+        return jsonify({'target': None}), 200
+    return jsonify({'target': t.to_dict()}), 200
+
+
+@api_bp.route('/me/profit-target', methods=['POST'])
+@require_actor
+def me_profit_target_set():
+    """设置/重置 profit target.
+    Body: {start_capital_usdt?, target_pct=20, days=30, max_dd_pct=15, daily_loss_halt_pct=5}
+    start_capital_usdt 不传 → 自动用当前 account equity
+    """
+    from app.models import ProfitTarget
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+
+    # 关掉之前 active 的
+    existing = ProfitTarget.query.filter_by(user_id=uid, status='active').all()
+    for e in existing:
+        e.status = 'paused'
+
+    # 自动检测当前 equity 作为起始
+    start_cap = data.get('start_capital_usdt')
+    if start_cap is None:
+        # 拉 /api/account 等价的余额
+        from app.services.exchange_binding import bound_exchanges
+        bound = bound_exchanges(uid)
+        total = 0
+        if 'hyperliquid' in bound:
+            try:
+                from app.services.hyperliquid_creds import get_decrypted_for_user as _hc
+                from app.services.hyperliquid_service import fetch_balance as _hb
+                c = _hc(uid)
+                if c:
+                    bal = _hb(creds=c)
+                    total += bal['USDT']['total']
+            except Exception:
+                pass
+        if 'okx' in bound:
+            try:
+                from app.services.exchange_service import fetch_balance as _ob, _env_creds, _resolve_creds
+                _ob_creds = _env_creds() if uid == 1 else _resolve_creds(uid)
+                bal = _ob(creds=_ob_creds) if _ob_creds else {}
+                for v in bal.values():
+                    total += v.get('total', 0)
+            except Exception:
+                pass
+        start_cap = total
+
+    if not start_cap or start_cap <= 0:
+        return jsonify({'error': '无法确定起始本金, 请显式传 start_capital_usdt'}), 400
+
+    target_pct = float(data.get('target_pct', 20.0))
+    days = int(data.get('days', 30))
+    import datetime as _dt
+    deadline = _dt.datetime.utcnow() + _dt.timedelta(days=days)
+
+    t = ProfitTarget(
+        user_id=uid,
+        start_capital_usdt=float(start_cap),
+        target_pct=target_pct,
+        deadline=deadline,
+        current_equity_usdt=float(start_cap),
+        peak_equity_usdt=float(start_cap),
+        max_dd_pct=float(data.get('max_dd_pct', 15.0)),
+        daily_loss_halt_pct=float(data.get('daily_loss_halt_pct', 5.0)),
+        status='active',
+    )
+    db.session.add(t)
+    db.session.commit()
+    audit('profit_target_set', actor='user', user_id=uid,
+          start_capital=start_cap, target_pct=target_pct, days=days)
+    return jsonify({'target': t.to_dict()}), 201
+
+
+@api_bp.route('/me/profit-target/<int:tid>', methods=['DELETE'])
+@require_actor
+def me_profit_target_cancel(tid):
+    """取消当前 target (status=paused)"""
+    from app.models import ProfitTarget
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    t = ProfitTarget.query.filter_by(id=tid, user_id=uid).first()
+    if not t:
+        return jsonify({'error': 'target not found'}), 404
+    t.status = 'paused'
+    db.session.commit()
+    audit('profit_target_cancelled', actor='user', user_id=uid, target_id=tid)
+    return jsonify({'target': t.to_dict()}), 200
+
+
 @api_bp.route('/me/exchange-binding', methods=['GET'])
 @require_actor
 def me_exchange_binding():

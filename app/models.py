@@ -149,6 +149,96 @@ class HyperliquidCredentials(db.Model):
         }
 
 
+class ProfitTarget(db.Model):
+    """Phase 14k-22: per-user 利润目标跟踪 + DD 保护 + 自动复盘.
+
+    每 user 一个 active target (status='active'). 目标达成后 status='achieved',
+    超期未达 status='expired'. 系统自动跑 profit_progress_monitor 跟踪进度.
+    """
+    __tablename__ = 'profit_targets'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    start_capital_usdt = db.Column(db.Float, nullable=False)        # 起始本金 (USDT)
+    target_pct = db.Column(db.Float, nullable=False, default=20.0)  # 目标增幅 % (默认 20%)
+    deadline = db.Column(db.DateTime, nullable=False)
+    # 实时跟踪
+    current_equity_usdt = db.Column(db.Float)                       # 最新 equity (定期更新)
+    peak_equity_usdt = db.Column(db.Float)                          # 历史最高 equity (DD 用)
+    last_progress_check_at = db.Column(db.DateTime)
+    # 状态
+    status = db.Column(db.String(20), default='active', index=True) # active | achieved | expired | paused
+    achieved_at = db.Column(db.DateTime)
+    expired_at = db.Column(db.DateTime)
+    # 风控配置
+    max_dd_pct = db.Column(db.Float, default=15.0)                  # 最大允许回撤 %
+    daily_loss_halt_pct = db.Column(db.Float, default=5.0)          # 单日亏损达此 % 当日 halt
+    # 警告去重
+    last_lag_warned_at = db.Column(db.DateTime)                     # 上次"进度落后"警告时间
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def target_equity(self) -> float:
+        """目标 equity = start × (1 + target_pct%)"""
+        return self.start_capital_usdt * (1 + self.target_pct / 100)
+
+    def days_remaining(self) -> int:
+        if not self.deadline:
+            return 0
+        delta = (self.deadline - datetime.datetime.utcnow()).total_seconds()
+        return max(0, int(delta / 86400))
+
+    def days_elapsed(self) -> int:
+        if not self.created_at:
+            return 0
+        return max(0, int((datetime.datetime.utcnow() - self.created_at).total_seconds() / 86400))
+
+    def expected_equity_now(self) -> float:
+        """按线性目标曲线, 当前应到的 equity (用于判定领先/落后)"""
+        if not self.deadline or not self.created_at:
+            return self.start_capital_usdt
+        total_days = max(1, (self.deadline - self.created_at).total_seconds() / 86400)
+        elapsed = max(0, (datetime.datetime.utcnow() - self.created_at).total_seconds() / 86400)
+        progress = min(1.0, elapsed / total_days)
+        gain = (self.target_equity() - self.start_capital_usdt) * progress
+        return self.start_capital_usdt + gain
+
+    def progress_pct(self) -> float:
+        """已完成进度: 实际增益 / 目标增益"""
+        if not self.current_equity_usdt:
+            return 0
+        actual_gain = self.current_equity_usdt - self.start_capital_usdt
+        target_gain = self.target_equity() - self.start_capital_usdt
+        return round((actual_gain / target_gain * 100) if target_gain else 0, 1)
+
+    def dd_pct(self) -> float:
+        """当前回撤 % (peak - current) / peak"""
+        if not self.peak_equity_usdt or self.peak_equity_usdt <= 0:
+            return 0
+        cur = self.current_equity_usdt or self.peak_equity_usdt
+        return round(max(0, (self.peak_equity_usdt - cur) / self.peak_equity_usdt * 100), 2)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'user_id': self.user_id,
+            'start_capital_usdt': self.start_capital_usdt,
+            'target_pct': self.target_pct,
+            'target_equity_usdt': round(self.target_equity(), 2),
+            'current_equity_usdt': self.current_equity_usdt,
+            'peak_equity_usdt': self.peak_equity_usdt,
+            'expected_equity_now': round(self.expected_equity_now(), 2),
+            'progress_pct': self.progress_pct(),
+            'dd_pct': self.dd_pct(),
+            'days_remaining': self.days_remaining(),
+            'days_elapsed': self.days_elapsed(),
+            'deadline': self.deadline.isoformat() if self.deadline else None,
+            'status': self.status,
+            'max_dd_pct': self.max_dd_pct,
+            'daily_loss_halt_pct': self.daily_loss_halt_pct,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'achieved_at': self.achieved_at.isoformat() if self.achieved_at else None,
+        }
+
+
 class CatalogBacktestMatrix(db.Model):
     """Phase 14k-16: catalog × symbol × exchange 预先 batch-backtest 结果矩阵.
 
