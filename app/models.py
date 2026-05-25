@@ -149,6 +149,52 @@ class HyperliquidCredentials(db.Model):
         }
 
 
+class CatalogBacktestMatrix(db.Model):
+    """Phase 14k-16: catalog × symbol × exchange 预先 batch-backtest 结果矩阵.
+
+    取代「每次 AI 推荐都重测」, 改成离线 batch 一次 → AI 推荐瞬时从矩阵查 verified 池.
+    UNIQUE (catalog_id, symbol, exchange) — TF 跟随 catalog 自带 (不存 TF, 因为 catalog 已绑死).
+    """
+    __tablename__ = 'catalog_backtest_matrix'
+
+    id = db.Column(db.Integer, primary_key=True)
+    catalog_id = db.Column(db.Integer, db.ForeignKey('strategy_candidates.id'), nullable=False, index=True)
+    symbol = db.Column(db.String(20), nullable=False, index=True)
+    exchange = db.Column(db.String(20), nullable=False, index=True)    # 'okx' | 'hyperliquid'
+    backtest_result_id = db.Column(db.Integer, db.ForeignKey('backtest_results.id'), nullable=True)
+    is_sharpe = db.Column(db.Float)
+    oos_sharpe = db.Column(db.Float)
+    decay_pct = db.Column(db.Float)
+    is_trades = db.Column(db.Integer)
+    oos_trades = db.Column(db.Integer)
+    full_sharpe = db.Column(db.Float)
+    full_total_trades = db.Column(db.Integer)
+    full_max_drawdown_pct = db.Column(db.Float)
+    is_verified = db.Column(db.Boolean, default=False, index=True)      # pass IS≥1.5 OOS≥0.8 decay≤70%
+    reject_reason = db.Column(db.Text)
+    backtest_ran_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('catalog_id', 'symbol', 'exchange', name='uix_catalog_sym_ex'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'catalog_id': self.catalog_id,
+            'symbol': self.symbol, 'exchange': self.exchange,
+            'backtest_result_id': self.backtest_result_id,
+            'is_sharpe': self.is_sharpe, 'oos_sharpe': self.oos_sharpe,
+            'decay_pct': self.decay_pct,
+            'is_trades': self.is_trades, 'oos_trades': self.oos_trades,
+            'full_sharpe': self.full_sharpe,
+            'full_total_trades': self.full_total_trades,
+            'full_max_drawdown_pct': self.full_max_drawdown_pct,
+            'is_verified': bool(self.is_verified),
+            'reject_reason': self.reject_reason,
+            'backtest_ran_at': self.backtest_ran_at.isoformat() if self.backtest_ran_at else None,
+        }
+
+
 class User(db.Model):
     """Phase 11.1: SaaS 用戶 — bcrypt 密碼，每 user 有自己的 strategies / positions / trades
 
