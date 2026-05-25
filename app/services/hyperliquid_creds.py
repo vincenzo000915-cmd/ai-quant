@@ -112,6 +112,16 @@ def delete_for_user(user_id: int) -> bool:
     return True
 
 
+def set_active(user_id: int, is_active: bool) -> HyperliquidCredentials | None:
+    rec = get_for_user(user_id)
+    if rec is None:
+        return None
+    rec.is_active = is_active
+    rec.updated_at = datetime.datetime.utcnow()
+    db.session.commit()
+    return rec
+
+
 def verify_against_hl(user_id: int) -> dict:
     """调 HL info endpoint 验证 main_address 有效 + 返回 balance."""
     from app.services.hyperliquid_service import fetch_balance

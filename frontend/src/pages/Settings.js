@@ -9,6 +9,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import LockIcon from '@mui/icons-material/Lock';
 import ScienceIcon from '@mui/icons-material/Science';
 import OkxBindingCard from '../components/OkxBindingCard';
+import HyperliquidBindingCard from '../components/HyperliquidBindingCard';
 import LlmBindingCard from '../components/LlmBindingCard';
 import SizingAdvisorCard from '../components/SizingAdvisorCard';
 import SubscriptionCard from '../components/SubscriptionCard';
@@ -118,6 +119,9 @@ export default function Settings() {
 
       {/* === Phase 11.2: OKX 綁定 (per-user) === */}
       <OkxBindingCard />
+
+      {/* === Phase 14k: Hyperliquid agent 綁定 (DEX 替代 OKX) === */}
+      <HyperliquidBindingCard />
 
       {/* === Phase 11.5: LLM key 綁定 (BYO) === */}
       <LlmBindingCard />

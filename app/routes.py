@@ -2110,6 +2110,85 @@ def me_okx_delete():
     return jsonify({'bound': False, 'source': 'user'}), 200
 
 
+# ===== Phase 14k: per-user Hyperliquid agent wallet =====
+
+@api_bp.route('/me/hyperliquid', methods=['GET'])
+@require_actor
+def me_hl_get():
+    """取当前 user 的 HL agent 绑定状态 (无私钥)"""
+    from app.services.hyperliquid_creds import get_for_user
+    uid = _me_user_id()
+    rec = get_for_user(uid)
+    if not rec:
+        return jsonify({'bound': False}), 200
+    return jsonify({'bound': True, **rec.to_dict()}), 200
+
+
+@api_bp.route('/me/hyperliquid', methods=['POST'])
+@require_actor
+def me_hl_bind():
+    """绑定 / 更新 HL agent. {agent_address, main_address, agent_private_key, network='mainnet'|'testnet'}"""
+    from app.services.hyperliquid_creds import save_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    try:
+        rec = save_for_user(
+            uid,
+            agent_address=data.get('agent_address') or '',
+            main_address=data.get('main_address') or '',
+            agent_private_key=data.get('agent_private_key') or '',
+            network=data.get('network') or 'mainnet',
+        )
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    audit('hl_creds_saved', actor='user', user_id=uid,
+          agent_address=rec.agent_address, main_address=rec.main_address, network=rec.network)
+    return jsonify({'bound': True, **rec.to_dict()}), 201
+
+
+@api_bp.route('/me/hyperliquid/test', methods=['POST'])
+@require_actor
+def me_hl_test():
+    """调 HL info endpoint 验证 main_address + 回 balance"""
+    from app.services.hyperliquid_creds import verify_against_hl
+    uid = _me_user_id()
+    return jsonify(verify_against_hl(uid))
+
+
+@api_bp.route('/me/hyperliquid', methods=['PATCH'])
+@require_actor
+def me_hl_patch():
+    """启停 HL agent (is_active boolean)"""
+    from app.services.hyperliquid_creds import set_active
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    data = request.get_json(silent=True) or {}
+    if 'is_active' not in data:
+        return jsonify({'error': '需要 is_active boolean'}), 400
+    rec = set_active(uid, bool(data['is_active']))
+    if not rec:
+        return jsonify({'error': '尚未绑定 HL'}), 404
+    audit('hl_creds_toggled', actor='user', user_id=uid, is_active=bool(data['is_active']))
+    return jsonify({'bound': True, **rec.to_dict()}), 200
+
+
+@api_bp.route('/me/hyperliquid', methods=['DELETE'])
+@require_actor
+def me_hl_delete():
+    """解绑 HL agent"""
+    from app.services.hyperliquid_creds import delete_for_user
+    from app.services.audit import log as audit
+    uid = _me_user_id()
+    ok = delete_for_user(uid)
+    if not ok:
+        return jsonify({'error': '尚未绑定 HL'}), 404
+    audit('hl_creds_deleted', actor='user', user_id=uid)
+    return jsonify({'bound': False}), 200
+
+
 # ===== Phase 11.5.1: per-user BYO LLM key =====
 
 @api_bp.route('/me/llm', methods=['GET'])
