@@ -205,6 +205,12 @@ export default function Strategies() {
     setLoading(false);
   }, []);
 
+  // Phase 14k-5: 拿 user exchange binding (决定 dialog 是否显 exchange selector)
+  const [binding, setBinding] = useState({ bound: ['okx'], primary: 'okx', is_team: false });
+  useEffect(() => {
+    fetch(`${API}/api/me/exchange-binding`).then(r => r.json()).then(setBinding).catch(() => {});
+  }, []);
+
   // Phase 14i: 共享 perf 数据 (live_card), 每 30s 刷新
   const [livePerf, setLivePerf] = useState({});      // { [id]: row }
   useEffect(() => {
@@ -635,13 +641,22 @@ export default function Strategies() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl fullWidth size="small">
-              <InputLabel>交易所</InputLabel>
-              <Select value={form.exchange || 'okx'} onChange={(e) => setForm(f => ({...f, exchange: e.target.value}))} label="交易所">
-                <MenuItem value="okx">OKX (CEX 永续合约)</MenuItem>
-                <MenuItem value="hyperliquid">Hyperliquid (DEX, 手续费低 30%+)</MenuItem>
-              </Select>
-            </FormControl>
+            {/* Phase 14k-5: 仅 team user (能绑多个) 才显示 exchange selector;
+                普通 user 自动 = primary_exchange (Settings 里绑的那个) */}
+            {binding.is_team ? (
+              <FormControl fullWidth size="small">
+                <InputLabel>交易所</InputLabel>
+                <Select value={form.exchange || binding.primary || 'okx'} onChange={(e) => setForm(f => ({...f, exchange: e.target.value}))} label="交易所">
+                  <MenuItem value="okx">OKX (CEX 永续合约)</MenuItem>
+                  <MenuItem value="hyperliquid">Hyperliquid (DEX, 手续费低 30%+)</MenuItem>
+                </Select>
+              </FormControl>
+            ) : (
+              <Alert severity="info" sx={{ fontSize: 12, py: 0.5 }}>
+                此策略将在你绑定的 <strong>{binding.primary === 'hyperliquid' ? 'Hyperliquid' : 'OKX'}</strong> 上运行.
+                想用不同交易所? 去 设定 改绑, 或升级团队版.
+              </Alert>
+            )}
             <TextField label="策略參數 (JSON)" value={form.params} onChange={(e) => setForm(f => ({...f, params: e.target.value}))} fullWidth size="small" multiline rows={3} />
             <FormControlLabel control={<Switch checked={form.active} onChange={(e) => setForm(f => ({...f, active: e.target.checked}))} />} label="建立後立即啟動" />
           </Box>

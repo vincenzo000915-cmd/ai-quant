@@ -322,6 +322,14 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
     except Exception as e:
         return {'ok': False, 'error': f'load_signal_fn before promote: {type(e).__name__}: {e}'}
 
+    # Phase 14k-5: 跟 user 主交易所走 (普通 user 只绑一个 → 必走那个)
+    try:
+        from app.services.exchange_binding import primary_exchange
+        _owner_uid = owner_user_id if owner_user_id is not None else 1
+        _exchange = primary_exchange(_owner_uid)
+    except Exception:
+        _exchange = 'okx'
+
     # 建立 Strategy 條目
     strategy = Strategy(
         name=name or f'{c.source_name or "candidate"} (#{c.id})',
@@ -330,6 +338,7 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
         params=c.default_params or {},
         symbol=symbol,
         timeframe=c.timeframe or '4h',
+        exchange=_exchange,                 # Phase 14k-5
         status='stopped',   # 預設停用，由 user 在 UI 啟用
         max_positions=1,
         max_daily_loss=10.0,
