@@ -64,7 +64,58 @@ def _latest_completed_optimization(strategy_id: int):
     )
 
 
-def build_recommendations() -> dict:
+def _get_target_context(user_id: int = 1) -> dict:
+    """Phase 14k-24: 拉 active profit_target 上下文, 让 advisor 调阈值.
+
+    返回:
+    {
+      lag_mode: bool   — 落后 >5% (更激进)
+      dd_warn: bool    — DD > max_dd_pct × 0.6 (警戒区)
+      ahead_mode: bool — 领先 >5% (保守)
+      progress_pct: float
+      none: bool       — 没目标 (走默认)
+    }
+    """
+    try:
+        from app.models import ProfitTarget
+        t = ProfitTarget.query.filter_by(user_id=user_id, status='active').first()
+        if not t or not t.current_equity_usdt:
+            return {'none': True}
+        cur = t.current_equity_usdt
+        expected = t.expected_equity_now()
+        lag_pct = (expected - cur) / expected * 100 if expected > 0 else 0
+        dd = t.dd_pct()
+        return {
+            'none': False,
+            'lag_mode': lag_pct > 5,
+            'ahead_mode': lag_pct < -5,    # 实际 > 应该 = lag 负 = 领先
+            'dd_warn': dd > (t.max_dd_pct * 0.6) if t.max_dd_pct else False,
+            'progress_pct': t.progress_pct(),
+            'lag_pct': lag_pct,
+            'dd_pct': dd,
+        }
+    except Exception:
+        return {'none': True}
+
+
+def build_recommendations(user_id: int = 1) -> dict:
+    # Phase 14k-24: 加目标上下文, 动态调阈值
+    target_ctx = _get_target_context(user_id)
+    apply_lift = APPLY_PARAMS_LIFT
+    fan_out_min = FAN_OUT_MIN_SHARPE
+    fan_out_locked = False
+    if not target_ctx.get('none'):
+        if target_ctx.get('lag_mode'):
+            # 落后 → 降低 apply 阈值, 更激进调参
+            apply_lift = max(0.2, APPLY_PARAMS_LIFT - 0.2)
+            # 不动 fan_out (allow expansion)
+        if target_ctx.get('dd_warn'):
+            # DD 警戒 → 锁 fan_out (别扩张, 先稳)
+            fan_out_locked = True
+        if target_ctx.get('ahead_mode'):
+            # 领先 → 保守, 提高 apply 阈值 (不轻易改赢家)
+            apply_lift = APPLY_PARAMS_LIFT + 0.3
+
     running = Strategy.query.filter(Strategy.status == 'running').all()
     if not running:
         return {'items': [], 'note': '目前沒有運行中的策略，無建議可生成。'}
@@ -181,7 +232,7 @@ def build_recommendations() -> dict:
         baseline = opt.baseline_oos_sharpe
         best = opt.best_oos_sharpe
         # baseline 可能是 None（基線就跑不出 Sharpe），這種情況 best > 1 也值得套用
-        beats_baseline = baseline is None or (best - baseline) >= APPLY_PARAMS_LIFT
+        beats_baseline = baseline is None or (best - baseline) >= apply_lift
         # 幂等：當前 strategy.params 已經是 best 就不再建議
         current_params = dict(s.params or {})
         if best >= 1.0 and beats_baseline and opt.best_params != current_params:
@@ -230,7 +281,10 @@ def build_recommendations() -> dict:
         if s.created_at and s.created_at > fanout_grace_cutoff:
             continue
         bt = _latest_backtest(s.id)
-        if not bt or bt.sharpe_ratio is None or bt.sharpe_ratio < FAN_OUT_MIN_SHARPE:
+        # 14k-24: DD 警戒区锁 fan_out (别扩张)
+        if fan_out_locked:
+            continue
+        if not bt or bt.sharpe_ratio is None or bt.sharpe_ratio < fan_out_min:
             continue
         # check: backtest 太老 → 數據過時不該基於此推 fan_out
         if bt.created_at and bt.created_at < fanout_age_cutoff:
@@ -325,5 +379,11 @@ def build_recommendations() -> dict:
             'critical': sum(1 for i in items if i['severity'] == 'critical'),
             'warn': sum(1 for i in items if i['severity'] == 'warn'),
             'info': sum(1 for i in items if i['severity'] == 'info'),
+        },
+        'target_context': target_ctx,    # 14k-24: 让 UI / executor 看见 advisor 用了什么 mode
+        'thresholds_used': {
+            'apply_params_lift': apply_lift,
+            'fan_out_min_sharpe': fan_out_min,
+            'fan_out_locked': fan_out_locked,
         },
     }

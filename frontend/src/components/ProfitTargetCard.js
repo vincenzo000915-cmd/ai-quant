@@ -254,12 +254,24 @@ export default function ProfitTargetCard() {
 
 function TargetDialog({ open, onClose, form, setForm, onSave, busy, title, existing }) {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Alert severity="info" sx={{ fontSize: 12 }}>
-            AI 会自动跟踪进度、控制回撤、扩张策略数。新目标会**替换**现有 active 目标。
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 0.5 }}>🤖 启用后 AI 全权管理:</Typography>
+            <Box component="ul" sx={{ pl: 2, m: 0, fontSize: 11.5, lineHeight: 1.6 }}>
+              <li>自动启用<b>全自动智能驾驶</b> (AI 推荐 + 自动应用)</li>
+              <li>自动开启<b>操作建议执行</b> (调参 / 暂停 / 退役 / fan-out / 上线)</li>
+              <li>每小时跟踪进度, 落后 → 主动加策略</li>
+              <li>回撤 ≥ {form.max_dd_pct}% → 自动 halt 全部新开仓</li>
+              <li>单日亏 ≥ {form.daily_loss_halt_pct}% → 当日止血</li>
+              <li>资金跨 $100/$500/$2000 → 自动扩张策略数</li>
+              <li>每周日 复盘: 淘汰亏损 + 补新</li>
+            </Box>
+            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.disabled' }}>
+              新目标会替换当前 active 目标. 暂停后现有策略仍在运行, 只是 AI 不再主动调整.
+            </Typography>
           </Alert>
           {existing && (
             <Typography variant="caption" color="text.secondary">

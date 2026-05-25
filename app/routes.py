@@ -2490,9 +2490,29 @@ def me_profit_target_set():
     )
     db.session.add(t)
     db.session.commit()
+
+    # Phase 14k-24: AI 自动托管 = 自动配置所有下层自动化
+    # 设目标 = 一键开启智能驾驶 + 全部操作建议 + 合适日上限
+    # user 不用再去 Settings 配 ai_decision_mode / auto_apply_actions
+    try:
+        from app.services.config_service import update as _update_cfg, get_config
+        cfg_before = get_config()
+        auto_config = {
+            'ai_decision_mode': 'full_auto',
+            'auto_apply_enabled': True,
+            'auto_apply_actions': ['apply_params', 'pause', 'fan_out', 'retire', 'promote_candidate'],
+            'auto_promote_max_per_day': max(int(cfg_before.get('auto_promote_max_per_day') or 8), 8),
+        }
+        _update_cfg(auto_config)
+        audit('profit_target_auto_config', actor='system', user_id=uid,
+              target_id=t.id, applied_config=auto_config)
+    except Exception as e:
+        # 配置失败不阻塞 target 创建, 仅 log
+        print(f'[profit_target] auto_config 失败 (target 已创建): {e}')
+
     audit('profit_target_set', actor='user', user_id=uid,
           start_capital=start_cap, target_pct=target_pct, days=days)
-    return jsonify({'target': t.to_dict()}), 201
+    return jsonify({'target': t.to_dict(), 'auto_configured': True}), 201
 
 
 @api_bp.route('/me/profit-target/<int:tid>', methods=['DELETE'])
