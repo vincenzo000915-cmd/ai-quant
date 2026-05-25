@@ -9,20 +9,36 @@ import {
 } from '@mui/material';
 import TrackChangesIcon from '@mui/icons-material/TrackChanges';
 import EditIcon from '@mui/icons-material/Edit';
+import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
+import { useNavigate } from 'react-router-dom';
 
 const PURPLE = '#a78bfa';
 
 export default function ProfitTargetCard() {
+  const navigate = useNavigate();
   const [target, setTarget] = useState(null);
+  const [needsPro, setNeedsPro] = useState(false);
+  const [needsExchange, setNeedsExchange] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState({ target_pct: 20, days: 30, max_dd_pct: 15, daily_loss_halt_pct: 5 });
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
+      // 1. check Pro tier
       const r = await fetch('/api/me/profit-target');
+      if (r.status === 402) {
+        setNeedsPro(true);
+        return;
+      }
+      setNeedsPro(false);
       const d = await r.json();
       setTarget(d.target);
+      // 2. check exchange bound
+      if (!d.target) {
+        const bind = await fetch('/api/me/exchange-binding').then(x => x.json()).catch(() => ({}));
+        setNeedsExchange(!bind.bound || !bind.bound.length);
+      }
     } catch {}
   }, []);
 
@@ -45,25 +61,65 @@ export default function ProfitTargetCard() {
     } finally { setBusy(false); }
   };
 
+  // 需要 Pro 订阅
+  if (needsPro) {
+    return (
+      <Card sx={{ mb: 2, border: '1px dashed #fbbf24aa', bgcolor: 'rgba(251,191,36,0.04)' }}>
+        <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <WorkspacePremiumIcon sx={{ color: '#fbbf24' }} />
+          <Box sx={{ flex: 1, minWidth: 200 }}>
+            <Typography variant="body2" fontWeight={700}>🤖 AI 量化经理 (Pro 功能)</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              设定盈利目标 → AI 跟踪进度 / 回撤保护 / 策略轮换 / 资金跨档自动扩张
+            </Typography>
+          </Box>
+          <Button size="small" variant="contained" color="warning" onClick={() => navigate('/pricing')}>
+            升级 Pro
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Pro 但还没绑交易所
+  if (needsExchange) {
+    return (
+      <Card sx={{ mb: 2, border: '1px dashed #60a5faaa', bgcolor: 'rgba(96,165,250,0.04)' }}>
+        <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <TrackChangesIcon sx={{ color: '#60a5fa' }} />
+          <Box sx={{ flex: 1, minWidth: 200 }}>
+            <Typography variant="body2" fontWeight={700}>设定盈利目标前先绑交易所</Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              系统需要拉你的真实余额来跟踪进度. 绑 OKX 或 Hyperliquid 即可.
+            </Typography>
+          </Box>
+          <Button size="small" variant="contained" onClick={() => navigate('/settings')}>
+            去 Settings 绑定
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!target) {
     return (
       <>
         <Card sx={{ mb: 2, border: `1px dashed ${PURPLE}44` }}>
-          <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2 }}>
+          <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <TrackChangesIcon sx={{ color: PURPLE }} />
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="body2" fontWeight={700}>设定盈利目标</Typography>
-              <Typography variant="caption" color="text.secondary">
-                AI 跟踪进度 + DD 保护 + 自动扩张策略
+            <Box sx={{ flex: 1, minWidth: 200 }}>
+              <Typography variant="body2" fontWeight={700}>🤖 启用 AI 量化经理</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                设个目标 (例 +20% / 30 天), AI 自动跟踪 + 回撤保护 + 策略轮换
               </Typography>
             </Box>
             <Button size="small" variant="contained" sx={{ bgcolor: PURPLE }} onClick={() => setEditOpen(true)}>
-              设定目标
+              开始托管
             </Button>
           </CardContent>
         </Card>
         <TargetDialog open={editOpen} onClose={() => setEditOpen(false)}
-                       form={form} setForm={setForm} onSave={handleSet} busy={busy} title="设定盈利目标" />
+                       form={form} setForm={setForm} onSave={handleSet} busy={busy} title="启用 AI 量化经理" />
       </>
     );
   }

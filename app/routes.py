@@ -2398,6 +2398,7 @@ def me_hl_delete():
 
 @api_bp.route('/me/profit-target', methods=['GET'])
 @require_actor
+@require_pro_tier
 def me_profit_target_get():
     """当前 active profit target (None 若未设)"""
     from app.models import ProfitTarget
@@ -2410,6 +2411,7 @@ def me_profit_target_get():
 
 @api_bp.route('/me/profit-target', methods=['POST'])
 @require_actor
+@require_pro_tier
 def me_profit_target_set():
     """设置/重置 profit target.
     Body: {start_capital_usdt?, target_pct=20, days=30, max_dd_pct=15, daily_loss_halt_pct=5}
@@ -2481,6 +2483,7 @@ def me_profit_target_set():
 
 @api_bp.route('/me/profit-target/<int:tid>', methods=['DELETE'])
 @require_actor
+@require_pro_tier
 def me_profit_target_cancel(tid):
     """取消当前 target (status=paused)"""
     from app.models import ProfitTarget
