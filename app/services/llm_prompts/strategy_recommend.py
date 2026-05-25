@@ -481,8 +481,18 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
     return {'applied': True, 'strategy_id': sid, 'sharpe': sharpe}
 
 
-def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
-    """Phase 14k-13: 主入口 — 按 user 绑定的交易所分发推荐.
+def _max_recommend_for_capital(capital_usdt: float) -> int:
+    """14k-20: 推荐数随资金线性扩 (资金多上更多策略)"""
+    if capital_usdt < 100: return 3
+    if capital_usdt < 500: return 4
+    if capital_usdt < 2000: return 6
+    return 8
+
+
+def recommend_strategies(user_id: int, *, max_recommend: int | None = None) -> dict:
+    """Phase 14k-13/20: 主入口 — 按 user 绑定的交易所分发推荐.
+
+    max_recommend: 显式指定 → 用; None → 按 user 资金自适应 (3/4/6/8).
 
     - 普通 user (单绑) → 调一次 _recommend_for_exchange 返单结果
     - team user (多绑) → 对每个 bound exchange 各调一次, 合并结果
@@ -497,6 +507,11 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
             'message': '未绑定任何交易所, 请先去 Settings 绑 OKX 或 Hyperliquid',
             'bound_exchanges': [],
         }
+
+    # 14k-20: 资金自适应 max_recommend (default)
+    if max_recommend is None:
+        capital = _get_user_capital(user_id)
+        max_recommend = _max_recommend_for_capital(capital)
 
     # team: 每个 exchange 各跑一次; 普通 user: 单个 exchange
     if is_team_tier(user_id) and len(bound) > 1:
@@ -618,10 +633,23 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
             'message': f'{target_exchange} verified 池为空. 请先跑 catalog batch-backtest (POST /api/admin/catalog-batch-backtest)',
         }
 
+    # 14k-20: 先拉 user running 策略, filter 掉同 (symbol, TF, category) 的 matrix entry
+    # 避免推荐重复 clone 然后被 concentration guard 卡在 panel
+    running_occupied = set()
+    for s in scoped_query(Strategy).filter_by(status='running').all():
+        running_occupied.add((s.symbol, s.timeframe, s.category))
+
     # 把 catalog_id → (catalog_entry, best_matrix_row) 对齐. 每个 catalog 取 oos_sharpe 最高的 symbol.
+    # 14k-20: 但跳过已被 running 占据的 (symbol, TF, category) 槽位
     catalog_by_id = {c.id: c for c in catalog}
     best_per_catalog = {}
     for m in verified_pool:
+        entry = catalog_by_id.get(m.catalog_id)
+        if entry is None:
+            continue
+        # check concentration: 已 occupy → 这个 (catalog, symbol) 组合不该推
+        if (m.symbol, entry.timeframe, entry.category) in running_occupied:
+            continue
         cur = best_per_catalog.get(m.catalog_id)
         if cur is None or (m.oos_sharpe or 0) > (cur.oos_sharpe or 0):
             best_per_catalog[m.catalog_id] = m
@@ -647,27 +675,41 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
 
     matrix_scored.sort(key=lambda x: -x[2])
 
-    # Phase 14k-19: 强制 category 平衡 + 子类型多样化
-    # - 优先每 category 选 1 个 (long/short/swing)
-    # - 同时强制不同 strategy type (避免 2 个 ttm_squeeze 都进)
-    # - fallback 才允许同 category 第二个
+    # Phase 14k-19/20: category 配额平衡 — 资金多就多上, 但仍跨 long/short/swing 分配
+    # 目标配额表 (max_recommend → {category: 上限}):
+    # 3 → 1 long + 1 short + 1 swing
+    # 4 → 1 long + 1 short + 2 swing
+    # 5 → 2 long + 1 short + 2 swing
+    # 6 → 2 long + 2 short + 2 swing
+    # 7 → 2 long + 2 short + 3 swing
+    # 8 → 2 long + 2 short + 3 swing + 1 ultra (若 catalog 有)
+    quotas_map = {
+        3: {'long': 1, 'short': 1, 'swing': 1, 'ultra': 0},
+        4: {'long': 1, 'short': 1, 'swing': 2, 'ultra': 0},
+        5: {'long': 2, 'short': 1, 'swing': 2, 'ultra': 0},
+        6: {'long': 2, 'short': 2, 'swing': 2, 'ultra': 0},
+        7: {'long': 2, 'short': 2, 'swing': 3, 'ultra': 0},
+        8: {'long': 2, 'short': 2, 'swing': 3, 'ultra': 1},
+    }
+    quotas = dict(quotas_map.get(max_recommend, quotas_map[3]))
     selected = []
-    seen_cats = set()
-    seen_base_types = set()    # cat_xxx (不含 _u..._ts)
+    seen_base_types = set()
     def _base_type(c): return c.candidate_type or ''
 
-    # 第一轮: 1 个 long + 1 个 short + 1 个 swing
+    # 第一轮: 按配额选, 同 base_type 不重复
     for entry, mx, s, reasons in matrix_scored:
         if len(selected) >= max_recommend:
             break
-        if entry.category in seen_cats:
-            continue
+        cat = entry.category or 'swing'
+        if quotas.get(cat, 0) <= 0:
+            continue    # 该 category 配额满了
         if _base_type(entry) in seen_base_types:
             continue
         selected.append((entry, mx, s, reasons))
-        seen_cats.add(entry.category)
+        quotas[cat] -= 1
         seen_base_types.add(_base_type(entry))
-    # 第二轮 fallback: 同 category 第二个, 但不同 base type
+
+    # 第二轮 fallback: 配额不满 (某 category 池空) → 同 base_type 不重复填
     if len(selected) < max_recommend:
         for entry, mx, s, reasons in matrix_scored:
             if len(selected) >= max_recommend:

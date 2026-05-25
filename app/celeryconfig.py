@@ -155,4 +155,12 @@ beat_schedule = {
         'task': 'app.tasks.strategy_tasks.check_hl_agent_expiry',
         'schedule': crontab(hour='9', minute='0'),
     },
+
+    # === Phase 14k-20: 卡住的 AI 推荐 clone 每 5 min 重试
+    # 场景: cap 满 / concentration 当时 block 后, cap 提升或老策略停后这些 clone
+    # 永远不会重检查. 此任务 iter qualified clones 重跑 _maybe_auto_apply.
+    'retry-stuck-ai-recommendations': {
+        'task': 'app.tasks.strategy_tasks.retry_stuck_ai_recommendations',
+        'schedule': 300.0,   # 每 300s = 5 min
+    },
 }

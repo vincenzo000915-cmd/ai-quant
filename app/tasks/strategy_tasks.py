@@ -1584,6 +1584,61 @@ def internal_health_monitor():
     }
 
 
+@celery_app.task(name='app.tasks.strategy_tasks.retry_stuck_ai_recommendations')
+def retry_stuck_ai_recommendations():
+    """Phase 14k-20: 重试卡在 panel 的 AI 推荐 qualified clones.
+
+    场景: _maybe_auto_apply 推荐时被 cap/concentration 挡, 之后条件改变 (cap 提升 /
+    老策略停) → clones 永远不会重新检查, 卡死在 panel.
+    解决: 每 5 min iterate panel 上的 qualified clone 重跑 _maybe_auto_apply.
+    """
+    from app.models import StrategyCandidate
+    from app.services.config_service import get_config
+    from app.services.llm_prompts.strategy_recommend import _maybe_auto_apply
+    from app.extensions import db as _db
+
+    cfg = get_config()
+    mode = cfg.get('ai_decision_mode', 'manual')
+    if mode == 'manual':
+        return 'mode=manual, no retry'
+
+    stuck = StrategyCandidate.query.filter(
+        StrategyCandidate.source == 'catalog_clone',
+        StrategyCandidate.status == 'qualified',
+        StrategyCandidate.promoted_strategy_id.is_(None),
+    ).order_by(StrategyCandidate.created_at.desc()).limit(20).all()
+
+    if not stuck:
+        return 'no stuck clones'
+
+    promoted = 0
+    still_blocked = 0
+    for c in stuck:
+        # 默认 user_id=1 (admin); per-user 推荐继承 source_meta.user_id
+        user_id = (c.source_meta or {}).get('cloned_for_user') or 1
+        try:
+            res = _maybe_auto_apply(c, user_id, mode, cfg)
+        except Exception as e:
+            print(f'[retry_stuck] clone #{c.id} 异常: {e}')
+            continue
+        if res and res.get('applied'):
+            promoted += 1
+            # 清掉 skip reason
+            sm = dict(c.source_meta or {})
+            sm.pop('auto_skip_reason', None)
+            c.source_meta = sm
+            _db.session.commit()
+        elif res and res.get('skipped'):
+            # 更新 skip reason (可能从 cap 满变成 concentration 等)
+            sm = dict(c.source_meta or {})
+            sm['auto_skip_reason'] = res.get('reason', '')
+            c.source_meta = sm
+            _db.session.commit()
+            still_blocked += 1
+
+    return f'retry: promoted={promoted}, still_blocked={still_blocked}, total={len(stuck)}'
+
+
 @celery_app.task(name='app.tasks.strategy_tasks.check_hl_agent_expiry')
 def check_hl_agent_expiry():
     """Phase 14k-6: 每天 09:00 UTC 检查所有 HL agent 过期状态.
