@@ -89,20 +89,20 @@ export default function ProfitTargetCard() {
     } finally { setBusy(false); }
   };
 
-  // 需要 Pro 订阅
+  // 需要 Team 订阅 (14k-23 升级)
   if (needsPro) {
     return (
       <Card sx={{ mb: 2, border: '1px dashed #fbbf24aa', bgcolor: 'rgba(251,191,36,0.04)' }}>
         <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <WorkspacePremiumIcon sx={{ color: '#fbbf24' }} />
           <Box sx={{ flex: 1, minWidth: 200 }}>
-            <Typography variant="body2" fontWeight={700}>🤖 AI 量化经理 (Pro 功能)</Typography>
+            <Typography variant="body2" fontWeight={700}>🤖 AI 自动托管 (Team 顶级方案)</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-              设定盈利目标 → AI 跟踪进度 / 回撤保护 / 策略轮换 / 资金跨档自动扩张
+              设盈利目标 → AI 全权管理: 进度跟踪 / 回撤保护 / 策略轮换 / 资金跨档扩张 / 多交易所
             </Typography>
           </Box>
           <Button size="small" variant="contained" color="warning" onClick={() => navigate('/pricing')}>
-            升级 Pro
+            升级 Team
           </Button>
         </CardContent>
       </Card>

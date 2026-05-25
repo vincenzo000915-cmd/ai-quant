@@ -56,20 +56,48 @@ const PLANS = [
     icon: StarIcon,
     price: 125,
     badge: '最受欢迎',
-    description: 'AI 量化驾驶舱 — 真量化分析师 + 一键上架',
+    description: 'AI 量化驾驶舱 — 半自动智能驾驶',
     features: [
       '✓ 包含 Basic 全部功能',
-      '🚀 AI 精选策略一键上架（v8 真 research + risk_params + 一键 apply）',
-      '✨ AI 改进顾问（多 symbol + 多 TF + 跨网 research）',
-      '✨ AI 策略解释（一键看「赚什么 / 怕什么」）',
+      '🚗 <b>半自动智能驾驶</b> — 高 Sharpe ≥2.5 策略 AI 自动上线 (中低走面板等审)',
+      '🚀 AI 精选策略一键上架 (真 research + risk_params + 一键 apply)',
+      '✨ AI 改进顾问 (多 symbol + 多 TF + 跨网 research)',
+      '✨ AI 策略解释 (一键看「赚什么 / 怕什么」)',
       '✨ AI 自然语言生成策略',
       '✨ AI Regime 解读 + 周复盘报告',
-      '✨ AI 个性化建议 + 故障诊断 agent',
+      '✨ AI 个性化建议 + 故障诊断',
       '✨ AI 仓位/杠杆推荐',
-      '🔑 BYO key — 你自己付 Anthropic/OpenAI/Gemini token',
+      '🔑 BYO LLM key (Anthropic / OpenAI / Gemini)',
+      '── 单交易所绑定 (OKX OR Hyperliquid)',
+      '✗ 全自动 AI 自动托管 (需 Team)',
     ],
     cta: '选择 Pro',
     accent: true,
+  },
+  {
+    id: 'team',
+    name: 'Team',
+    icon: StarIcon,
+    price: 299,
+    badge: '🚀 顶级',
+    description: 'AI 自动托管 — AI 全权管理你的资金',
+    features: [
+      '✓ 包含 Pro 全部功能',
+      '🤖 <b>AI 自动托管</b> (全自动 AI 量化经理):',
+      '  · 设盈利目标 (例 +20% / 30 天)',
+      '  · AI 自动跟踪进度, 落后主动 review 加策略',
+      '  · 回撤保护 (DD ≥ 15% 自动 halt)',
+      '  · 单日亏损止血 (5%/日上限)',
+      '  · 资金跨档自动扩张策略 ($100 / $500 / $2000)',
+      '  · 每周 AI 复盘: 淘汰亏损策略 + 补新',
+      '  · 30 天无交易策略自动退役 (信号死循环检测)',
+      '🌐 <b>多交易所同时支持</b> — OKX + Hyperliquid 同时绑定',
+      '⚡ Per-strategy 指定交易所 (BTC 走 OKX, ETH 走 HL 这种)',
+      '🎯 每个交易所独立 AI 推荐池 (AI 工作量 × 交易所数)',
+      '📊 后台多账户汇总余额视图',
+    ],
+    cta: '选择 Team',
+    accent: false,
   },
 ];
 
@@ -82,7 +110,8 @@ const DISCOUNT_TIERS = [
 
 const FAQ = [
   { q: '为什么没有永久免费方案？', a: '量化工具维护成本高（candidate pipeline / AI 调用 / OKX WS / 服务器），免费会被无限注册滥用拖垮服务。注册后可免费浏览 UI 验证产品，但实际使用需订阅最少 1 个月。' },
-  { q: '注册免费可以看到什么？', a: '完整 UI（Dashboard / 策略 / 候选池 / Trades / Settings），demo 数据 + 系统架构展示。所有「动作」按钮禁用 — 不能新增策略 / 不能跑回测 / 不能 LIVE / 不能用 AI features。审计日志为运营内部，仅 admin 可看。订阅 Basic 立刻解锁交易动作，Pro 解锁全部 AI。' },
+  { q: '注册免费可以看到什么？', a: '完整 UI（Dashboard / 策略 / 候选池 / Trades / Settings），demo 数据 + 系统架构展示。所有「动作」按钮禁用。订阅 Basic 立刻解锁交易动作，Pro 解锁半自动智能驾驶 + 所有 AI 工具，Team 解锁 AI 自动托管 + 多交易所。' },
+  { q: 'Pro 和 Team 有什么本质区别？', a: 'Pro 是「半自动智能驾驶」— AI 推荐策略, 高 Sharpe 自动应用, 但需要你设定目标 / 管资金 / 监控回撤。Team 是「AI 自动托管」— 你设个目标 (例 +20%/30 天), AI 全权管理: 自动跟踪 / 回撤保护 / 策略轮换 / 跨档扩张策略, 还能同时跑 OKX + Hyperliquid 多账户。适合不想花时间盯盘的用户。' },
   { q: '怎么付款？', a: '点击 CTA 跳转到我们网页内的支付页面，显示对应订阅 USDT 金额 + 二维码 + 链上地址（支持 TRC20 / ERC20）。从你自己钱包扫码或复制地址转账即可。系统监听链上自动确认（通常 1-3 分钟）后立即开通订阅。全程不离开 Quant Pro 网页，无需 Telegram 或第三方 App。' },
   { q: '可以退款吗？', a: '订阅期内不退款（USDT 链上不可逆 + 防滥用）。建议注册免费浏览 + 看 demo 充分了解后再订阅。详见 退款政策。' },
   { q: '你们能保证盈利吗？', a: '不能。70% 散户量化首年亏损是行业基线。我们提供的是工具（策略池 / 回测 / 风控 / AI），盈亏由策略 + 市场 + 你的参数决定。' },
@@ -242,9 +271,10 @@ export default function Pricing() {
                 <Box sx={{ flexGrow: 1, mb: 2 }}>
                   {plan.features.map((f, i) => (
                     <Box key={i} sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.8, mb: 0.6 }}>
-                      <Typography sx={{ color: palette.text, fontSize: 12.5, lineHeight: 1.5 }}>
-                        {f}
-                      </Typography>
+                      <Typography
+                        sx={{ color: palette.text, fontSize: 12.5, lineHeight: 1.5 }}
+                        dangerouslySetInnerHTML={{ __html: f }}
+                      />
                     </Box>
                   ))}
                 </Box>

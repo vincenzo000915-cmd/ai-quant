@@ -60,6 +60,34 @@ def require_pro_tier(view):
     return wrapped
 
 
+def require_team_tier(view):
+    """Decorator: 顶级功能 gate (AI 自动托管 / 全自动 / 多交易所) — 非 Team/admin 回 402"""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not has_request_context():
+            return view(*args, **kwargs)
+        if getattr(g, 'is_system', False):
+            return view(*args, **kwargs)
+        u = getattr(g, 'current_user', None)
+        if u and u.role == 'admin':
+            return view(*args, **kwargs)
+        uid = getattr(g, 'current_user_id', None)
+        if not uid:
+            return jsonify({'error': '未登入'}), 401
+        try:
+            from app.services.subscription_service import has_tier
+            if not has_tier(uid, 'team'):
+                return jsonify({
+                    'error': '此功能需 Team 订阅 (顶级方案)',
+                    'upgrade_hint': '/pricing 查看团队版',
+                    'tier_required': 'team',
+                }), 402
+        except Exception:
+            return jsonify({'error': '订阅校验失败'}), 500
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def require_tier(min_tier='basic'):
     """Phase 12.24: 通用 tier gate decorator
 

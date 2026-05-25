@@ -6,7 +6,7 @@ from app.services.cache import cached_response
 from app.services.user_scope import (
     apply_user_filter, assign_user_id, current_user_id, get_owned,
     has_ai_access, is_admin_actor, require_actor, require_admin, require_pro_tier,
-    require_tier, scoped_query,
+    require_team_tier, require_tier, scoped_query,
 )
 from app.tasks.strategy_tasks import run_strategy_signals
 
@@ -1496,19 +1496,33 @@ def update_system_config():
         # 通過，附帶記錄上鎖時間
         from app.services.telegram_service import send as _tg
         _tg('🟢 <b>TRADING MODE → LIVE</b>\nPre-flight 全過。實盤已啟動。\n下單會直接走 OKX。', force=True)
-    # Phase 14c: ai_decision_mode tier guard
+    # Phase 14c/14k-23: ai_decision_mode 分级 tier 守
+    # manual: 所有人
+    # semi_auto: Pro+
+    # full_auto: Team+ (顶级订阅, AI 自动托管基础)
     mode_changed_to_auto = False
     if 'ai_decision_mode' in patch:
         mode = patch['ai_decision_mode']
         if mode not in ('manual', 'semi_auto', 'full_auto'):
             return jsonify({'error': f'ai_decision_mode 必须是 manual / semi_auto / full_auto'}), 400
-        # Basic tier 只能 manual; Pro/admin 可以选所有
-        if mode != 'manual' and not has_ai_access():
-            return jsonify({
-                'error': f'mode {mode} 需 Pro 订阅 (Basic 仅 manual)',
-                'tier_required': 'pro',
-                'upgrade_hint': '/pricing',
-            }), 402
+        if mode == 'semi_auto':
+            # Pro+
+            if not has_ai_access():
+                return jsonify({
+                    'error': '半自动模式需 Pro 订阅',
+                    'tier_required': 'pro',
+                    'upgrade_hint': '/pricing',
+                }), 402
+        elif mode == 'full_auto':
+            # Team+ (14k-23 新分级)
+            from app.services.subscription_service import has_tier
+            uid = current_user_id() or 1
+            if not has_tier(uid, 'team'):
+                return jsonify({
+                    'error': '全自动模式 (AI 自动托管基础) 需 Team 订阅',
+                    'tier_required': 'team',
+                    'upgrade_hint': '/pricing',
+                }), 402
         # Phase 14c.1: 切到 semi_auto/full_auto 时立即触发 recommend (不等 cron)
         from app.services.config_service import get
         prev_mode = get('ai_decision_mode', 'manual')
@@ -2398,7 +2412,7 @@ def me_hl_delete():
 
 @api_bp.route('/me/profit-target', methods=['GET'])
 @require_actor
-@require_pro_tier
+@require_team_tier
 def me_profit_target_get():
     """当前 active profit target (None 若未设)"""
     from app.models import ProfitTarget
@@ -2411,7 +2425,7 @@ def me_profit_target_get():
 
 @api_bp.route('/me/profit-target', methods=['POST'])
 @require_actor
-@require_pro_tier
+@require_team_tier
 def me_profit_target_set():
     """设置/重置 profit target.
     Body: {start_capital_usdt?, target_pct=20, days=30, max_dd_pct=15, daily_loss_halt_pct=5}
@@ -2483,7 +2497,7 @@ def me_profit_target_set():
 
 @api_bp.route('/me/profit-target/<int:tid>', methods=['DELETE'])
 @require_actor
-@require_pro_tier
+@require_team_tier
 def me_profit_target_cancel(tid):
     """取消当前 target (status=paused, AI 暂停托管)"""
     from app.models import ProfitTarget
@@ -2500,7 +2514,7 @@ def me_profit_target_cancel(tid):
 
 @api_bp.route('/me/profit-target/<int:tid>/resume', methods=['POST'])
 @require_actor
-@require_pro_tier
+@require_team_tier
 def me_profit_target_resume(tid):
     """恢复 paused 目标 → active (AI 重新接管)"""
     from app.models import ProfitTarget
@@ -2524,7 +2538,7 @@ def me_profit_target_resume(tid):
 
 @api_bp.route('/me/profit-target/paused', methods=['GET'])
 @require_actor
-@require_pro_tier
+@require_team_tier
 def me_profit_target_paused_list():
     """列出可恢复的 paused/expired 目标 (供 UI '恢复' 选项)"""
     from app.models import ProfitTarget

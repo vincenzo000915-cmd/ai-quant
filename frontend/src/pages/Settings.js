@@ -346,7 +346,9 @@ function AiDecisionModeCard({ cfg, onChange, original, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
   const user = getUser();
-  const isPro = (user?.subscription_tier === 'pro' || user?.subscription_tier === 'team' || user?.role === 'admin');
+  const tier = (user?.subscription_tier || '').toLowerCase();
+  const isPro = (tier === 'pro' || tier === 'team' || user?.role === 'admin');
+  const isTeam = (tier === 'team' || user?.role === 'admin');
   const currentMode = cfg.ai_decision_mode || 'manual';
   const dirty = currentMode !== original;
 
@@ -354,17 +356,20 @@ function AiDecisionModeCard({ cfg, onChange, original, onSaved }) {
     {
       value: 'manual',
       label: '手动审批',
-      desc: 'AI 推荐放面板, 你点击应用每一个 — Basic 起可用'
+      desc: 'AI 推荐放面板, 你点击应用每一个 — Basic 起可用',
+      tierKey: 'basic',
     },
     {
       value: 'semi_auto',
       label: '半自动 · 智能驾驶',
-      desc: '高 Sharpe (≥2.5) 自动上线, 中低 Sharpe 走面板等审 — Pro 解锁'
+      desc: '高 Sharpe (≥2.5) 自动上线, 中低 Sharpe 走面板等审 — Pro 解锁',
+      tierKey: 'pro',
     },
     {
       value: 'full_auto',
-      label: '全自动 · AI 智能驾驶',
-      desc: '所有合格 catalog 策略 AI 自动应用 (无目标驱动). 想加目标 + DD 保护 + 策略轮换? 见 Dashboard 顶部「启用 AI 自动托管」— Pro 解锁'
+      label: '全自动 · AI 自动托管',
+      desc: 'AI 全权管理: 自动应用合格策略 + 目标驱动 + 回撤保护 + 多交易所支持 — Team 解锁',
+      tierKey: 'team',
     },
   ];
 
@@ -412,7 +417,11 @@ function AiDecisionModeCard({ cfg, onChange, original, onSaved }) {
 
         <RadioGroup value={currentMode} onChange={(e) => onChange(e.target.value)}>
           {MODES.map(m => {
-            const locked = !isPro && m.value !== 'manual';
+            // 14k-23: tier-based locking
+            // manual = basic+, semi_auto = pro+, full_auto = team+
+            let locked = false;
+            if (m.tierKey === 'pro' && !isPro) locked = true;
+            if (m.tierKey === 'team' && !isTeam) locked = true;
             return (
               <Box key={m.value} sx={{
                 p: 1.5, mb: 1, borderRadius: 1,
