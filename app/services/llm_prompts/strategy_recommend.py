@@ -38,12 +38,34 @@ def _user_running_summary(user_id: int) -> dict:
     }
 
 
-def _get_user_capital() -> float:
-    """拉 admin OKX USDT (其他 user 拉自己 OKX 帐户)"""
+def _get_user_capital(user_id: int = 1) -> float:
+    """Phase 14k-12: 按 user 主交易所拉 USDT 余额.
+    primary='okx' → OKX env (admin) 或 user OKX creds
+    primary='hyperliquid' → HL agent 拉 (spot+perp unified)
+    """
     try:
-        from app.services.exchange_service import fetch_balance, _env_creds
-        bal = fetch_balance(creds=_env_creds())
-        return float(bal.get('USDT', {}).get('total', 0)) if isinstance(bal.get('USDT'), dict) else float(bal.get('USDT', 0))
+        from app.services.exchange_binding import primary_exchange
+        primary = primary_exchange(user_id)
+    except Exception:
+        primary = 'okx'
+
+    try:
+        if primary == 'hyperliquid':
+            from app.services.hyperliquid_creds import get_decrypted_for_user as _hc
+            from app.services.hyperliquid_service import fetch_balance as _hb
+            creds = _hc(user_id)
+            if creds:
+                bal = _hb(creds=creds)
+                return float(bal.get('USDT', {}).get('total', 0))
+        # 默认 OKX
+        from app.services.exchange_service import fetch_balance, _env_creds, _resolve_creds
+        if user_id == 1:
+            bal = fetch_balance(creds=_env_creds())
+        else:
+            creds = _resolve_creds(user_id)
+            bal = fetch_balance(creds=creds) if creds else {}
+        usdt = bal.get('USDT', {})
+        return float(usdt.get('total', 0)) if isinstance(usdt, dict) else float(usdt or 0)
     except Exception:
         return 0.0
 
@@ -430,7 +452,7 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
     user = _user_running_summary(user_id)
     regimes = _detect_user_regimes(user['symbols'])
     # Phase 14e: capital feasibility check
-    user_capital = _get_user_capital()
+    user_capital = _get_user_capital(user_id)
     prices = _get_ticker_price_cache()
     trade_size = float(cfg.get('trade_size_usdt') or 10)
 
@@ -720,7 +742,7 @@ def explain_recommendation(user_id: int, clone_candidate_id: int) -> dict:
 
     user = _user_running_summary(user_id)
     regimes = _detect_user_regimes([sym]) if sym else {}
-    user_capital = _get_user_capital()
+    user_capital = _get_user_capital(user_id)
     score = src_meta.get('score', 0)
     reasons = src_meta.get('reasons') or []
 

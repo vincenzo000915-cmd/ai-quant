@@ -507,7 +507,11 @@ export default function Dashboard() {
         <Grid item xs={6} sm={4} md={2}>
           <KpiCell size="compact" label="账户余额"
             value={account?.balance != null ? `$${account.balance.toFixed(2)}` : '—'}
-            sub={account ? `$${(account.free_margin || 0).toFixed(2)} 可用` : ''}
+            sub={
+              (account?.accounts && account.accounts.length > 1)
+                ? account.accounts.map(a => `${a.label}:$${(a.equity || 0).toFixed(0)}`).join(' · ')
+                : (account ? `$${(account.free_margin || 0).toFixed(2)} 可用` : '')
+            }
             accent="accent" loading={!account} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>

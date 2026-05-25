@@ -29,14 +29,25 @@ def _inst_id_to_symbol(inst_id: str) -> str:
 
 
 def reconcile() -> dict:
-    """跑一次對賬。回傳統計 + 觸發的動作清單"""
+    """跑一次對賬。回傳統計 + 觸發的動作清單.
+
+    Phase 14k-12: 仅 OKX 策略对账 — HL 策略 PnL/positions 走 HL 自有逻辑 (后续单独加).
+    """
     actions = []
     try:
         okx_positions = fetch_okx_positions()
     except Exception as e:
         return {'ok': False, 'error': f'fetch_okx_positions: {type(e).__name__}: {e}', 'actions': []}
 
-    local_open = Position.query.filter_by(status='open').all()
+    # 仅对比 OKX 策略 — HL positions 不在 OKX 上, 排除避免误判 orphan
+    from app.models import Strategy
+    okx_strat_ids = {s.id for s in Strategy.query.filter(
+        (Strategy.exchange == 'okx') | (Strategy.exchange.is_(None))
+    ).all()}
+    local_open = Position.query.filter(
+        Position.status == 'open',
+        Position.strategy_id.in_(okx_strat_ids) if okx_strat_ids else False,
+    ).all() if okx_strat_ids else []
 
     # 用 (symbol, side) 當 key 對齊
     okx_by_key = {}

@@ -427,8 +427,9 @@ def _run_signals(strategy_id=None, category_filter=None):
 
                 order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
 
-                # Phase 12.10: live 平倉用 OKX 真實 balChg 覆寫 PnL（含手續費）
-                if mode == 'live' and order and not order.get('simulated'):
+                # Phase 12.10 + 14k-12: live 平倉用 OKX 真實 balChg 覆寫 PnL (含手續費)
+                # HL 策略 skip — HL fill 信息在 order_raw 里, PnL 系统自算
+                if mode == 'live' and order and not order.get('simulated') and (s.exchange or 'okx') == 'okx':
                     try:
                         from app.services.exchange_service import fetch_okx_order_real_pnl, _okx_symbol, _resolve_creds
                         ord_id = order.get('id') if isinstance(order, dict) else None
@@ -557,8 +558,9 @@ def check_stop_loss():
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
-                # Phase 12.10: live 用 OKX 真實 balChg 覆寫 PnL（含手續費）
-                if mode == 'live' and order and not order.get('simulated'):
+                # Phase 12.10 + 14k-12: live 用 OKX 真實 balChg 覆寫 PnL — 仅 OKX 路径
+                _strat_exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
+                if mode == 'live' and order and not order.get('simulated') and _strat_exch == 'okx':
                     try:
                         from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
                         inst = pos.symbol.replace('/', '-') + '-SWAP'
@@ -596,7 +598,8 @@ def check_stop_loss():
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
-                if mode == 'live' and order and not order.get('simulated'):
+                # Phase 14k-12: 仅 OKX 走 balChg 覆写
+                if mode == 'live' and order and not order.get('simulated') and _exch == 'okx':
                     try:
                         from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
                         inst = pos.symbol.replace('/', '-') + '-SWAP'
