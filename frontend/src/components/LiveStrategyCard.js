@@ -87,7 +87,7 @@ export default function LiveStrategyCard({ strategyId, data: dataProp }) {
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems="stretch">
 
         {/* ─── 1. 30 天 PnL sparkline ─── */}
-        <Box sx={{ flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.5 }}>
             <Typography variant="caption" color="text.secondary">30 天累计 PnL · {trades30d} 笔</Typography>
             <Typography variant="caption" sx={{ color: sparkColor, fontWeight: 700, fontSize: 12 }}>
@@ -129,7 +129,7 @@ export default function LiveStrategyCard({ strategyId, data: dataProp }) {
         </Box>
 
         {/* ─── 2. 持仓详情 / SL TP 距离 ─── */}
-        <Box sx={{ flex: 1.2, minWidth: 200 }}>
+        <Box sx={{ flex: 1.2, minWidth: 0 }}>
           {pos ? (
             <Box>
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>

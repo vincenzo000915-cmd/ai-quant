@@ -1148,7 +1148,8 @@ function StrategyLiveStateGrid({ C }) {
 
       <Box sx={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+        // 14k-21: 手机 < 480px 强制 1 列, 防止 280 minmax 撑出滚动条
+        gridTemplateColumns: { xs: '1fr', sm: 'repeat(auto-fill, minmax(280px, 1fr))' },
         gap: 1.5,
       }}>
         {states.map((s) => (

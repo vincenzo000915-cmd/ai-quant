@@ -179,10 +179,11 @@ export default function HyperliquidBindingCard({ onSaved }) {
               </Box>
             )}
             <Stack spacing={0.5} sx={{ mb: 2 }}>
-              <Typography variant="caption">
+              {/* 14k-21: 手机上 0x... 42 字符容易撑出, 加 wordBreak + overflowWrap */}
+              <Typography variant="caption" sx={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
                 <strong>Main wallet:</strong> <code>{state.main_address}</code>
               </Typography>
-              <Typography variant="caption">
+              <Typography variant="caption" sx={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
                 <strong>Agent wallet:</strong> <code>{state.agent_address}</code>
               </Typography>
               {state.last_error && (

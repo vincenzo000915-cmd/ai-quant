@@ -332,7 +332,8 @@ export default function Layout() {
           <Outlet />
         </Box>
 
-        {/* Mobile Bottom Navigation */}
+        {/* Mobile Bottom Navigation — Phase 14k-21: 限定 5 个主导航
+            admin 后台留给抽屉 (BottomNav 项超过 5 会挤爆) */}
         {isMobile && (
           <BottomNavigation
             value={location.pathname}
@@ -343,13 +344,19 @@ export default function Layout() {
               borderTop: `1px solid ${palette.border}`,
               '& .MuiBottomNavigationAction-root': {
                 color: palette.textMuted,
+                minWidth: 0,
+                padding: '6px 4px',
                 '&.Mui-selected': {
                   color: palette.accent,
                 },
               },
+              '& .MuiBottomNavigationAction-label': {
+                fontSize: '0.62rem',
+                marginTop: '2px',
+              },
             }}
           >
-            {getNavItems(user).map(({ label, path }) => (
+            {NAV_MAIN.slice(0, 5).map(({ label, path }) => (
               <BottomNavigationAction
                 key={path}
                 label={<Typography variant="caption" sx={{ fontSize: 10 }}>{label}</Typography>}
