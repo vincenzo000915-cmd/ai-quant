@@ -496,6 +496,8 @@ class SystemConfig(db.Model):
     backtest_fee_pct = db.Column(db.Float, default=0.05)        # OKX SWAP taker = 0.05%/side
     # Phase 12.39: 候選回測默認 symbol — 改成跟 LIVE 一致避免數據外推（之前硬編碼 BTC/USDT 是 bug）
     default_backtest_symbol = db.Column(db.String(20), default='AVAX/USDT')
+    # Phase 14k-14: admin 可临时禁用 OKX 路径 (专注 HL 测试)
+    disable_okx_for_admin = db.Column(db.Boolean, default=False)
 
     # Phase 10.8: 智能托管 — auto-apply advisor recommendations
     auto_apply_enabled = db.Column(db.Boolean, default=False)
@@ -541,6 +543,7 @@ class SystemConfig(db.Model):
             'backtest_slippage_pct': self.backtest_slippage_pct,
             'backtest_fee_pct': self.backtest_fee_pct,
             'default_backtest_symbol': self.default_backtest_symbol or 'AVAX/USDT',
+            'disable_okx_for_admin': bool(self.disable_okx_for_admin),
             'auto_apply_enabled': bool(self.auto_apply_enabled),
             'auto_apply_actions': list(self.auto_apply_actions or []),
             'auto_apply_max_per_day': self.auto_apply_max_per_day or 5,

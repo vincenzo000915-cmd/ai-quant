@@ -20,17 +20,28 @@ def is_team_tier(user_id: int) -> bool:
 def bound_exchanges(user_id: int) -> list[str]:
     """返回 user 已绑且 active 的交易所 list (顺序: ['okx', 'hyperliquid']).
     admin (user_id=1) 默认 OKX 已通过 .env 绑定, 始终包含 'okx'.
+    Phase 14k-14: admin 可临时禁用 OKX (config disable_okx_for_admin) 专注 HL 测试.
     """
     out = []
+    # 14k-14: admin 临时禁 OKX 的旁路
+    admin_okx_disabled = False
     if user_id == 1:
+        try:
+            from app.services.config_service import get_config
+            admin_okx_disabled = bool(get_config().get('disable_okx_for_admin'))
+        except Exception:
+            pass
+
+    if user_id == 1 and not admin_okx_disabled:
         # admin OKX 走 .env (EXCHANGE_API_KEY 等)
         import os
         if os.environ.get('EXCHANGE_API_KEY'):
             out.append('okx')
-    else:
+    elif user_id != 1:
         okx = okx_get(user_id)
         if okx and okx.is_active:
             out.append('okx')
+
     hl = hl_get(user_id)
     if hl and hl.is_active:
         out.append('hyperliquid')
