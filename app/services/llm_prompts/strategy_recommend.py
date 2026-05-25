@@ -38,16 +38,21 @@ def _user_running_summary(user_id: int) -> dict:
     }
 
 
-def _get_user_capital(user_id: int = 1) -> float:
+def _get_user_capital(user_id: int = 1, exchange: str | None = None) -> float:
     """Phase 14k-12: 按 user 主交易所拉 USDT 余额.
     primary='okx' → OKX env (admin) 或 user OKX creds
     primary='hyperliquid' → HL agent 拉 (spot+perp unified)
+
+    Phase 14k-13: exchange 显式指定 → 跳过 primary 用指定的 (team 多绑分别算资金)
     """
-    try:
-        from app.services.exchange_binding import primary_exchange
-        primary = primary_exchange(user_id)
-    except Exception:
-        primary = 'okx'
+    if exchange:
+        primary = exchange.lower()
+    else:
+        try:
+            from app.services.exchange_binding import primary_exchange
+            primary = primary_exchange(user_id)
+        except Exception:
+            primary = 'okx'
 
     try:
         if primary == 'hyperliquid':
@@ -304,9 +309,11 @@ def _adapt_risk_to_capital(rec_risk: dict, symbol: str, capital: float, prices: 
 
 def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: str,
                                   capital: float = 0, prices: dict | None = None,
-                                  trade_size_default: float = 10) -> StrategyCandidate:
+                                  trade_size_default: float = 10,
+                                  target_exchange: str = 'okx') -> StrategyCandidate:
     """克隆 catalog → 新 candidate (avoid 模板被消费)
     Phase 14e: 同时自适应 risk_params 到 user 实际资金
+    Phase 14k-13: target_exchange 记 source_meta, 让 promote_candidate 知道分配哪个交易所
     """
     cm = entry.catalog_meta or {}
     rec_risk = cm.get('recommended_risk') or {}
@@ -325,6 +332,7 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
             'cloned_from_catalog_id': entry.id,
             'cloned_at': timestamp,
             'description': cm.get('description'),
+            'target_exchange': target_exchange,    # Phase 14k-13
         },
         raw_code=f'# Cloned from catalog id={entry.id}\n{entry.raw_code or ""}',
         raw_lang=entry.raw_lang,
@@ -444,15 +452,54 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
 
 
 def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
-    """主入口 — 从 catalog 推荐 top N 适配 user 的策略"""
+    """Phase 14k-13: 主入口 — 按 user 绑定的交易所分发推荐.
+
+    - 普通 user (单绑) → 调一次 _recommend_for_exchange 返单结果
+    - team user (多绑) → 对每个 bound exchange 各调一次, 合并结果
+      (team 工作量翻倍, 不是给 user 多个选择, 而是 AI 帮多账户都跑)
+    """
+    from app.services.exchange_binding import bound_exchanges, is_team_tier
+
+    bound = bound_exchanges(user_id)
+    if not bound:
+        return {
+            'ok': True, 'recommendations': [],
+            'message': '未绑定任何交易所, 请先去 Settings 绑 OKX 或 Hyperliquid',
+            'bound_exchanges': [],
+        }
+
+    # team: 每个 exchange 各跑一次; 普通 user: 单个 exchange
+    if is_team_tier(user_id) and len(bound) > 1:
+        all_recs = []
+        per_exchange = {}
+        for ex in bound:
+            sub = _recommend_for_exchange(user_id, ex, max_recommend=max_recommend)
+            per_exchange[ex] = sub
+            all_recs.extend(sub.get('recommendations', []))
+        return {
+            'ok': True,
+            'mode': sub.get('mode') if all_recs else 'manual',
+            'recommendations': all_recs,
+            'by_exchange': per_exchange,
+            'bound_exchanges': bound,
+            'total_recommendations': len(all_recs),
+        }
+
+    # 普通 user 或 team 只绑 1 个
+    return _recommend_for_exchange(user_id, bound[0], max_recommend=max_recommend)
+
+
+def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend: int = 3) -> dict:
+    """针对单一交易所跑 catalog 推荐.
+    Phase 14k-13: 从 recommend_strategies 拆出, 内部所有 capital/feasibility 都用 target_exchange.
+    """
     from app.services.config_service import get_config
     cfg = get_config()
     mode = cfg.get('ai_decision_mode', 'manual')
 
     user = _user_running_summary(user_id)
     regimes = _detect_user_regimes(user['symbols'])
-    # Phase 14e: capital feasibility check
-    user_capital = _get_user_capital(user_id)
+    user_capital = _get_user_capital(user_id, exchange=target_exchange)
     prices = _get_ticker_price_cache()
     trade_size = float(cfg.get('trade_size_usdt') or 10)
 
@@ -460,12 +507,7 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
     if not catalog:
         return {'ok': False, 'error': 'catalog 为空，先跑 seed_catalog.py'}
 
-    # Phase 14k-10: 按 user 主交易所跑 feasibility (HL min size 比 OKX 低很多)
-    try:
-        from app.services.exchange_binding import primary_exchange
-        user_exchange = primary_exchange(user_id)
-    except Exception:
-        user_exchange = 'okx'
+    user_exchange = target_exchange    # 14k-13: 强制按 target 算 feasibility
 
     # Phase 14e: 先 filter 不 feasible 的
     feasible_catalog = []
@@ -535,16 +577,18 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
         remaining = [(e, s, r) for e, s, r in scored if (e, s, r) not in top]
         top.extend(remaining[:max_recommend - len(top)])
 
-    # Clone top N + maybe auto-apply
+    # Clone top N + maybe auto-apply (14k-13: target_exchange 透传 → promote 走对应交易所)
     recommendations = []
     for entry, score, reasons in top:
         sym = _pick_symbol_for_recommendation(entry, user['symbols'], prices, user_capital, trade_size)
-        clone = _clone_catalog_to_candidate(entry, user_id, sym, user_capital, prices, trade_size)
+        clone = _clone_catalog_to_candidate(entry, user_id, sym, user_capital, prices, trade_size,
+                                              target_exchange=target_exchange)
         adapted_risk = (clone.source_meta or {}).get('risk_params') or {}
         auto = _maybe_auto_apply(clone, user_id, mode, cfg)
         recommendations.append({
             'catalog_id': entry.id,
             'catalog_type': entry.candidate_type,
+            'target_exchange': target_exchange,
             'cloned_id': clone.id,
             'cloned_type': clone.candidate_type,
             'symbol': sym,

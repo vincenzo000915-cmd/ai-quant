@@ -322,11 +322,14 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
     except Exception as e:
         return {'ok': False, 'error': f'load_signal_fn before promote: {type(e).__name__}: {e}'}
 
-    # Phase 14k-5: 跟 user 主交易所走 (普通 user 只绑一个 → 必走那个)
+    # Phase 14k-5/13: exchange 选择优先级:
+    # 1) candidate.source_meta.target_exchange (AI 推荐时已指定 — team 多绑场景)
+    # 2) primary_exchange(owner_uid) (普通 user 兜底)
     try:
         from app.services.exchange_binding import primary_exchange
         _owner_uid = owner_user_id if owner_user_id is not None else 1
-        _exchange = primary_exchange(_owner_uid)
+        _cand_meta = c.source_meta or {}
+        _exchange = _cand_meta.get('target_exchange') or primary_exchange(_owner_uid)
     except Exception:
         _exchange = 'okx'
 
