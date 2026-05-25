@@ -75,11 +75,21 @@ def _get_user_capital(user_id: int = 1, exchange: str | None = None) -> float:
         return 0.0
 
 
-def _get_ticker_price_cache() -> dict[str, float]:
-    """批量拉 4 主流币 ticker price (失败 silent return empty)"""
+def _get_ticker_price_cache(extra_symbols: list[str] | None = None) -> dict[str, float]:
+    """批量拉主流币 ticker price (失败 silent return empty).
+    Phase 14k-19: HL universe 14 主流 perps 全拉 (避免 matrix 选 SUI/ARB 等 symbol 时 price=0)
+    """
     from app.services.exchange_service import get_ticker
+    syms = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'AVAX/USDT',
+            'ARB/USDT', 'OP/USDT', 'MATIC/USDT', 'DOGE/USDT',
+            'LINK/USDT', 'APT/USDT', 'INJ/USDT', 'SUI/USDT',
+            'TIA/USDT', 'BNB/USDT']
+    if extra_symbols:
+        for s in extra_symbols:
+            if s not in syms:
+                syms.append(s)
     prices = {}
-    for sym in ('BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'AVAX/USDT'):
+    for sym in syms:
         try:
             t = get_ticker(sym)
             prices[sym] = float(t.get('price', 0))
@@ -111,16 +121,18 @@ def _hl_min_notional(symbol: str, price: float) -> float:
 
 
 def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: dict,
-                         trade_size_usdt: float = 10, exchange: str = 'okx') -> tuple[bool, str, str | None]:
-    """Phase 14e+14k-10: 检查 user 资金能否下单该 catalog 策略.
+                         trade_size_usdt: float = 10, exchange: str = 'okx',
+                         override_symbols: list[str] | None = None) -> tuple[bool, str, str | None]:
+    """Phase 14e+14k-10+14k-19: 检查 user 资金能否下单该 catalog 策略.
     exchange='okx' → 用 ccxt OKX contract size (BTC 0.01 = ~$770).
     exchange='hyperliquid' → 用 HL szDecimals 算 min sz (BTC 0.00001 = ~$0.7).
+    override_symbols: 14k-19 — 指定具体 symbol 列表 (matrix path 用), 跳过 fit_symbols 限制
 
     返回 (feasible, reason, best_symbol)
     """
     from app.services.symbols import get_contract_size
     cm = entry.catalog_meta or {}
-    fit_symbols = cm.get('fit_symbols') or []
+    fit_symbols = override_symbols or cm.get('fit_symbols') or []
     rec_risk = cm.get('recommended_risk') or {}
     lev = float(rec_risk.get('leverage') or 3)
     exchange = (exchange or 'okx').lower()
@@ -620,10 +632,11 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         entry = catalog_by_id.get(cat_id)
         if entry is None:
             continue
-        # 14k-16: capital feasibility 用 matrix 选的 symbol 重算 (不同 symbol min size 差很大)
+        # 14k-19: 用 matrix 实际 symbol check, 不再受 catalog.fit_symbols 限制
         ok, _, _ = _is_capital_feasible(entry, user_capital,
                                           {mx.symbol: prices.get(mx.symbol, 0)},
-                                          trade_size, exchange=target_exchange)
+                                          trade_size, exchange=target_exchange,
+                                          override_symbols=[mx.symbol])
         if not ok:
             continue
         s, reasons = _score_catalog_entry(entry, user, regimes)
@@ -634,19 +647,37 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
 
     matrix_scored.sort(key=lambda x: -x[2])
 
-    # 多样化: 不同 category, top max_recommend
+    # Phase 14k-19: 强制 category 平衡 + 子类型多样化
+    # - 优先每 category 选 1 个 (long/short/swing)
+    # - 同时强制不同 strategy type (避免 2 个 ttm_squeeze 都进)
+    # - fallback 才允许同 category 第二个
     selected = []
     seen_cats = set()
+    seen_base_types = set()    # cat_xxx (不含 _u..._ts)
+    def _base_type(c): return c.candidate_type or ''
+
+    # 第一轮: 1 个 long + 1 个 short + 1 个 swing
     for entry, mx, s, reasons in matrix_scored:
         if len(selected) >= max_recommend:
             break
         if entry.category in seen_cats:
             continue
+        if _base_type(entry) in seen_base_types:
+            continue
         selected.append((entry, mx, s, reasons))
         seen_cats.add(entry.category)
+        seen_base_types.add(_base_type(entry))
+    # 第二轮 fallback: 同 category 第二个, 但不同 base type
     if len(selected) < max_recommend:
-        remaining = [(e, m, s, r) for e, m, s, r in matrix_scored if (e, m, s, r) not in selected]
-        selected.extend(remaining[:max_recommend - len(selected)])
+        for entry, mx, s, reasons in matrix_scored:
+            if len(selected) >= max_recommend:
+                break
+            if (entry, mx, s, reasons) in selected:
+                continue
+            if _base_type(entry) in seen_base_types:
+                continue
+            selected.append((entry, mx, s, reasons))
+            seen_base_types.add(_base_type(entry))
 
     # Clone + auto-apply. clone 继承 matrix backtest_result_id
     recommendations = []
