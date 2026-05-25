@@ -577,37 +577,78 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         remaining = [(e, s, r) for e, s, r in scored if (e, s, r) not in top]
         top.extend(remaining[:max_recommend - len(top)])
 
-    # 14k-15: backtest-first 流程
-    # 1. 创建 clone (status='backtesting')
-    # 2. 立即跑 walkforward, 用真实数据
-    # 3. pass 门槛 → 'qualified', 进 panel; fail → 'rejected', 不显示
-    # 4. qualified 才走 _maybe_auto_apply (full_auto 模式直接上架)
-    from app.services.candidate_pipeline import backtest_candidate
+    # 14k-16: 从 verified matrix 池选 — 不再每次重测
+    # matrix 已离线 batch 跑过 catalog × symbol × exchange, 只取 is_verified=true 的组合
+    from app.services.catalog_matrix import get_verified_for_exchange
+    verified_pool = get_verified_for_exchange(target_exchange)
+    if not verified_pool:
+        return {
+            'ok': True, 'mode': mode, 'recommendations': [],
+            'user_state': user, 'user_capital_usdt': user_capital,
+            'message': f'{target_exchange} verified 池为空. 请先跑 catalog batch-backtest (POST /api/admin/catalog-batch-backtest)',
+        }
+
+    # 把 catalog_id → (catalog_entry, best_matrix_row) 对齐. 每个 catalog 取 oos_sharpe 最高的 symbol.
+    catalog_by_id = {c.id: c for c in catalog}
+    best_per_catalog = {}
+    for m in verified_pool:
+        cur = best_per_catalog.get(m.catalog_id)
+        if cur is None or (m.oos_sharpe or 0) > (cur.oos_sharpe or 0):
+            best_per_catalog[m.catalog_id] = m
+
+    # 重新 score: 用 matrix 里的真 sharpe + 原 _score_catalog_entry 加权
+    matrix_scored = []
+    for cat_id, mx in best_per_catalog.items():
+        entry = catalog_by_id.get(cat_id)
+        if entry is None:
+            continue
+        # 14k-16: capital feasibility 用 matrix 选的 symbol 重算 (不同 symbol min size 差很大)
+        ok, _, _ = _is_capital_feasible(entry, user_capital,
+                                          {mx.symbol: prices.get(mx.symbol, 0)},
+                                          trade_size, exchange=target_exchange)
+        if not ok:
+            continue
+        s, reasons = _score_catalog_entry(entry, user, regimes)
+        # bonus: matrix oos_sharpe 越高加分越多
+        s += int(round((mx.oos_sharpe or 0) * 15))
+        reasons.insert(0, f'✓ 真实回测: OOS Sharpe {mx.oos_sharpe:.2f} on {mx.symbol} (IS {mx.is_sharpe:.2f}, decay {mx.decay_pct:.0f}%, {mx.full_total_trades} trades)')
+        matrix_scored.append((entry, mx, s, reasons))
+
+    matrix_scored.sort(key=lambda x: -x[2])
+
+    # 多样化: 不同 category, top max_recommend
+    selected = []
+    seen_cats = set()
+    for entry, mx, s, reasons in matrix_scored:
+        if len(selected) >= max_recommend:
+            break
+        if entry.category in seen_cats:
+            continue
+        selected.append((entry, mx, s, reasons))
+        seen_cats.add(entry.category)
+    if len(selected) < max_recommend:
+        remaining = [(e, m, s, r) for e, m, s, r in matrix_scored if (e, m, s, r) not in selected]
+        selected.extend(remaining[:max_recommend - len(selected)])
+
+    # Clone + auto-apply. clone 继承 matrix backtest_result_id
     recommendations = []
-    for entry, score, reasons in top:
-        sym = _pick_symbol_for_recommendation(entry, user['symbols'], prices, user_capital, trade_size)
+    for entry, mx, score, reasons in selected:
+        sym = mx.symbol     # 用 matrix 的 best symbol
         clone = _clone_catalog_to_candidate(entry, user_id, sym, user_capital, prices, trade_size,
                                               target_exchange=target_exchange)
-        # 立即跑真实回测 — 取代 catalog seed 的 verified_sharpe
-        bt_summary = {}
-        try:
-            bt_res = backtest_candidate(clone.id, symbol=sym, candle_limit=2000)
-            bt_summary = bt_res
-            # candidate.status 已被 backtest_candidate 改 (qualified / rejected)
-            db.session.refresh(clone)
-        except Exception as e:
-            print(f'[recommend] backtest fail for clone {clone.id}: {e}')
-            clone.status = 'error'
-            clone.error_log = f'auto-backtest fail: {type(e).__name__}: {e}'
-            db.session.commit()
+        # 继承 matrix backtest_result_id, panel 直接显真 metrics
+        if mx.backtest_result_id:
+            clone.backtest_result_id = mx.backtest_result_id
+        # 验证过了, 直接 qualified
+        clone.status = 'qualified'
+        sm = dict(clone.source_meta or {})
+        sm['matrix_id'] = mx.id
+        sm['verified_oos_sharpe'] = mx.oos_sharpe
+        clone.source_meta = sm
+        db.session.commit()
 
         adapted_risk = (clone.source_meta or {}).get('risk_params') or {}
-        # 只对 qualified 走 auto-apply; rejected/error 直接 skip
-        if clone.status == 'qualified':
-            auto = _maybe_auto_apply(clone, user_id, mode, cfg)
-        else:
-            auto = {'skipped': True, 'reason': f'backtest 未通过 (status={clone.status})'}
-        # 14k-15: 把 skip 原因写进 source_meta 让 panel 显示
+        auto = _maybe_auto_apply(clone, user_id, mode, cfg)
         if auto and auto.get('skipped'):
             sm = dict(clone.source_meta or {})
             sm['auto_skip_reason'] = auto.get('reason', '')
