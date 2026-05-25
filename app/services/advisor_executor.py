@@ -68,7 +68,9 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             return False, 'meta.best_params 缺失或無效'
         strategy.params = new_params
         db.session.commit()
-        return True, f'已套用 params={new_params}'
+        # Phase 14k-11: 友好措辞 — 不 dump dict, 列关键参数
+        kv = ', '.join(f'{k}={v}' for k, v in list(new_params.items())[:4])
+        return True, f'优化参数: {kv}'
 
     if action == 'pause':
         if strategy.status != 'running':
@@ -151,10 +153,10 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             new_strat.status = 'running'
             db.session.commit()
         _telegram_safe(
-            f'🚀 <b>智能托管自動上線新策略</b>\n'
-            f'#{new_sid} {new_strat.name if new_strat else "?"}（候選 #{cid}）\n'
+            f'🚀 <b>AI 托管: 自動上線新策略</b>\n'
+            f'#{new_sid} · {new_strat.name if new_strat else "?"}\n'
             f'OOS Sharpe = {oos:.2f}\n'
-            f'已 status=running，立刻納入信號循環。'
+            f'已開啟運行, 等待下次信號'
         )
         return True, f'已 promote 候選 #{cid} → strategy #{new_sid}（已啟動）'
 

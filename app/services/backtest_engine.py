@@ -110,10 +110,11 @@ def run_backtest(
     stop_loss_pct: float = 5.0,
     take_profit_pct: float = 8.0,
     initial_capital: float = 100.0,
-    fee_pct: float = 0.05,         # OKX SWAP taker per side (Phase 9.5)
+    fee_pct: float = 0.05,         # taker per side; OKX=0.05% / HL=0.035% (Phase 14k-10)
     slippage_pct: float = 0.05,    # 市價單估算滑點 per fill (Phase 9.5)
     warmup: int = 60,
     signal_fn=None,
+    exchange: str = 'okx',          # Phase 14k-10: 决定 fee_pct 默认值
 ):
     """跑單一策略的完整回測
 
@@ -122,6 +123,13 @@ def run_backtest(
     回傳: 詳細統計 + equity curve + trades 列表
     """
     t_start = time.time()
+
+    # Phase 14k-10: 按 exchange 调整 fee (caller 未显式传时)
+    # HL taker 0.035% vs OKX 0.05%; HL maker 0.01% vs OKX 0.02%
+    if exchange and (exchange or '').lower() == 'hyperliquid':
+        # 仅当 caller 用默认 0.05% 时才覆盖, 显式传值优先
+        if fee_pct == 0.05:
+            fee_pct = 0.035
 
     if not candles or len(candles) < warmup + 10:
         return {

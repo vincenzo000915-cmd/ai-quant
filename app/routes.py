@@ -801,6 +801,7 @@ def _run_strategy_backtest(strategy, candle_limit=2000):
         timeframe=strategy.timeframe,
         slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
         fee_pct=cfg.get('backtest_fee_pct', 0.05),
+        exchange=(strategy.exchange or 'okx'),    # Phase 14k-10
     )
 
     if result.get('status') == 'error':
@@ -1130,35 +1131,80 @@ def list_trades():
 @api_bp.route('/account', methods=['GET'])
 @require_actor
 def account_info():
-    """Phase 11.2.2: 看 actor 的 OKX 帳號餘額 — admin 看 env (system) OKX，user 看自己綁的。"""
-    from app.services.exchange_service import fetch_balance as get_balance, _resolve_creds
-    uid = current_user_id()
-    # is_admin (system token 或 role=admin) → 走 env
-    if is_admin_actor():
-        creds = None  # → fetch_balance default env
-    else:
-        creds = _resolve_creds(uid)
-        if not creds:
-            return jsonify({
-                'exchange': 'okx', 'bound': False,
-                'balance': 0, 'equity': 0, 'margin': 0, 'free_margin': 0, 'unrealized_pnl': 0,
-                'balances': {}, 'message': '尚未綁定 OKX，请到设置页绑定',
+    """Phase 14k-11: 多交易所 — 加总 user 所有绑定的交易所余额, 返 per-exchange breakdown.
+    admin: env OKX + 可选 HL agent.
+    user: per-user OKX (若绑) + HL (若绑).
+    """
+    from app.services.exchange_service import fetch_balance as okx_fetch, _resolve_creds
+    from app.services.exchange_binding import bound_exchanges
+    uid = current_user_id() or 1
+    bound = bound_exchanges(uid)
+
+    accounts = []
+    total_equity = 0.0
+    total_free = 0.0
+
+    # OKX (admin env / user binding)
+    if 'okx' in bound:
+        try:
+            if is_admin_actor():
+                okx_bal = okx_fetch(creds=None)
+            else:
+                creds = _resolve_creds(uid)
+                okx_bal = okx_fetch(creds=creds) if creds else {}
+            okx_total = sum(v.get('total', 0) for v in okx_bal.values())
+            okx_free = okx_bal.get('USDT', {}).get('free', 0)
+            total_equity += okx_total
+            total_free += okx_free
+            accounts.append({
+                'exchange': 'okx', 'label': 'OKX', 'bound': True,
+                'equity': round(okx_total, 4), 'free_margin': round(okx_free, 4),
+                'balances': {k: v['total'] for k, v in okx_bal.items() if v.get('total', 0) > 0},
             })
-    try:
-        balances = get_balance(creds=creds)
-        usd_total = sum(v.get('total', 0) for v in balances.values())
-        free_usdt = balances.get('USDT', {}).get('free', 0)
+        except Exception as e:
+            accounts.append({'exchange': 'okx', 'label': 'OKX', 'bound': True,
+                             'error': str(e)[:120], 'equity': 0, 'free_margin': 0})
+
+    # Hyperliquid
+    if 'hyperliquid' in bound:
+        try:
+            from app.services.hyperliquid_creds import get_decrypted_for_user as hl_creds
+            from app.services.hyperliquid_service import fetch_balance as hl_fetch
+            c = hl_creds(uid)
+            if c:
+                hl_bal = hl_fetch(creds=c)
+                hl_total = hl_bal['USDT']['total']
+                hl_free = hl_bal['USDT']['free']
+                total_equity += hl_total
+                total_free += hl_free
+                accounts.append({
+                    'exchange': 'hyperliquid', 'label': 'Hyperliquid', 'bound': True,
+                    'equity': hl_total, 'free_margin': hl_free,
+                    'balances': {'USDC': hl_total},
+                    'breakdown': hl_bal.get('_breakdown'),
+                })
+        except Exception as e:
+            accounts.append({'exchange': 'hyperliquid', 'label': 'Hyperliquid', 'bound': True,
+                             'error': str(e)[:120], 'equity': 0, 'free_margin': 0})
+
+    if not accounts:
         return jsonify({
-            'exchange': 'okx', 'bound': True,
-            'balance': usd_total,
-            'equity': usd_total,
-            'margin': 0,
-            'free_margin': free_usdt,
-            'unrealized_pnl': 0,
-            'balances': {k: v['total'] for k, v in balances.items() if v.get('total', 0) > 0},
+            'bound': False, 'accounts': [],
+            'balance': 0, 'equity': 0, 'free_margin': 0,
+            'message': '尚未绑定交易所, 请去 设置 绑 OKX 或 Hyperliquid',
         })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+
+    # 兼容旧 UI 字段
+    return jsonify({
+        'bound': True,
+        'accounts': accounts,
+        'balance': round(total_equity, 4),
+        'equity': round(total_equity, 4),
+        'free_margin': round(total_free, 4),
+        'margin': 0,
+        'unrealized_pnl': 0,
+        'balances': {a['exchange']: a.get('equity', 0) for a in accounts},
+    })
 
 
 # ===== 市場數據 =====
@@ -1937,11 +1983,20 @@ def candidate_promote_and_start(cid):
     try:
         from app.services.telegram_service import send as _tg
         m = result.get('strategy', {})
+        # Phase 14k-11: 美化 telegram 措辞 — 默认值不显示, 友好句子
+        lev = final_risk.get('leverage')
+        sl = final_risk.get('stop_loss_pct')
+        tp = final_risk.get('take_profit_pct')
+        risk_parts = []
+        if lev: risk_parts.append(f'杠杆 {lev}x')
+        if sl: risk_parts.append(f'止损 {sl}%')
+        if tp: risk_parts.append(f'止盈 {tp}%')
+        risk_line = ' · '.join(risk_parts) if risk_parts else '使用默认风控'
         _tg(
-            f'🚀 <b>用户从 AI 洞察一键上架</b>\n'
-            f'策略 #{new_sid} {m.get("name", "?")}\n'
-            f'symbol={symbol} 杠杆={final_risk.get("leverage", "default")}x SL={final_risk.get("stop_loss_pct", "default")}% TP={final_risk.get("take_profit_pct", "default")}%\n'
-            f'已 status=running，即时纳入信号循环。'
+            f'🚀 <b>AI 策略已上架</b>\n'
+            f'#{new_sid} · {m.get("name", "?")}\n'
+            f'交易对 {symbol} · {risk_line}\n'
+            f'已开启运行, 等待下次信号'
         )
     except Exception:
         pass

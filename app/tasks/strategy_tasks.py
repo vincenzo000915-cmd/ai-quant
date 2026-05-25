@@ -1122,10 +1122,23 @@ def daily_advisor_summary():
     if halts_today:
         lines.append(f'⚠️ 今日有 {halts_today} 次 halt / kill 事件')
     if auto_rows:
-        lines.append('\n<b>今日托管動作：</b>')
+        lines.append('\n<b>AI 托管操作：</b>')
+        action_names = {
+            'apply_params': '调参',
+            'pause': '暂停',
+            'retire': '退役',
+            'fan_out': '复制到新币',
+            'promote_candidate': '上线新策略',
+        }
         for r in auto_rows:
             ctx = r.context or {}
-            lines.append(f"• {ctx.get('action')} #{ctx.get('strategy_id')}: {ctx.get('message', '')[:60]}")
+            act = ctx.get('action', '?')
+            act_zh = action_names.get(act, act)
+            msg = ctx.get('message', '') or ''
+            # 去掉 params=... 之类 raw dict
+            if 'params=' in msg:
+                msg = msg.split('params=')[0].rstrip() or '已优化'
+            lines.append(f"• {act_zh} 策略 #{ctx.get('strategy_id')}: {msg[:60]}")
 
     _tg('\n'.join(lines), force=True)
     return f'daily-summary sent: pnl={today_pnl:+.2f} auto={auto_count}'

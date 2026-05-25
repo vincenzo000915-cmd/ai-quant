@@ -61,8 +61,34 @@ def _get_ticker_price_cache() -> dict[str, float]:
     return prices
 
 
-def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: dict, trade_size_usdt: float = 10) -> tuple[bool, str, str | None]:
-    """Phase 14e: 检查 user 资金能否下单该 catalog 策略
+def _hl_min_notional(symbol: str, price: float) -> float:
+    """Phase 14k-10: HL 最小开仓 notional. HL 用 szDecimals 控制最小颗粒度.
+    BTC szDecimals=5 → min sz = 0.00001 BTC ≈ $0.7 at $70k.
+    若 meta API 拉不到, fallback $1 保守值.
+    """
+    if not price:
+        return 1.0
+    try:
+        from app.services.hyperliquid_service import _info_client, hl_base
+        info = _info_client('mainnet')
+        meta = info.meta()
+        base = hl_base(symbol)
+        for u in (meta.get('universe') or []):
+            if u.get('name') == base:
+                sz_dec = int(u.get('szDecimals', 4))
+                min_sz = 10 ** (-sz_dec)
+                return min_sz * price
+    except Exception:
+        pass
+    return 1.0
+
+
+def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: dict,
+                         trade_size_usdt: float = 10, exchange: str = 'okx') -> tuple[bool, str, str | None]:
+    """Phase 14e+14k-10: 检查 user 资金能否下单该 catalog 策略.
+    exchange='okx' → 用 ccxt OKX contract size (BTC 0.01 = ~$770).
+    exchange='hyperliquid' → 用 HL szDecimals 算 min sz (BTC 0.00001 = ~$0.7).
+
     返回 (feasible, reason, best_symbol)
     """
     from app.services.symbols import get_contract_size
@@ -70,25 +96,33 @@ def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: 
     fit_symbols = cm.get('fit_symbols') or []
     rec_risk = cm.get('recommended_risk') or {}
     lev = float(rec_risk.get('leverage') or 3)
+    exchange = (exchange or 'okx').lower()
 
     # 每笔 USDT × lev = notional 上限
     max_notional = trade_size_usdt * lev
 
     best_sym = None
     for sym in fit_symbols:
-        contract_size = get_contract_size(sym)
         price = prices.get(sym, 0)
-        if not price or not contract_size:
+        if not price:
             continue
-        min_contract_notional = contract_size * price
+
+        if exchange == 'hyperliquid':
+            min_notional = _hl_min_notional(sym, price)
+        else:
+            contract_size = get_contract_size(sym)
+            if not contract_size:
+                continue
+            min_notional = contract_size * price
+
         # 留 50% buffer (real_notional/intended_notional > 1.5 trigger 跳过守门)
-        if max_notional >= min_contract_notional * 0.67:    # 至少能开 1 contract
+        if max_notional >= min_notional * 0.67:
             best_sym = sym
-            return True, f'{sym}: min ${min_contract_notional:.0f}, max ${max_notional:.0f} OK', sym
+            return True, f'{sym} ({exchange}): min ${min_notional:.2f}, max ${max_notional:.0f} OK', sym
 
     if not fit_symbols:
         return True, 'no fit_symbols constraint', None
-    return False, f'capital ${user_capital:.0f} × lev {lev}x = ${max_notional:.0f} < smallest contract', None
+    return False, f'capital ${user_capital:.0f} × lev {lev}x = ${max_notional:.0f} < min ({exchange})', None
 
 
 def _detect_user_regimes(user_symbols: list[str]) -> dict[str, str]:
@@ -404,11 +438,18 @@ def recommend_strategies(user_id: int, *, max_recommend: int = 3) -> dict:
     if not catalog:
         return {'ok': False, 'error': 'catalog 为空，先跑 seed_catalog.py'}
 
+    # Phase 14k-10: 按 user 主交易所跑 feasibility (HL min size 比 OKX 低很多)
+    try:
+        from app.services.exchange_binding import primary_exchange
+        user_exchange = primary_exchange(user_id)
+    except Exception:
+        user_exchange = 'okx'
+
     # Phase 14e: 先 filter 不 feasible 的
     feasible_catalog = []
     infeasible = []
     for entry in catalog:
-        ok, reason, _ = _is_capital_feasible(entry, user_capital, prices, trade_size)
+        ok, reason, _ = _is_capital_feasible(entry, user_capital, prices, trade_size, exchange=user_exchange)
         if ok:
             feasible_catalog.append(entry)
         else:
