@@ -102,26 +102,64 @@ def get_ticker(symbol: str, network: str = 'mainnet') -> dict:
     return {'symbol': symbol, 'price': float(px)}
 
 
+_HL_STABLECOINS = ('USDC', 'USDT0', 'USDH', 'USDE')
+
+
 def fetch_balance(creds: dict) -> dict:
-    """{USDC: {total, free, used}} — HL 用 USDC 抵押.
-    返回与 OKX fetch_balance 兼容的 shape (代码已经在用 'USDT' key, 这里也用 USDT 当作 stable balance)."""
+    """Phase 14k-9: HL Unified Account — spot stablecoin + perp accountValue 合算
+
+    HL 现在是统一保证金账户: spot 里的 USDC 可直接当 perp collateral, 不需手动 transfer.
+    返回 OKX-compat shape:
+      {USDT: {total, free, used}, _native_currency, _breakdown}
+    """
     if not creds or not creds.get('main_address'):
         raise RuntimeError('HL creds 缺失 main_address')
-    info = _info_client(creds.get('network') or 'mainnet')
-    state = info.user_state(creds['main_address'])
-    # state['marginSummary']['accountValue'] = 总账户价值 (USDC)
+    network = creds.get('network') or 'mainnet'
+    info = _info_client(network)
+    main = creds['main_address']
+
+    # perp 账户
+    state = info.user_state(main)
     margin_summary = state.get('marginSummary') or {}
-    account_value = float(margin_summary.get('accountValue', 0))
-    total_margin_used = float(margin_summary.get('totalMarginUsed', 0))
-    withdrawable = float(state.get('withdrawable', 0))
-    # 镜像 OKX shape: USDT key 让上层代码不用改 (HL 的 USDC 当作 stable)
+    perp_value = float(margin_summary.get('accountValue', 0))
+    perp_margin_used = float(margin_summary.get('totalMarginUsed', 0))
+    perp_withdrawable = float(state.get('withdrawable', 0))
+
+    # spot 账户 — 加总所有 stablecoin
+    spot_total = 0.0
+    spot_breakdown = {}
+    try:
+        spot_state = info.spot_user_state(main)
+        for b in (spot_state.get('balances') or []):
+            coin = (b.get('coin') or '').upper()
+            if coin in _HL_STABLECOINS:
+                amt = float(b.get('total') or 0)
+                spot_total += amt
+                if amt > 0:
+                    spot_breakdown[coin] = amt
+    except Exception as e:
+        # spot 拉失败不影响 perp 数据
+        spot_breakdown['_error'] = str(e)[:80]
+
+    # 统一总额: spot stablecoins + perp accountValue
+    total = spot_total + perp_value
+    # free: 总余 - 已用作 perp 保证金
+    free = max(0.0, total - perp_margin_used)
+
     return {
         'USDT': {
-            'total': account_value,
-            'free': withdrawable,
-            'used': total_margin_used,
+            'total': round(total, 4),
+            'free': round(free, 4),
+            'used': round(perp_margin_used, 4),
         },
-        '_native_currency': 'USDC',    # 标记给 UI 显示用
+        '_native_currency': 'USDC',
+        '_breakdown': {
+            'spot_stablecoins': round(spot_total, 4),
+            'spot_per_coin': spot_breakdown,
+            'perp_account_value': round(perp_value, 4),
+            'perp_margin_used': round(perp_margin_used, 4),
+            'perp_withdrawable': round(perp_withdrawable, 4),
+        },
     }
 
 
