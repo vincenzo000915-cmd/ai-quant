@@ -480,4 +480,9 @@ def run_backtest(
         # 14k-50: signal_fn 异常 - 让守门员/调用方能区分"策略真烂" vs "code 错误致 0 trades"
         'signal_fn_error_count': signal_fn_error_count,
         'signal_fn_first_error': signal_fn_first_error,
+        # 14k-68: EV (期望收益/trade) — user 哲学 "追盈利率不追胜率"
+        # 不该看 win_rate 单维, 而是看 EV (per-trade 净盈亏 %)
+        # = avg_pnl / initial_capital × 100, 但更直观: total_pnl / total_trades 给 USD/单
+        'ev_per_trade_pct': round(total_pnl / total / initial_capital * 100, 4) if total > 0 else 0.0,
+        'ev_per_trade_usdt': round(total_pnl / total, 4) if total > 0 else 0.0,
     }

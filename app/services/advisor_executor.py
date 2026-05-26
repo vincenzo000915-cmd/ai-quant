@@ -217,26 +217,30 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             bt = BacktestResult.query.get(cand.backtest_result_id)
             if bt:
                 tf = cand.timeframe or '4h'
-                # per-TF 門檻: (min PF, min trades, min AR%)
-                # Phase 12.38: 降 short PF 1.8 → 1.5 (1.8 几乎没策略能过，等真有 LIVE 数据再调严)
+                # per-TF 門檻: (min PF, min trades, min AR%, min_ev_pct)
+                # 14k-68: 加 EV 维度 — user 哲学 "追盈利率不追胜率", PF/AR 路 OR EV 路过即可
                 tf_gates = {
-                    '15m': (1.5, 60, 8),
-                    '30m': (1.5, 50, 8),
-                    '1h':  (1.4, 40, 7),
-                    '4h':  (1.4, 30, 7),
-                    '1d':  (1.3, 12, 5),
-                    '1w':  (1.2, 8,  4),
+                    '15m': (1.5, 60, 8, 0.2),
+                    '30m': (1.5, 50, 8, 0.3),
+                    '1h':  (1.4, 40, 7, 0.4),
+                    '4h':  (1.4, 30, 7, 0.6),
+                    '1d':  (1.3, 12, 5, 1.0),
+                    '1w':  (1.2, 8,  4, 2.0),
                 }
-                min_pf, min_trades, min_ar = tf_gates.get(tf, (1.5, 30, 8))
+                min_pf, min_trades, min_ar, min_ev = tf_gates.get(tf, (1.5, 30, 8, 0.4))
                 pf = bt.profit_factor or 0
                 tr = bt.total_trades or 0
                 ar = bt.annual_return_pct or 0
-                if pf < min_pf:
-                    return False, f'TF={tf} PF {pf:.2f} < 阈值 {min_pf}，跳過'
+                ev_pct = (bt.total_pnl / tr / (bt.initial_capital or 100) * 100) if tr else 0
+                # 14k-68: trades 不够样本仍拒 (EV 不可信)
                 if tr < min_trades:
-                    return False, f'TF={tf} trades {tr} < 阈值 {min_trades}，跳過'
-                if ar < min_ar:
-                    return False, f'TF={tf} AR {ar:.1f}% < 阈值 {min_ar}%，跳過'
+                    return False, f'TF={tf} trades {tr} < 阈值 {min_trades} (样本不足, EV 不可信)'
+                # 双轨制: 传统 (PF + AR) OR 14k-68 EV — 任一过即放行
+                traditional_ok = pf >= min_pf and ar >= min_ar
+                ev_ok = ev_pct >= min_ev
+                if not (traditional_ok or ev_ok):
+                    return False, (f'TF={tf} 两条路都不过: PF {pf:.2f}/AR {ar:.1f}% '
+                                   f'(需≥{min_pf}/{min_ar}%) AND EV {ev_pct:+.2f}% (需≥{min_ev}%)')
         # Phase 12.39: 不再硬編碼 BTC fallback — 優先讀 candidate.source_meta，再 config 默認
         symbol = item.get('meta', {}).get('symbol')
         if not symbol and cand:

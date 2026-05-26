@@ -500,7 +500,8 @@ export default function Candidates() {
                     <KPICard label="最大回撤" value={fmtNum(detail.backtest.max_drawdown_pct, 1, '%')} />
                     <KPICard label="盈虧比" value={fmtNum(detail.backtest.profit_factor, 2)} />
                     <KPICard label="總交易" value={detail.backtest.total_trades} />
-                    <KPICard label="勝率" value={fmtNum(detail.backtest.win_rate, 1, '%')} />
+                    <KPICard label="勝率 (參考)" value={fmtNum(detail.backtest.win_rate, 1, '%')} />
+                    <KPICard label="EV/單 (盈利率)" value={detail.backtest.total_trades > 0 ? fmtNum(detail.backtest.total_pnl / detail.backtest.total_trades, 2, '$') : '—'} />
                     <KPICard label="總 PnL" value={fmtNum(detail.backtest.total_pnl, 2)} />
                     <KPICard label="最終淨值" value={fmtNum(detail.backtest.final_equity, 2)} />
                   </Grid>

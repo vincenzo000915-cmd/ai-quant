@@ -11,28 +11,31 @@ from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
 from app.services.llm_translator import translate, translate_via_provider, LLMTranslatorError
 
 
-# 候選策略 qualified 門檻（Phase 5.4 嚴格化 + 14k-51 per-TF）
-# 14k-51: 跨 TF 同门槛是反模式 — 15m noise 大该严, 1d 样本少该宽. 跟 promote per-TF gates 对称.
+# 候選策略 qualified 門檻（Phase 5.4 嚴格化 + 14k-51 per-TF + 14k-68 EV 维度）
+# 14k-51: 跨 TF 同门槛是反模式
+# 14k-68: 加 EV 维度 — user 哲学 "追盈利率不追胜率"
+#   即使 sharpe 不达标, EV (per-trade) 够正期望 + R:R 合理也算 qualified
 QUALIFIED_TF_GATES = {
-    # tf: (is_sharpe, oos_sharpe, min_trades_per_side, max_decay_pct)
-    '15m': (2.0, 1.0, 20, 70),   # 15m 一年 35040 K 线, trades 多, sharpe 估准 → 高门槛
-    '30m': (1.8, 0.9, 15, 70),
-    '1h':  (1.5, 0.8, 10, 70),
-    '4h':  (1.5, 0.8, 8,  70),   # 旧默认 (5 → 8, 平衡 noise)
-    '1d':  (1.2, 0.6, 5,  80),   # 1d 一年 365 K 线, sample 少, 容忍点
-    '1w':  (1.0, 0.5, 4,  85),
+    # tf: (is_sharpe, oos_sharpe, min_trades, max_decay_pct, min_ev_pct)
+    # min_ev_pct: 14k-68 期望收益门槛 (每笔 trade % of 资金), 即使 sharpe 不达标这个达标也算
+    '15m': (2.0, 1.0, 20, 70, 0.2),   # 15m 频次高, EV 单笔小, 0.2% 累积可观
+    '30m': (1.8, 0.9, 15, 70, 0.3),
+    '1h':  (1.5, 0.8, 10, 70, 0.4),
+    '4h':  (1.5, 0.8, 8,  70, 0.6),   # 4h 频次低, EV 单笔要大
+    '1d':  (1.2, 0.6, 5,  80, 1.0),   # 1d sample 少, EV 大
+    '1w':  (1.0, 0.5, 4,  85, 2.0),
 }
-QUALIFIED_DEFAULT_GATE = (1.5, 0.8, 5, 70)   # 未知 TF fallback (4h 旧默认)
+QUALIFIED_DEFAULT_GATE = (1.5, 0.8, 5, 70, 0.4)
 
-# 旧名 alias (向后兼容) — 注意: 别处导入仍可用, 但实际判定走 TF gate
+# 旧名 alias (向后兼容)
 QUALIFIED_SHARPE_IS = 1.5
 QUALIFIED_SHARPE_OOS = 0.8
 QUALIFIED_MAX_DECAY_PCT = 70
 QUALIFIED_MIN_TRADES_PER_SIDE = 5
 
 
-def gate_for_tf(timeframe: str) -> tuple[float, float, int, int]:
-    """按 timeframe 返回 qualified gate (is_sharpe, oos_sharpe, min_trades, max_decay_pct)."""
+def gate_for_tf(timeframe: str) -> tuple:
+    """按 timeframe 返回 qualified gate (is_sharpe, oos_sharpe, min_trades, max_decay_pct, min_ev_pct)."""
     return QUALIFIED_TF_GATES.get(timeframe or '4h', QUALIFIED_DEFAULT_GATE)
 
 
@@ -273,8 +276,12 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     sfn_err_count = full_res.get('signal_fn_error_count', 0)
     sfn_first_err = full_res.get('signal_fn_first_error')
 
-    # 14k-51: per-TF gate 替代跨 TF 同门槛
-    tf_is_sh, tf_oos_sh, tf_min_trades, tf_max_decay = gate_for_tf(timeframe)
+    # 14k-51/68: per-TF gate (+ EV 维度)
+    tf_is_sh, tf_oos_sh, tf_min_trades, tf_max_decay, tf_min_ev = gate_for_tf(timeframe)
+    # 14k-68: 算 OOS EV (期望收益/trade %)
+    oos_pnl = oos_res.get('total_pnl') or 0
+    oos_capital = oos_res.get('initial_capital') or 100.0
+    oos_ev_pct = (oos_pnl / oos_trades / oos_capital * 100) if oos_trades else 0.0
 
     qualified_reasons = []
     # 14k-50: signal_fn 大量 raise (>10% candles) → 不是策略烂, 是 code 错; 单独标记
@@ -288,19 +295,25 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     is_trades = is_res.get('total_trades') or 0
     oos_trades = oos_res.get('total_trades') or 0
     if is_trades < tf_min_trades:
-        qualified_reasons.append(f'IS trades={is_trades} < {tf_min_trades} ({timeframe} 门槛, Sharpe 样本不足)')
+        qualified_reasons.append(f'IS trades={is_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
     if oos_trades < tf_min_trades:
-        qualified_reasons.append(f'OOS trades={oos_trades} < {tf_min_trades} ({timeframe} 门槛, Sharpe 样本不足)')
-    if is_sh is None or is_sh < tf_is_sh:
-        qualified_reasons.append(f'IS sharpe={is_sh} < {tf_is_sh} ({timeframe} 门槛)')
-    if oos_sh is None or oos_sh < tf_oos_sh:
-        qualified_reasons.append(f'OOS sharpe={oos_sh} < {tf_oos_sh} ({timeframe} 门槛)')
+        qualified_reasons.append(f'OOS trades={oos_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
+    # 14k-68: 双轨制 — sharpe 路径 OR EV 路径过门槛即可 (user 哲学: 不只看胜率)
+    sharpe_ok = (is_sh is not None and is_sh >= tf_is_sh
+                 and oos_sh is not None and oos_sh >= tf_oos_sh)
+    ev_ok = (oos_ev_pct >= tf_min_ev)
+    if not (sharpe_ok or ev_ok) and is_trades >= tf_min_trades and oos_trades >= tf_min_trades:
+        qualified_reasons.append(
+            f'两条路都不过: sharpe IS={is_sh}/OOS={oos_sh} (需≥{tf_is_sh}/{tf_oos_sh}) '
+            f'AND OOS EV={oos_ev_pct:+.2f}% (需≥{tf_min_ev}%) — {timeframe} 门槛'
+        )
     if decay is not None and decay > tf_max_decay:
-        qualified_reasons.append(f'OOS decay={decay}% > {tf_max_decay}% ({timeframe} 门槛, suspected overfit)')
+        qualified_reasons.append(f'OOS decay={decay}% > {tf_max_decay}% ({timeframe} 门槛, 过拟合)')
 
     if not qualified_reasons:
         c.status = 'qualified'
-        c.error_log = None
+        c.error_log = (f'qualified via {"sharpe+EV" if sharpe_ok and ev_ok else ("sharpe" if sharpe_ok else "EV")} '
+                       f'(OOS sharpe={oos_sh}, EV={oos_ev_pct:+.2f}%)')
     else:
         c.status = 'translated'
         c.error_log = 'not qualified: ' + '; '.join(qualified_reasons)
