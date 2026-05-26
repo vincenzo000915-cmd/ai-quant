@@ -702,12 +702,12 @@ def cat_williams_r_reversal_signal(df, params):
         'signal_fn_name': 'cat_cci_extremes_signal',
         'category': 'swing',
         'timeframe': '4h',
-        'default_params': {'period': 20, 'lower': -200, 'upper': 200},
+        'default_params': {'period': 20, 'lower': -100, 'upper': 100},
         'parsed_signal': '''
 def cat_cci_extremes_signal(df, params):
     n = params.get('period', 20)
-    lo = params.get('lower', -200)
-    hi = params.get('upper', 200)
+    lo = params.get('lower', -100)
+    hi = params.get('upper', 100)
     if len(df) < n + 10:
         return 'hold'
     cci = ta.trend.CCIIndicator(df['high'], df['low'], df['close'], window=n).cci()

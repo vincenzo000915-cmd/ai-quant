@@ -90,6 +90,27 @@ GRIDS: dict[str, dict[str, list]] = {
         'period': [14, 20, 28],
         'threshold': [80, 100, 150],
     },
+    # Phase 14k-39: catalog clone strategy types — 让 advisor.apply_params 能优化它们
+    'cand_cat_cci_extremes': {
+        'period': [14, 20, 28],
+        'lower': [-150, -100, -80],
+        'upper': [80, 100, 150],
+    },
+    'cand_cat_rsi_bb_mean_rev': {
+        'rsi_period': [10, 14, 21],
+        'rsi_low': [25, 30, 35],
+        'rsi_high': [65, 70, 75],
+    },
+    'cand_cat_stoch_rsi_extremes': {
+        'rsi_period': [10, 14, 21],
+        'oversold': [15, 20, 25],
+        'overbought': [75, 80, 85],
+    },
+    'cand_cat_williams_r_reversal': {
+        'period': [10, 14, 21],
+        'oversold': [-85, -80, -75],
+        'overbought': [-25, -20, -15],
+    },
     'atr_breakout': {
         'ema_period': [15, 20, 30],
         'multiplier': [1.0, 1.5, 2.0],
@@ -114,7 +135,19 @@ GRIDS: dict[str, dict[str, list]] = {
 
 
 def get_grid(strategy_type: str) -> dict[str, list]:
-    return GRIDS.get(strategy_type, {})
+    """exact match 优先, 否则剥 catalog clone 后缀 (_uX_<timestamp>) 再 match.
+
+    Phase 14k-39: catalog clone 走 cand_cat_xxx_u1_<ts> 这种 type, 直接 lookup 永远 None.
+    剥后缀: cand_cat_cci_extremes_u1_20260526095930 → cand_cat_cci_extremes
+    """
+    g = GRIDS.get(strategy_type, {})
+    if g:
+        return g
+    import re
+    base = re.sub(r'_u\d+_\d{12,16}$', '', strategy_type)
+    if base != strategy_type:
+        return GRIDS.get(base, {})
+    return {}
 
 
 def grid_size(grid: dict[str, list]) -> int:
