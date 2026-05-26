@@ -357,6 +357,13 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
     c.error_log = None
     db.session.commit()
 
+    # Phase 14k-32 修: promote 后立刻 async 拉 K 线, 避免新策略首小时跑信号撞 K线不足(0)
+    try:
+        from app.tasks.strategy_tasks import fetch_symbol_ohlcv
+        fetch_symbol_ohlcv.apply_async(args=[strategy.symbol, strategy.timeframe], countdown=5)
+    except Exception as e:
+        print(f'[promote] fetch_symbol_ohlcv async dispatch failed: {e}')
+
     return {
         'ok': True,
         'strategy': strategy.to_dict(),

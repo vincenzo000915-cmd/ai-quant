@@ -193,6 +193,26 @@ def fetch_market_data():
     return f'已更新 {len(symbols)} 組K線'
 
 
+# Phase 14k-32: promote 后立刻拉单币 K 线, 避免新策略首小时撞 K线不足(0)
+@celery_app.task(bind=True, name='app.tasks.strategy_tasks.fetch_symbol_ohlcv',
+                 max_retries=3, default_retry_delay=180)
+def fetch_symbol_ohlcv(self, symbol: str, timeframe: str = '4h', limit: int = 500):
+    """异步拉单 (symbol, timeframe) K 线. 给新 promote 策略 first-run 准备数据."""
+    try:
+        from app.services.exchange_service import fetch_ohlcv
+        rows = fetch_ohlcv(symbol, timeframe, limit=limit)
+        return f'{symbol} {timeframe}: {len(rows) if rows else 0} candles'
+    except Exception as e:
+        es = str(e)
+        if 'Too Many Requests' in es or '429' in es or 'timeout' in es.lower():
+            try:
+                import random
+                raise self.retry(exc=e, countdown=180 + random.randint(0, 120))
+            except self.MaxRetriesExceededError:
+                return f'max retries: {es[:100]}'
+        return f'fetch error: {es[:100]}'
+
+
 @celery_app.task
 def run_strategy_signals(strategy_id=None):
     """執行策略信號計算 — 波段/長線（4h）"""
