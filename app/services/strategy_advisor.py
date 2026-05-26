@@ -877,22 +877,108 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     }
 
 
+def _system_dry_spell(user_id: int) -> tuple[bool, dict]:
+    """14k-49 Trigger T2: 系统干旱期 — 当前 running 策略 24h 0 trades + 7d <3 trades.
+    旧 stopped 策略的 trades 不算 (它们退了就不该影响判断).
+    返回 (triggered, info_dict).
+    """
+    import datetime as _dt
+    from app.models import Trade, Strategy
+    from app.services.user_scope import apply_user_filter
+    running_ids = [s.id for s in apply_user_filter(
+        Strategy.query.filter_by(status='running'), Strategy).all()]
+    if not running_ids:
+        return False, {'reason': 'no running strategies'}
+    now = _dt.datetime.utcnow()
+    trades_24h = Trade.query.filter(
+        Trade.strategy_id.in_(running_ids),
+        Trade.exit_time > now - _dt.timedelta(hours=24)
+    ).count()
+    trades_7d = Trade.query.filter(
+        Trade.strategy_id.in_(running_ids),
+        Trade.exit_time > now - _dt.timedelta(days=7)
+    ).count()
+    triggered = trades_24h == 0 and trades_7d < 3
+    return triggered, {'trades_24h': trades_24h, 'trades_7d': trades_7d,
+                       'running_strategies': len(running_ids)}
+
+
+def _tf_coverage_gap() -> tuple[bool, dict, str | None]:
+    """14k-49 Trigger T3: TF 偏科 — 15m/30m qualified=0 但 4h qualified>5.
+    返回 (triggered, info_dict, missing_tf).
+    """
+    from app.models import StrategyCandidate
+    q_by_tf = {}
+    for tf in ('15m', '30m', '1h', '4h', '1d'):
+        q_by_tf[tf] = StrategyCandidate.query.filter_by(
+            status='qualified', timeframe=tf
+        ).count()
+    # 高频 TF 候选稀薄 + swing TF 充裕 → gap
+    # (短 TF total < 3 算稀薄, 因为 scalp/reversion 风格多样, 1-2 个候选不够 AI 选)
+    short_tf_total = q_by_tf['15m'] + q_by_tf['30m']
+    swing_tf_total = q_by_tf['4h'] + q_by_tf['1d']
+    if short_tf_total < 3 and swing_tf_total >= 5:
+        # 优先补 15m (业界主流 scalp TF), 除非 15m 已经>0 才补 30m
+        missing = '15m' if q_by_tf['15m'] == 0 else ('30m' if q_by_tf['30m'] < 2 else '15m')
+        return True, q_by_tf, missing
+    return False, q_by_tf, None
+
+
+def _regime_archetype_mismatch(user_id: int) -> tuple[bool, dict]:
+    """14k-49 Trigger T4: 当前 running 策略 archetype 跟市场 regime 不匹配.
+    比 brief.recommended_archetype 跟 running.category 不同 → 组合错配.
+    """
+    from app.models import Strategy
+    from app.services.user_scope import apply_user_filter
+    from app.services.llm_prompts.market_analyst import analyze_market
+    try:
+        running = apply_user_filter(
+            Strategy.query.filter_by(status='running'), Strategy
+        ).all()
+    except Exception:
+        return False, {}
+    if not running:
+        return False, {'running_count': 0}
+    # 拉 brief (走 cache, 不重 LLM)
+    sym = running[0].symbol
+    try:
+        brief_r = analyze_market(sym, timeframes=['1h', '4h'], user_id=user_id)
+    except Exception:
+        return False, {}
+    if not brief_r.get('ok'):
+        return False, {}
+    arch = brief_r['brief'].get('recommended_archetype')
+    if arch in (None, 'wait'):
+        return False, {'archetype': arch}
+    # 现有 strategy.category 映射到 archetype
+    cat_to_arch = {
+        'swing': 'trend_follower', 'long': 'trend_follower',
+        'short': 'mean_reverter',  'ultra': 'mean_reverter',
+    }
+    running_archs = set(cat_to_arch.get(s.category) for s in running if s.category)
+    triggered = arch not in running_archs and len(running_archs) > 0
+    return triggered, {'brief_archetype': arch, 'running_archetypes': list(running_archs),
+                       'mismatch_symbol': sym}
+
+
 def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
-    """L6: 主动让 AI 创新策略. 触发条件:
-    - 目标 lag mode (落后 > 5%)
-    - 候选池 qualified 不足
-    - 12h cooldown
+    """14k-29 L6 + 14k-49 多 trigger: 主动让 AI 创新策略.
+
+    OR 多 trigger (任一满足即触发, per-trigger 独立 cooldown):
+      T1 lag_pool_thin   — 目标落后 + qualified<5 (旧) → catalog-first
+      T2 dry_spell       — 24h 0 trades + 7d <3 trades → LLM synth 高频
+      T3 tf_gap          — 15m/30m qualified=0 + 4h >5 → LLM synth 指定 TF
+      T4 regime_mismatch — brief.archetype 跟 running 不匹配 → LLM synth 互补
+
+    Cooldown: 12h per trigger type (每天最多 4 次 invent, 不爆 LLM token).
     """
     import datetime as _dt
     from app.models import AuditLog, StrategyCandidate
 
-    if target_ctx.get('none') or not target_ctx.get('lag_mode'):
+    if target_ctx.get('none'):
         return None
 
-    qualified_pool = StrategyCandidate.query.filter_by(status='qualified').count()
-    if qualified_pool >= INVENT_CANDIDATE_POOL_THRESHOLD:
-        return None
-
+    # 全局 12h cooldown: 任何 invent 事件 12h 内 → 跳过 (保守, 避免叠加触发)
     cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=INVENT_COOLDOWN_HOURS)
     recent = AuditLog.query.filter(
         AuditLog.event_type.in_(['advisor_invent_proposed', 'advisor_invent_applied', 'advisor_invent_error']),
@@ -901,15 +987,80 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     if recent:
         return None
 
-    return {
-        'action': 'invent_new_strategy',
-        'strategy_id': 0,
-        'strategy_name': '系统级 invent',
-        'severity': 'info',
-        'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + 候选池只有 {qualified_pool} qualified, 创新策略追赶',
-        'meta': {
-            'user_id': user_id,
-            'lag_pct': target_ctx.get('lag_pct'),
-            'qualified_pool': qualified_pool,
-        },
-    }
+    qualified_pool = StrategyCandidate.query.filter_by(status='qualified').count()
+
+    # T1 (旧): lag + 候选池薄 → catalog-first invent
+    if target_ctx.get('lag_mode') and qualified_pool < INVENT_CANDIDATE_POOL_THRESHOLD:
+        return {
+            'action': 'invent_new_strategy',
+            'strategy_id': 0,
+            'strategy_name': '系统级 invent (T1 lag_pool_thin)',
+            'severity': 'info',
+            'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + 候选池只有 {qualified_pool} qualified, 创新策略追赶',
+            'meta': {
+                'user_id': user_id,
+                'trigger_type': 'lag_pool_thin',
+                'invent_method': 'catalog_first',
+                'lag_pct': target_ctx.get('lag_pct'),
+                'qualified_pool': qualified_pool,
+            },
+        }
+
+    # T2 dry_spell — 系统连续 0 trades → LLM synth 高频策略
+    dry_triggered, dry_info = _system_dry_spell(user_id)
+    if dry_triggered:
+        return {
+            'action': 'invent_new_strategy',
+            'strategy_id': 0,
+            'strategy_name': '系统级 invent (T2 dry_spell)',
+            'severity': 'warn',
+            'reason': f'系统干旱期: 24h {dry_info["trades_24h"]} trades, 7d {dry_info["trades_7d"]} trades. AI 合成高频策略救场',
+            'meta': {
+                'user_id': user_id,
+                'trigger_type': 'dry_spell',
+                'invent_method': 'synth',
+                'synth_hint': 'dry_spell',
+                **dry_info,
+            },
+        }
+
+    # T3 tf_gap — 高频 TF 候选空 + swing TF 充裕 → synth 指定 TF
+    tf_triggered, tf_info, missing_tf = _tf_coverage_gap()
+    if tf_triggered:
+        return {
+            'action': 'invent_new_strategy',
+            'strategy_id': 0,
+            'strategy_name': f'系统级 invent (T3 tf_gap → {missing_tf})',
+            'severity': 'info',
+            'reason': f'TF 偏科: 15m={tf_info["15m"]} 30m={tf_info["30m"]} qualified, 4h+1d={tf_info["4h"]+tf_info["1d"]} qualified. AI 合成 {missing_tf} 策略补空',
+            'meta': {
+                'user_id': user_id,
+                'trigger_type': 'tf_gap',
+                'invent_method': 'synth',
+                'synth_hint': 'tf_gap',
+                'target_timeframe': missing_tf,
+                'tf_distribution': tf_info,
+            },
+        }
+
+    # T4 regime_mismatch — brief vs running 不匹配 → synth 互补 archetype
+    rm_triggered, rm_info = _regime_archetype_mismatch(user_id)
+    if rm_triggered:
+        return {
+            'action': 'invent_new_strategy',
+            'strategy_id': 0,
+            'strategy_name': '系统级 invent (T4 regime_mismatch)',
+            'severity': 'info',
+            'reason': f'组合错配: 市场 archetype={rm_info["brief_archetype"]}, running={rm_info["running_archetypes"]}. AI 合成互补策略',
+            'meta': {
+                'user_id': user_id,
+                'trigger_type': 'regime_mismatch',
+                'invent_method': 'synth',
+                'synth_hint': 'regime_mismatch',
+                'symbol': rm_info.get('mismatch_symbol'),
+                **rm_info,
+            },
+        }
+
+    # 没 trigger 匹配
+    return None

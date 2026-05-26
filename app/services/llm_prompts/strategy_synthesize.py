@@ -48,8 +48,14 @@ category 选择:
 
 def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
                         target_pct: float, days_remaining: int,
-                        user_id: int = 1) -> dict:
+                        user_id: int = 1, hint: str | None = None,
+                        target_timeframe: str | None = None) -> dict:
     """LLM 根据当前市场 + user 目标合成 signal_fn.
+
+    14k-49: 加 hint + target_timeframe 让 invent meta-trigger 给 LLM 强方向:
+      hint='dry_spell' → 找高频策略
+      hint='tf_gap'    → 强制 target_timeframe (15m/30m)
+      hint='regime_mismatch' → 让 LLM 切 brief 反向 archetype
 
     Returns: {'ok', 'signal_fn_name', 'signal_code', 'default_params', 'risk_params',
               'category', 'timeframe', 'rationale_zh', 'rationale_en'} or {'ok': False, 'error'}
@@ -58,9 +64,30 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
         return {'ok': False, 'error': 'market_brief 必填'}
 
     # 仅在 brief 推荐有效 archetype 时合成 (wait 不合成)
+    # — 但 hint='dry_spell' 时强制合成 (系统干旱期, 不管 brief 判 wait)
     archetype = market_brief.get('recommended_archetype')
-    if archetype == 'wait':
+    if archetype == 'wait' and hint != 'dry_spell':
         return {'ok': False, 'error': 'AI brief 判 wait, 不合成新策略'}
+
+    hint_block = ''
+    if hint:
+        hint_messages = {
+            'dry_spell': '⚠️ 系统连续多日 0 入场, 现有策略阈值过严. 请合成**高频**策略 (15m/30m scalp / reversion), '
+                         'signal 触发率每根 K 线 ≥ 5%, 不要选 breakout (低频).',
+            'tf_gap': f'⚠️ catalog 池 {target_timeframe or "15m/30m"} 候选完全空白. '
+                      f'**必须** timeframe = "{target_timeframe or "15m"}", 找适合短 TF 的策略类型 '
+                      f'(RSI/BB scalp, VWAP pullback, EMA crossover scalp).',
+            'regime_mismatch': '⚠️ 当前 running 策略类型跟市场 regime 不匹配 (eg 横盘但全 trend). '
+                               '请合成跟现有组合 **互补** archetype 的策略.',
+            'lag_pool_thin': '⚠️ 账户目标进度落后 + 候选池稀薄. 高 Sharpe trend/breakout 优先, 4h 偏中长期.',
+        }
+        msg = hint_messages.get(hint, '')
+        if msg:
+            hint_block = f'\n## 触发上下文 / Context\n{msg}\n'
+
+    tf_constraint = ''
+    if target_timeframe:
+        tf_constraint = f'\n**timeframe 强制要求**: "{target_timeframe}" (不能选其他 TF)\n'
 
     prompt = f"""## 市场 brief
 {json.dumps(market_brief, ensure_ascii=False, indent=2)}
@@ -70,13 +97,14 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
 - 余额 / Balance: ${balance:.2f}
 - 目标 / Target: +{target_pct}% / {days_remaining} 天剩
 - 月化等价: {((1 + target_pct/100) ** (30.0/max(1, days_remaining)) - 1) * 100:.1f}%
-
+{hint_block}{tf_constraint}
 请合成一个**针对当前市场 + 用户目标的实时 signal_fn**, 输出 JSON.
 """
 
     sig_key = hashlib.sha256(
         json.dumps([symbol, target_pct, days_remaining, archetype,
-                    market_brief.get('regime')], sort_keys=True).encode()
+                    market_brief.get('regime'), hint, target_timeframe],
+                   sort_keys=True).encode()
     ).hexdigest()[:20]
 
     r = call_llm(

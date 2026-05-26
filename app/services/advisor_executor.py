@@ -64,14 +64,35 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     action = item['action']
     sid = item['strategy_id']
 
-    # Phase 14k-29 L6: invent 全新策略 (账户级, 不需 strategy 实例)
+    # Phase 14k-29 L6 + 14k-49: invent 全新策略 — 看 meta.invent_method 路由两种武器
     if action == 'invent_new_strategy':
-        from app.tasks.strategy_tasks import advisor_invent_strategy
-        uid = item.get('meta', {}).get('user_id') or 1
-        advisor_invent_strategy.apply_async(args=[uid], countdown=3)
         from app.services.audit import log as audit
-        audit('advisor_invent_proposed', user_id=uid, lag_pct=item.get('meta', {}).get('lag_pct'))
-        return True, '已排程 AI invent 新策略 (async, ~60s 内完成 + 自动 backtest + 过门槛上线)'
+        meta = item.get('meta', {}) or {}
+        uid = meta.get('user_id') or 1
+        invent_method = meta.get('invent_method', 'catalog_first')
+        trigger_type = meta.get('trigger_type', 'lag_pool_thin')
+
+        if invent_method == 'synth':
+            # 14k-49: T2/T3/T4 trigger → LLM 直写 signal_fn (L3 dynamic synth)
+            from app.tasks.strategy_tasks import synthesize_dynamic_strategy
+            synthesize_dynamic_strategy.apply_async(
+                args=[uid, meta.get('symbol')],
+                kwargs={'hint': meta.get('synth_hint'), 'target_timeframe': meta.get('target_timeframe')},
+                countdown=3,
+            )
+            audit('advisor_invent_proposed', user_id=uid,
+                  trigger_type=trigger_type, invent_method='synth',
+                  synth_hint=meta.get('synth_hint'),
+                  target_timeframe=meta.get('target_timeframe'))
+            return True, f'已排程 AI 合成 ({trigger_type} → synth, hint={meta.get("synth_hint")}, TF={meta.get("target_timeframe")})'
+
+        # T1 lag_pool_thin → catalog-first (旧路径)
+        from app.tasks.strategy_tasks import advisor_invent_strategy
+        advisor_invent_strategy.apply_async(args=[uid], countdown=3)
+        audit('advisor_invent_proposed', user_id=uid,
+              trigger_type=trigger_type, invent_method='catalog_first',
+              lag_pct=meta.get('lag_pct'))
+        return True, '已排程 AI invent 新策略 (catalog-first, async ~60s)'
 
     # Phase 14k-28/30: 账户级 action — 14k-30 #3 user-scoped (per-user UserConfig override)
     if action == 'adjust_global_sizing':

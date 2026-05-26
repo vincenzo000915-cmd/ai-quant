@@ -2173,12 +2173,20 @@ def optimize_risk_and_apply(self, strategy_id: int):
 # ===== Phase 14k-45 L3: 动态策略合成 + 自动 backtest + 过门槛 promote =====
 
 @celery_app.task(name='app.tasks.strategy_tasks.synthesize_dynamic_strategy')
-def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None):
+def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None,
+                                 hint: str | None = None, target_timeframe: str | None = None):
     """L3: AI 看 brief + 用户目标 → 实时合成 signal_fn → walk-forward → 过门槛 promote.
+
+    14k-49: 加 hint + target_timeframe — advisor invent meta-trigger 透传给 LLM 强方向
+      hint='dry_spell' → LLM 找高频 (15m/30m)
+      hint='tf_gap' + target_timeframe='15m' → LLM 强制 15m
+      hint='regime_mismatch' → LLM 找互补 archetype
 
     触发条件 (advisor 决定):
       - 市场 regime 变化, 现有策略组合不匹配
       - 目标进度落后 + catalog 选不出更好的
+      - 系统连续 0 trades (14k-49)
+      - TF 偏科 — 高频 TF candidates 空白 (14k-49)
       - 手动 trigger
 
     流程:
@@ -2219,7 +2227,8 @@ def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None):
     target_pct = float(t.target_pct) if t else 5.0
     days_remaining = t.days_remaining() if t else 30
 
-    r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining, user_id=user_id)
+    r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining,
+                            user_id=user_id, hint=hint, target_timeframe=target_timeframe)
     if not r.get('ok'):
         audit('synth_error', symbol=symbol, error=r.get('error'))
         return f'synth failed: {r.get("error")}'
