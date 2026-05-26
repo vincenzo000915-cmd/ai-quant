@@ -663,9 +663,13 @@ INVENT_CANDIDATE_POOL_THRESHOLD = 5  # 候选池 qualified 数 < 这个 才考�
 
 
 def _strategy_risk_opt_item(strategy) -> dict | None:
-    """L4: 排 SL/TP 闪测. executor 触发 async task, task 内部跑 walk-forward + 过门槛 apply."""
+    """L4: 排 SL/TP 闪测. executor 触发 async task, task 内部跑 walk-forward + 过门槛 apply.
+
+    14k-41: "策略 0 trades + age>6h" 强 signal 阈值有问题 → 跳 cooldown 强制 propose.
+            (本来 cooldown 防重复 LLM 烧钱, 但 0 trades = 之前 propose 没改善任何东西, 该重试)
+    """
     import datetime as _dt
-    from app.models import AuditLog
+    from app.models import AuditLog, Trade
 
     if not strategy.created_at:
         return None
@@ -673,32 +677,39 @@ def _strategy_risk_opt_item(strategy) -> dict | None:
     if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
         return None
 
-    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=RISK_OPT_COOLDOWN_HOURS)
-    recent = AuditLog.query.filter(
-        AuditLog.event_type.in_(['risk_opt_applied', 'risk_opt_no_lift', 'risk_opt_error', 'risk_opt_proposed']),
-        AuditLog.created_at > cutoff,
-    ).all()
-    if any((a.context or {}).get('strategy_id') == strategy.id for a in recent):
-        return None
+    # 14k-41: 检测"空跑"状态 — 策略 24h 0 trades = 阈值/参数有问题, 跳 cooldown
+    trades_24h = Trade.query.filter(
+        Trade.strategy_id == strategy.id,
+        Trade.exit_time > _dt.datetime.utcnow() - _dt.timedelta(hours=24),
+    ).count()
+    force_optimize = (trades_24h == 0 and age_h >= 6)
+
+    if not force_optimize:
+        cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=RISK_OPT_COOLDOWN_HOURS)
+        recent = AuditLog.query.filter(
+            AuditLog.event_type.in_(['risk_opt_applied', 'risk_opt_no_lift', 'risk_opt_error', 'risk_opt_proposed']),
+            AuditLog.created_at > cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == strategy.id for a in recent):
+            return None
 
     return {
         'action': 'optimize_strategy_risk_full',
         'strategy_id': strategy.id,
         'strategy_name': strategy.name,
         'severity': 'info',
-        'reason': '24h 未做 SL/TP 闪测, 排一次',
-        'meta': {},
+        'reason': ('策略 24h 0 trades → 强制重测 SL/TP 阈值' if force_optimize else '24h 未做 SL/TP 闪测, 排一次'),
+        'meta': {'force_optimize': force_optimize},
     }
 
 
 def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     """L5: AI 提议信号 grid → 触发 ParamOptimization → 完成后由现有 apply_params 路径接走.
 
-    复用 GRIDS 死字典 (省 LLM 钱), 但只在 24h 内未跑过 + 策略需要优化时排.
-    需要优化判定: 最近 backtest sharpe < 1.5, 或 user target lag mode.
+    14k-41: "策略 0 trades + age>6h" 跳 cooldown (信号阈值不对该立刻 reopt)
     """
     import datetime as _dt
-    from app.models import AuditLog, ParamOptimization
+    from app.models import AuditLog, ParamOptimization, Trade
 
     if not strategy.created_at:
         return None
@@ -706,16 +717,24 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
         return None
 
-    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
-    recent_opt = ParamOptimization.query.filter(
-        ParamOptimization.strategy_id == strategy.id,
-        ParamOptimization.started_at > cutoff,
-    ).first()
-    if recent_opt:
-        return None
+    # 14k-41: 0 trades 强 signal 阈值问题 → 跳 cooldown
+    trades_24h = Trade.query.filter(
+        Trade.strategy_id == strategy.id,
+        Trade.exit_time > _dt.datetime.utcnow() - _dt.timedelta(hours=24),
+    ).count()
+    force_optimize = (trades_24h == 0 and age_h >= 6)
 
-    # 触发条件: target lag mode 或 现有 sharpe 偏弱
-    needs_optim = bool(target_ctx.get('lag_mode'))
+    if not force_optimize:
+        cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
+        recent_opt = ParamOptimization.query.filter(
+            ParamOptimization.strategy_id == strategy.id,
+            ParamOptimization.started_at > cutoff,
+        ).first()
+        if recent_opt:
+            return None
+
+    # 触发条件: target lag mode 或 现有 sharpe 偏弱 或 0 trades 空跑
+    needs_optim = bool(target_ctx.get('lag_mode')) or force_optimize
     if not needs_optim:
         bt = _latest_backtest(strategy.id)
         sharpe = (bt.sharpe_ratio if bt else None) or 0
@@ -724,14 +743,15 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     if not needs_optim:
         return None
 
-    # 24h 内 audit 标记防重排
-    audit_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
-    recent_audit = AuditLog.query.filter(
-        AuditLog.event_type == 'signal_grid_proposed',
-        AuditLog.created_at > audit_cutoff,
-    ).all()
-    if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_audit):
-        return None
+    if not force_optimize:
+        # 24h 内 audit 标记防重排
+        audit_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
+        recent_audit = AuditLog.query.filter(
+            AuditLog.event_type == 'signal_grid_proposed',
+            AuditLog.created_at > audit_cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_audit):
+            return None
 
     # 14k-30 #2: 调 LLM 让 AI 真提议 grid
     proposed_grid = None
