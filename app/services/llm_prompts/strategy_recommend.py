@@ -664,6 +664,11 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         if entry is None:
             continue
         # 14k-19: 用 matrix 实际 symbol check, 不再受 catalog.fit_symbols 限制
+        # 14k-36: 强制守 is_supported(symbol) — matrix 里可能有未列入 SUPPORTED_SYMBOLS 的币
+        # (eg ARB/APT/INJ/OP/TIA),contract_size 用 fallback 0.01 会算出 position=0 空跑策略
+        from app.services.symbols import is_supported
+        if not is_supported(mx.symbol):
+            continue
         ok, _, _ = _is_capital_feasible(entry, user_capital,
                                           {mx.symbol: prices.get(mx.symbol, 0)},
                                           trade_size, exchange=target_exchange,
