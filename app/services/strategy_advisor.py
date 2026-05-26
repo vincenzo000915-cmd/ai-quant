@@ -858,7 +858,7 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
         metrics = {
             'oos_sharpe': bt.sharpe_ratio if bt else None,
             'oos_dd': bt.max_drawdown_pct if bt else None,
-            'win_rate': bt.win_rate_pct if bt else None,
+            'win_rate': bt.win_rate if bt else None,    # 14k-65: 字段名是 win_rate 不是 win_rate_pct
             'trades': bt.total_trades if bt else None,
         }
         r = _propose(strategy.type, strategy.params or {}, metrics)

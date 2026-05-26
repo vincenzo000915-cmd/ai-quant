@@ -154,6 +154,26 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     if action == 'pause':
         if strategy.status != 'running':
             return False, f'status={strategy.status}, 無需暫停'
+        # 14k-65: 守门员 — 有真 trades 历史的不能因 regime mismatch pause (追屁股反模式)
+        # PSAR 类 trend follower 在 range 市本来 trade 频率就低, 但真出 trade 时是赚的
+        # advisor 看 regime 直接 pause 会杀掉真有效的策略 → 重蹈 14k-64 救场覆辙
+        from app.models import Trade
+        total_trades = Trade.query.filter_by(strategy_id=sid).count()
+        if total_trades >= 3:
+            from sqlalchemy import func
+            total_pnl = Trade.query.with_entities(
+                func.coalesce(func.sum(Trade.pnl), 0)
+            ).filter_by(strategy_id=sid).scalar() or 0
+            if float(total_pnl) >= 0:
+                return False, (f'策略已 {total_trades} 真 trades + PnL {float(total_pnl):+.2f} '
+                              f'≥ 0, 不因 regime mismatch pause (避免追屁股反模式)')
+        # 14k-65: revive 24h 内不能 pause (user 刚救场不要立刻杀掉)
+        rp = (strategy.params or {}).get('risk_params') or {}
+        if rp.get('_revived_by'):
+            import datetime as _dt
+            revive_time = strategy.updated_at or strategy.created_at
+            if revive_time and (_dt.datetime.utcnow() - revive_time).total_seconds() < 86400:
+                return False, f'策略 revive 不到 24h, 不能 pause (尊重 user 救场决定)'
         strategy.status = 'stopped'
         db.session.commit()
         return True, '已暫停'
