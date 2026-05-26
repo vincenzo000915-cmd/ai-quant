@@ -2135,6 +2135,199 @@ def optimize_risk_and_apply(self, strategy_id: int):
     return f'applied SL={best["sl_pct"]} TP={best["tp_pct"]}, lift={best["score"]-base["score"]:.2f}'
 
 
+# ===== Phase 14k-45 L3: 动态策略合成 + 自动 backtest + 过门槛 promote =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.synthesize_dynamic_strategy')
+def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None):
+    """L3: AI 看 brief + 用户目标 → 实时合成 signal_fn → walk-forward → 过门槛 promote.
+
+    触发条件 (advisor 决定):
+      - 市场 regime 变化, 现有策略组合不匹配
+      - 目标进度落后 + catalog 选不出更好的
+      - 手动 trigger
+
+    流程:
+      1. 拉 brief + balance + target
+      2. synthesize_strategy LLM 合成
+      3. 写 strategy_candidates (status='translated')
+      4. 立刻 trigger candidate backtest (复用现有 auto_backtest 链路)
+      5. 过门槛会被 advisor 下轮 promote
+    """
+    from app.models import StrategyCandidate, ProfitTarget
+    from app.services.llm_prompts.market_analyst import analyze_market
+    from app.services.llm_prompts.strategy_synthesize import synthesize_strategy
+    from app.services.exchange_service import fetch_balance, _resolve_creds
+    from app.services.audit import log as audit
+    import datetime as _dt
+
+    # 默认拉 user 现有 running 第一个 symbol, 或 fallback
+    if not symbol:
+        from app.models import Strategy
+        s = Strategy.query.filter_by(status='running').first()
+        symbol = s.symbol if s else 'BTC/USDT'
+
+    # 拉 brief
+    brief_r = analyze_market(symbol, timeframes=['15m', '1h', '4h'], user_id=user_id)
+    if not brief_r.get('ok'):
+        audit('synth_error', symbol=symbol, error=f"brief: {brief_r.get('error')}")
+        return f'brief failed: {brief_r.get("error")}'
+    brief = brief_r['brief']
+
+    # 拉 balance + target
+    try:
+        creds = _resolve_creds(user_id) if user_id != 1 else None
+        bal = fetch_balance(creds=creds) if creds else fetch_balance()
+        balance = sum(v.get('total', 0) for v in (bal or {}).values())
+    except Exception:
+        balance = 70.0
+    t = ProfitTarget.query.filter_by(user_id=user_id, status='active').first()
+    target_pct = float(t.target_pct) if t else 5.0
+    days_remaining = t.days_remaining() if t else 30
+
+    r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining, user_id=user_id)
+    if not r.get('ok'):
+        audit('synth_error', symbol=symbol, error=r.get('error'))
+        return f'synth failed: {r.get("error")}'
+
+    # 写 candidate (走现有 backtest 链路)
+    cand = StrategyCandidate(
+        source='synth',
+        source_url=None,
+        source_name=f"AI 合成 · {r.get('rationale_zh', '')[:50]}",
+        source_author='ai_synth',
+        source_meta={
+            'symbol': symbol,
+            'risk_params': r['risk_params'],
+            'brief_regime': brief.get('regime'),
+            'brief_archetype': brief.get('recommended_archetype'),
+            'rationale_zh': r.get('rationale_zh'),
+            'rationale_en': r.get('rationale_en'),
+            'target_exchange': 'hyperliquid',  # admin 主交易所
+        },
+        raw_code=f"# AI synth at {_dt.datetime.utcnow().isoformat()}\n{r['signal_code']}",
+        raw_lang='python',
+        parsed_signal=r['signal_code'],
+        signal_fn_name=r['signal_fn_name'],
+        candidate_type=f'synth_{r["signal_fn_name"]}',
+        category=r['category'],
+        timeframe=r['timeframe'],
+        default_params=r['default_params'],
+        llm_notes=r.get('rationale_zh'),
+        llm_model='ai_synth_v1',
+        status='translated',
+    )
+    db.session.add(cand)
+    db.session.commit()
+
+    audit('synth_candidate_created', user_id=user_id, symbol=symbol, candidate_id=cand.id,
+          regime=brief.get('regime'), archetype=brief.get('recommended_archetype'))
+
+    # 立刻 trigger backtest (auto_backtest_translated_candidates 每小时跑, 我们立刻 trigger)
+    try:
+        backtest_and_maybe_start.apply_async(args=[cand.id], countdown=10)
+    except Exception:
+        pass
+
+    try:
+        from app.services.telegram_service import send as _tg
+        _tg(f'🧪 <b>AI 合成新策略 · Strategy Synthesized</b>\n'
+            f'交易对 / Symbol: {symbol}\n'
+            f'适配 / Archetype: {brief.get("recommended_archetype")} ({brief.get("regime")})\n'
+            f'候选 / Candidate: #{cand.id}\n'
+            f'已排回测, 过门槛会自动上线 / Backtest queued')
+    except Exception:
+        pass
+
+    return f'synth candidate #{cand.id} created for {symbol} ({r["category"]}/{r["timeframe"]})'
+
+
+# ===== Phase 14k-45 L2: 信号 watcher 算条件 + 触发入场 =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.check_signal_watchers')
+def check_signal_watchers():
+    """每 5min 跑: 算 active watcher 的条件, 满足触发 strategy 一次入场."""
+    from app.models import SignalWatcher, Strategy
+    from app.services.signal_watchers import evaluate_watcher, expire_old_watchers
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as _tg
+
+    expired = expire_old_watchers()
+    active = SignalWatcher.query.filter_by(status='active').all()
+    if not active:
+        return f'no active watchers (expired {expired})'
+
+    triggered = 0
+    for w in active:
+        try:
+            met, debug = evaluate_watcher(w)
+            if not met:
+                continue
+            # 满足 → 触发 strategy 一次入场
+            s = Strategy.query.get(w.strategy_id)
+            if not s or s.status != 'running':
+                w.status = 'cancelled'
+                db.session.commit()
+                continue
+            # 标 triggered (锁防并发重触发)
+            w.status = 'triggered'
+            w.triggered_at = datetime.datetime.utcnow()
+            from app.models import Candle
+            c = Candle.query.filter_by(symbol=w.symbol, timeframe='1h').order_by(Candle.timestamp.desc()).first()
+            w.triggered_price = c.close if c else None
+            db.session.commit()
+
+            # 同步触发 strategy 跑一次信号 (sync 或 async 都行, 我们用 sync 立刻看结果)
+            try:
+                run_strategy_signals.delay(w.strategy_id)
+            except Exception:
+                pass
+
+            audit('signal_watcher_triggered', strategy_id=w.strategy_id, watcher_id=w.id,
+                  symbol=w.symbol, side=w.side, conditions=w.conditions, debug=debug)
+            try:
+                _tg(f'🎯 <b>条件触发 · Watcher Triggered</b>\n'
+                    f'#{w.strategy_id} {s.name}\n'
+                    f'{w.symbol} · {w.side} · ${w.triggered_price or "?"}\n'
+                    f'条件: {", ".join(str(c.get("indicator","?")) + c.get("op","?") + str(c.get("value","?")) for c in (w.conditions or []))}',
+                    event_key=f'watcher_trig_{w.id}')
+            except Exception:
+                pass
+            triggered += 1
+        except Exception as e:
+            print(f'[watcher #{w.id}] error: {type(e).__name__}: {e}')
+
+    return f'evaluated {len(active)}, triggered {triggered}, expired {expired}'
+
+
+# ===== Phase 14k-45 L1: AI 市场分析 brief prewarm =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.prewarm_market_brief')
+def prewarm_market_brief():
+    """每 15min 跑一次, 给所有 running 策略 symbol 暖 brief cache.
+    advisor 下次跑直接取 cache, 无 LLM 等待."""
+    from app.models import Strategy
+    from app.services.llm_prompts.market_analyst import analyze_market
+    from app.services.audit import log as audit
+
+    symbols = set()
+    for s in Strategy.query.filter_by(status='running').all():
+        symbols.add(s.symbol)
+
+    results = {}
+    for sym in symbols:
+        try:
+            r = analyze_market(sym, timeframes=['15m', '1h', '4h'])
+            results[sym] = 'ok' if r.get('ok') else f"err:{r.get('error', 'unknown')[:50]}"
+        except Exception as e:
+            results[sym] = f'exception:{type(e).__name__}'
+
+    try:
+        audit('market_brief_prewarmed', symbols=list(symbols), results=results)
+    except Exception:
+        pass
+    return f'prewarmed {len(symbols)} symbols: {results}'
+
+
 # ===== Phase 14k-29 L6: advisor 主动 invent 新策略 =====
 
 @celery_app.task(name='app.tasks.strategy_tasks.advisor_invent_strategy')

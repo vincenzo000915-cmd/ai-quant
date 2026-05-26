@@ -696,6 +696,48 @@ class SystemConfig(db.Model):
         }
 
 
+class SignalWatcher(db.Model):
+    """Phase 14k-45 L2: 事件驱动入场 watcher.
+
+    AI brief 出 watch_indicators (eg "15m RSI < 30 + 4h close > SMA50")
+    → 创建 watcher → check_signal_watchers task 每 5min 算条件 → 满足触发 strategy 入场.
+    """
+    __tablename__ = 'signal_watchers'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id', ondelete='CASCADE'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    symbol = db.Column(db.String(20), nullable=False)
+    # AI 生成的条件 JSON, 简化结构:
+    #   {"description_zh": "15m RSI < 30", "description_en": "...",
+    #    "tf": "15m", "indicator": "rsi_14", "op": "<", "value": 30, "side": "buy"}
+    # 复合条件用 list:
+    #   [{tf, indicator, op, value}, ...]  全部满足才触发 (AND logic)
+    conditions = db.Column(db.JSON, nullable=False)
+    side = db.Column(db.String(10), default='buy')  # buy / sell / either
+    source = db.Column(db.String(30), default='ai_brief')  # ai_brief | manual | strategy_signal
+    status = db.Column(db.String(20), default='active', index=True)  # active | triggered | expired | cancelled
+    triggered_at = db.Column(db.DateTime, nullable=True)
+    triggered_price = db.Column(db.Float, nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'strategy_id': self.strategy_id,
+            'symbol': self.symbol,
+            'conditions': self.conditions or [],
+            'side': self.side,
+            'source': self.source,
+            'status': self.status,
+            'triggered_at': self.triggered_at.isoformat() if self.triggered_at else None,
+            'triggered_price': self.triggered_price,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class UserConfig(db.Model):
     """Phase 14k-30 #3: per-user 配置覆盖 (sparse).
 

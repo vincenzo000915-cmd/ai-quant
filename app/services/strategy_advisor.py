@@ -52,6 +52,44 @@ def _grace_days(timeframe: str | None) -> int:
     return GRACE_DAYS_BY_TF.get(timeframe or '4h', DEFAULT_GRACE_DAYS)
 
 
+# Phase 14k-45 L1: 用 AI market_brief 增强 regime 判断 (取代单 regime_detector)
+def _get_market_brief(symbol: str) -> dict | None:
+    """拉 brief (走 LLM cache, 15min prewarm). 失败返 None 让 caller fallback 到 regime_detector."""
+    try:
+        from app.services.llm_prompts.market_analyst import analyze_market
+        r = analyze_market(symbol, timeframes=['15m', '1h', '4h'])
+        if r.get('ok'):
+            return r['brief']
+    except Exception as e:
+        print(f'[advisor] market_brief({symbol}) failed: {type(e).__name__}: {e}')
+    return None
+
+
+def _fit_with_brief(strategy_type: str, symbol: str, regime: str | None) -> tuple[str, dict | None]:
+    """优先用 AI brief.recommended_archetype 判 fit, fallback regime_detector.
+
+    返回 (fit, brief): fit 是 'good'/'ok'/'bad'/'unknown', brief 是 dict 或 None
+    """
+    brief = _get_market_brief(symbol)
+    if brief:
+        from app.services.llm_prompts.market_analyst import archetype_to_affinity
+        ai_aff = archetype_to_affinity(brief.get('recommended_archetype'))
+        if ai_aff:
+            strat_aff = affinity_for(strategy_type)
+            # brief 推荐的 archetype 跟 strategy affinity 直接对比
+            if strat_aff == ai_aff:
+                return ('good', brief)
+            elif strat_aff is None:
+                return ('unknown', brief)
+            else:
+                return ('bad', brief)
+        # AI 说 'wait' → 所有策略都 bad (没好机会)
+        if brief.get('recommended_archetype') == 'wait':
+            return ('bad', brief)
+    # fallback
+    return (fit_label(strategy_type, regime or 'unknown'), brief)
+
+
 def _latest_backtest(strategy_id: int) -> BacktestResult | None:
     return (
         BacktestResult.query
@@ -690,7 +728,7 @@ def _strategy_risk_opt_item(strategy) -> dict | None:
     ).count()
     long_idle = (trades_in_window == 0 and age_h >= idle_days * 24)
 
-    # 14k-44: regime match 时才考虑 24h 0 trades (策略适合当前但阈值过严)
+    # 14k-44 + 14k-45 L1: 优先用 AI brief 判 fit (取代单一 regime_detector)
     force_optimize = False
     if long_idle:
         force_optimize = True
@@ -700,16 +738,12 @@ def _strategy_risk_opt_item(strategy) -> dict | None:
             Trade.exit_time > _dt.datetime.utcnow() - _dt.timedelta(hours=24),
         ).count()
         if trades_24h == 0 and age_h >= 6:
-            # 看 regime match
             try:
-                from app.services.regime_detector import detect_regime, fit_label
+                from app.services.regime_detector import detect_regime
                 rd = detect_regime(strategy.symbol, strategy.timeframe)
-                regime = rd.get('regime', 'unknown')
-                fit = fit_label(strategy.type, regime)
+                fit, _brief = _fit_with_brief(strategy.type, strategy.symbol, rd.get('regime'))
                 if fit in ('good', 'ok'):
-                    # 策略适合当前 regime 但 0 trades → 阈值确实可能过严
                     force_optimize = True
-                # fit == 'bad' → regime mismatch, 让 pause 路径处理, 不重测追屁股
             except Exception:
                 pass
 

@@ -61,6 +61,10 @@ CHECK_LABELS = {
     'okx_connectivity':      '交易所余额 / Exchange Balance',
     'reconcile_health':      '当前持仓状态 / Position Status',
     'running_strategies':    '运行中策略数 / Running Strategies',
+    # Phase 14k-45 L1/L2/L3 新增
+    'market_brief_recent':   'AI 市场分析活跃 / Market Brief Active',
+    'signal_watchers':       '信号 watcher 健康 / Signal Watchers',
+    'dynamic_synth_recent':  'AI 策略合成活跃 / Dynamic Synthesis',
 }
 
 
@@ -278,6 +282,64 @@ def check_running_strategies() -> dict:
     return {'status': OK, 'detail': f'{count} 个策略运行中', 'latency_ms': ms(t)}
 
 
+# Phase 14k-45 L1: AI 市场分析活跃
+def check_market_brief_recent() -> dict:
+    """近 30min 内有 market_brief_prewarmed audit (确保 prewarm task 在跑)."""
+    t = t0()
+    rc, out = psql("""
+        SELECT COUNT(*), COALESCE(MAX(created_at)::text, 'none')
+        FROM audit_log WHERE event_type='market_brief_prewarmed' AND created_at > NOW() - INTERVAL '30 minutes'
+    """)
+    if rc != 0: return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
+    try:
+        count, last = out.strip().split('|', 1)
+        count = int(count)
+    except Exception as e:
+        return {'status': WARN, 'detail': f'解析失败: {e}', 'latency_ms': ms(t)}
+    if count == 0:
+        return {'status': FAIL, 'detail': '近 30 分钟没有 AI 市场分析活动（prewarm task 可能挂了）',
+                'latency_ms': ms(t), 'autofix_hint': '重启 celery-worker/beat'}
+    return {'status': OK, 'detail': f'近 30 分钟 prewarm 跑了 {count} 次, 最近 {last[:19]}', 'latency_ms': ms(t)}
+
+
+# Phase 14k-45 L2: 信号 watcher 健康
+def check_signal_watchers() -> dict:
+    """active watcher 数 + 是否有卡死 (已过期但还 active)."""
+    t = t0()
+    rc, out = psql("""
+        SELECT
+          (SELECT COUNT(*) FROM signal_watchers WHERE status='active'),
+          (SELECT COUNT(*) FROM signal_watchers WHERE status='active' AND expires_at < NOW()),
+          (SELECT COUNT(*) FROM signal_watchers WHERE status='triggered' AND triggered_at > NOW() - INTERVAL '24 hours')
+    """)
+    if rc != 0: return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
+    try:
+        active, stuck, triggered_24h = [int(x) for x in out.strip().split('|')]
+    except Exception as e:
+        return {'status': WARN, 'detail': f'解析失败: {e}', 'latency_ms': ms(t)}
+    if stuck > 0:
+        return {'status': WARN, 'detail': f'{stuck} 个 watcher 已过期但状态仍 active (expire task 没跑)',
+                'latency_ms': ms(t), 'autofix_hint': '查 check_signal_watchers task'}
+    return {'status': OK,
+            'detail': f'{active} 个 active / 近 24 小时触发 {triggered_24h} 次',
+            'latency_ms': ms(t)}
+
+
+# Phase 14k-45 L3: 动态策略合成活跃
+def check_dynamic_synth_recent() -> dict:
+    """近 24h 是否有 synth candidate 创建 (synthesize_dynamic_strategy 跑了吗)."""
+    t = t0()
+    rc, out = psql("""
+        SELECT COUNT(*) FROM strategy_candidates
+        WHERE source='synth' AND created_at > NOW() - INTERVAL '24 hours'
+    """)
+    if rc != 0: return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
+    try: count = int(out.strip())
+    except: return {'status': WARN, 'detail': f'解析失败: {out}', 'latency_ms': ms(t)}
+    # synth 不是强制定时, advisor 决定何时触发. 0 是正常
+    return {'status': OK, 'detail': f'近 24 小时 AI 合成了 {count} 个候选', 'latency_ms': ms(t)}
+
+
 CHECKS = [
     ('celery_beat_heartbeat', check_celery_beat_heartbeat),
     ('signal_cycle_health',   check_signal_cycle_15m),
@@ -288,6 +350,10 @@ CHECKS = [
     ('okx_connectivity',      check_okx_connectivity),
     ('reconcile_health',      check_reconcile_recent),
     ('running_strategies',    check_running_strategies),
+    # Phase 14k-45 新增 3 个 check
+    ('market_brief_recent',   check_market_brief_recent),
+    ('signal_watchers',       check_signal_watchers),
+    ('dynamic_synth_recent',  check_dynamic_synth_recent),
 ]
 
 

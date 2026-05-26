@@ -97,6 +97,18 @@ beat_schedule = {
         'schedule': crontab(minute='20', hour='*/6'),
     },
 
+    # === Phase 14k-45 L1: AI 市场分析 brief prewarm — 每 15min ===
+    'prewarm-market-brief': {
+        'task': 'app.tasks.strategy_tasks.prewarm_market_brief',
+        'schedule': crontab(minute='*/15'),
+    },
+
+    # === Phase 14k-45 L2: 信号 watcher 检查 — 每 5min ===
+    'check-signal-watchers': {
+        'task': 'app.tasks.strategy_tasks.check_signal_watchers',
+        'schedule': crontab(minute='*/5'),
+    },
+
     # === Phase 10.9: 每週日 04:00 UTC 給所有 running 策略跑參數網格 ===
     'weekly-auto-optimize': {
         'task': 'app.tasks.strategy_tasks.auto_optimize_running_strategies',
