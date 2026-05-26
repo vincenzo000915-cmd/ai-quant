@@ -103,24 +103,34 @@ def _run_wf(strategy, base_params, candles, sl, tp):
 
     oos = wf.get('out_sample') or {}
     full = wf.get('full') or {}
+    # 14k-69: 加 EV 字段 — risk_optimizer score 也参考盈利率
+    oos_trades = oos.get('total_trades') or 0
+    oos_pnl = oos.get('total_pnl') or 0
+    oos_capital = oos.get('initial_capital') or 100.0
     return {
         'oos_sharpe': oos.get('sharpe_ratio'),
         'oos_dd': oos.get('max_drawdown_pct'),
-        'oos_trades': oos.get('total_trades') or 0,
+        'oos_trades': oos_trades,
         'oos_ar': oos.get('annual_return_pct'),
+        'oos_ev_pct': (oos_pnl / oos_trades / oos_capital * 100) if oos_trades else 0.0,
         'full_sharpe': full.get('sharpe_ratio'),
         'full_pnl': full.get('total_pnl'),
     }
 
 
 def _score(metrics: dict) -> float:
-    """评分: Sharpe heavy, DD penalty. 无 trades → -999 (不可信)."""
+    """评分 (14k-69 升级): Sharpe + EV 综合, DD penalty. 无 trades → -999.
+    user 哲学: 追盈利率, 所以 EV 加权; Sharpe 仍参考 (低 sharpe + 高 EV 可能 noise 大).
+    """
     trades = metrics.get('oos_trades') or 0
     if trades < MIN_TRADES:
         return -999.0
     s = metrics.get('oos_sharpe') or 0
     dd = abs(metrics.get('oos_dd') or 50)
-    return s - (dd / 20.0)
+    ev = metrics.get('oos_ev_pct') or 0
+    # Score = Sharpe + EV_score (1% EV = +2 score) - DD/20
+    # 例: sharpe 1.0 + EV 0.5% + DD 10% = 1.0 + 1.0 - 0.5 = 1.5
+    return s + (ev * 2.0) - (dd / 20.0)
 
 
 def should_apply(opt_result: dict) -> tuple[bool, str]:

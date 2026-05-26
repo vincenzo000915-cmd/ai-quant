@@ -699,9 +699,12 @@ def check_stop_loss():
 
 # ===== Phase 5.3: 策略健康監控 / 自動退役 =====
 
-# 退役門檻（Phase 12.9 放寬：之前 11 個策略一次被誤殺）
-RETIRE_SHARPE_FULL = -0.5      # 全段 Sharpe 跌破 -0.5（真的虧損）→ 退役
-RETIRE_SHARPE_OOS = -1.0       # OOS Sharpe 跌破 -1.0 → 真的不行了
+# 退役門檻（Phase 12.9 放寬 + 14k-69: EV 维度双轨制）
+# 14k-69: user 哲学 "追盈利率不追胜率" — sharpe 跌破 OR EV 跌破都 retire
+# 但任一指标 OK 就保留 (高 R:R 策略可能 sharpe 烂但 EV 正)
+RETIRE_SHARPE_FULL = -0.5      # 全段 Sharpe 跌破 -0.5
+RETIRE_SHARPE_OOS = -1.0       # OOS Sharpe 跌破 -1.0
+RETIRE_EV_PCT = -0.2           # 14k-69: 平均每 trade 亏 ≥ 0.2% (含 fee 后真亏)
 RETIRE_MIN_TRADES = 12         # 樣本不足就不退役
 RETIRE_GRACE_HOURS = 168       # Phase 12.9.1: 7 天保護期（48h 太短，可能整窗口落在週末 / 行情清淡）
 
@@ -788,16 +791,25 @@ def monitor_strategy_health():
             )
             db.session.add(bt)
 
-            # 退役判斷
+            # 退役判斷 (14k-69: EV 维度双轨制 — 两个都跌破才 retire, 任一 OK 就保留)
             retire_reasons = []
             if total_trades < RETIRE_MIN_TRADES:
                 # 樣本太少，不主動退役但記錄一下
                 pass
             else:
-                if full_sh is not None and full_sh < RETIRE_SHARPE_FULL:
-                    retire_reasons.append(f'full Sharpe {full_sh:.2f} < {RETIRE_SHARPE_FULL}')
-                if oos_sh is not None and oos_sh < RETIRE_SHARPE_OOS:
-                    retire_reasons.append(f'OOS Sharpe {oos_sh:.2f} < {RETIRE_SHARPE_OOS}')
+                # 14k-69: 算 EV (per-trade % of capital)
+                full_total_pnl = full.get('total_pnl', 0)
+                full_ev_pct = (full_total_pnl / total_trades / 100.0 * 100) if total_trades else 0
+                # double-bad: sharpe 烂 AND EV 烂 → retire (任一 OK 就保留, user 哲学)
+                sharpe_bad = ((full_sh is not None and full_sh < RETIRE_SHARPE_FULL)
+                              or (oos_sh is not None and oos_sh < RETIRE_SHARPE_OOS))
+                ev_bad = (full_ev_pct < RETIRE_EV_PCT)
+                if sharpe_bad and ev_bad:
+                    if full_sh is not None and full_sh < RETIRE_SHARPE_FULL:
+                        retire_reasons.append(f'full Sharpe {full_sh:.2f} < {RETIRE_SHARPE_FULL}')
+                    if oos_sh is not None and oos_sh < RETIRE_SHARPE_OOS:
+                        retire_reasons.append(f'OOS Sharpe {oos_sh:.2f} < {RETIRE_SHARPE_OOS}')
+                    retire_reasons.append(f'EV {full_ev_pct:+.2f}% < {RETIRE_EV_PCT}% (双轨都烂, 真亏钱)')
 
             from app.services.audit import log as audit
             if retire_reasons:

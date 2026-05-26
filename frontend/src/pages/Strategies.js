@@ -775,7 +775,8 @@ export default function Strategies() {
                   fontFamily: 'JetBrains Mono, monospace',
                 }}>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>總交易</Typography><Typography sx={{ fontWeight: 600 }}>{r.total_trades}</Typography></Box>
-                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝率</Typography><Typography sx={{ fontWeight: 600 }}>{r.win_rate}%</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: '#a78bfa' }}>EV/單 💰</Typography><Typography sx={{ fontWeight: 700, color: '#a78bfa' }}>{r.total_trades > 0 ? `$${(r.total_pnl / r.total_trades).toFixed(2)}` : '—'}</Typography></Box>
+                  <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝率(參考)</Typography><Typography sx={{ fontWeight: 600 }}>{r.win_rate}%</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>勝/敗</Typography><Typography sx={{ fontWeight: 600 }}><span style={{color:'#00d4aa'}}>{r.winning_trades}</span> / <span style={{color:'#ff4757'}}>{r.losing_trades}</span></Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均盈</Typography><Typography sx={{ fontWeight: 600, color: '#00d4aa' }}>+${r.avg_win}</Typography></Box>
                   <Box><Typography variant="caption" sx={{ color: 'text.secondary' }}>平均虧</Typography><Typography sx={{ fontWeight: 600, color: '#ff4757' }}>${r.avg_loss}</Typography></Box>
