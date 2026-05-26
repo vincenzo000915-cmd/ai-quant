@@ -877,6 +877,26 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     }
 
 
+def _promote_eligible_count() -> int:
+    """14k-50: qualified 池里真能 promote 的数 (OOS sharpe ≥ PROMOTE_MIN_OOS_SHARPE).
+    旧版 invent T1 用 qualified count, 但 qualified OOS 0.8-1.5 卡死不 promote → AI
+    永远看 30 觉得满 → 不触发 invent. 用 promote-eligible 反映真实可上线数.
+    """
+    from app.models import StrategyCandidate, BacktestResult
+    qualified = StrategyCandidate.query.filter_by(status='qualified').all()
+    eligible = 0
+    for c in qualified:
+        if not c.backtest_result_id:
+            continue
+        bt = BacktestResult.query.get(c.backtest_result_id)
+        if not bt or not bt.walkforward_json:
+            continue
+        oos_sh = (bt.walkforward_json.get('out_sample') or {}).get('sharpe_ratio')
+        if oos_sh is not None and oos_sh >= PROMOTE_MIN_OOS_SHARPE:
+            eligible += 1
+    return eligible
+
+
 def _system_dry_spell(user_id: int) -> tuple[bool, dict]:
     """14k-49 Trigger T2: 系统干旱期 — 当前 running 策略 24h 0 trades + 7d <3 trades.
     旧 stopped 策略的 trades 不算 (它们退了就不该影响判断).
@@ -987,22 +1007,24 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     if recent:
         return None
 
-    qualified_pool = StrategyCandidate.query.filter_by(status='qualified').count()
+    # 14k-50 fix: 看 promote-eligible (OOS≥1.5) 而非 qualified count
+    # 旧 bug: qualified 池 30 个但 promote-eligible 可能 0, AI 看 30 觉得满 → 不触发
+    eligible_pool = _promote_eligible_count()
 
-    # T1 (旧): lag + 候选池薄 → catalog-first invent
-    if target_ctx.get('lag_mode') and qualified_pool < INVENT_CANDIDATE_POOL_THRESHOLD:
+    # T1 (旧): lag + 真正可上线池薄 → catalog-first invent
+    if target_ctx.get('lag_mode') and eligible_pool < INVENT_CANDIDATE_POOL_THRESHOLD:
         return {
             'action': 'invent_new_strategy',
             'strategy_id': 0,
             'strategy_name': '系统级 invent (T1 lag_pool_thin)',
             'severity': 'info',
-            'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + 候选池只有 {qualified_pool} qualified, 创新策略追赶',
+            'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + promote-eligible 池只有 {eligible_pool} (OOS≥{PROMOTE_MIN_OOS_SHARPE}), 创新策略追赶',
             'meta': {
                 'user_id': user_id,
                 'trigger_type': 'lag_pool_thin',
                 'invent_method': 'catalog_first',
                 'lag_pct': target_ctx.get('lag_pct'),
-                'qualified_pool': qualified_pool,
+                'eligible_pool': eligible_pool,
             },
         }
 

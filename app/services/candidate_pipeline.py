@@ -245,13 +245,25 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     c.backtest_result_id = bt.id
 
     # Phase 5.4: qualified 門檻 = IS sharpe ≥ 1.5 AND OOS sharpe ≥ 0.8 AND decay ≤ 70%
+    # 14k-50: 先检查 signal_fn 异常 (优先于 sharpe), code error 单独标记便于 LLM 修
     is_res = wf.get('in_sample') or {}
     oos_res = wf.get('out_sample') or {}
     is_sh = is_res.get('sharpe_ratio')
     oos_sh = oos_res.get('sharpe_ratio')
     decay = wf.get('decay_pct')
+    full_res = wf.get('full') or {}
+    sfn_err_count = full_res.get('signal_fn_error_count', 0)
+    sfn_first_err = full_res.get('signal_fn_first_error')
 
     qualified_reasons = []
+    # 14k-50: signal_fn 大量 raise (>10% candles) → 不是策略烂, 是 code 错; 单独标记
+    candle_n = full_res.get('candle_count', 1)
+    if sfn_err_count > max(10, candle_n * 0.1):
+        qualified_reasons.append(
+            f'signal_fn code error: {sfn_err_count}/{candle_n} candles raised '
+            f'({sfn_err_count/max(1,candle_n)*100:.0f}%); first: {sfn_first_err}'
+        )
+
     is_trades = is_res.get('total_trades') or 0
     oos_trades = oos_res.get('total_trades') or 0
     if is_trades < QUALIFIED_MIN_TRADES_PER_SIDE:

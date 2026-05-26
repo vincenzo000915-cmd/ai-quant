@@ -258,6 +258,9 @@ def run_backtest(
     trades = []
     equity_curve = []
     daily_pnl_by_date = {}
+    # 14k-50: signal_fn 异常计数 — 守门员看到 0 trades 时不该误判, 暴露 code error
+    signal_fn_error_count = 0
+    signal_fn_first_error = None
 
     for i in range(warmup, len(candles)):
         c = candles[i]
@@ -316,8 +319,12 @@ def run_backtest(
         if signal_fn is not None:
             try:
                 signal = signal_fn(df, params)
-            except Exception:
-                signal = 'hold'  # 候選策略 runtime 報錯就跳過該根
+            except Exception as _sfe:
+                # 14k-50: 暴露 signal_fn code error — 旧版静默吞掉, 守门员看到 0 trades 误判
+                signal_fn_error_count += 1
+                if signal_fn_first_error is None:
+                    signal_fn_first_error = f'{type(_sfe).__name__}: {_sfe}'
+                signal = 'hold'
         else:
             signal = get_signal(strategy_type, df, params)
 
@@ -470,4 +477,7 @@ def run_backtest(
         'duration_ms': duration_ms,
         'equity_curve': equity_curve,
         'trades': trades,
+        # 14k-50: signal_fn 异常 - 让守门员/调用方能区分"策略真烂" vs "code 错误致 0 trades"
+        'signal_fn_error_count': signal_fn_error_count,
+        'signal_fn_first_error': signal_fn_first_error,
     }
