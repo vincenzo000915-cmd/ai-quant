@@ -701,7 +701,7 @@ def _strategy_risk_adjust_item(strategy, target_ctx: dict) -> dict | None:
 RISK_OPT_COOLDOWN_HOURS = 24       # 单策略 SL/TP 闪测 24h 一次
 RISK_OPT_MIN_LIVE_AGE_HOURS = 6
 SIGNAL_GRID_COOLDOWN_HOURS = 24    # 信号 grid optimization 24h 一次
-INVENT_COOLDOWN_HOURS = 12         # 新策略 invent 12h 一次
+INVENT_COOLDOWN_HOURS = 4          # 14k-60: 新策略 invent 12h → 4h (user 要更快循环)
 INVENT_CANDIDATE_POOL_THRESHOLD = 5  # 候选池 qualified 数 < 这个 才考虑 invent
 
 
