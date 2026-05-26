@@ -2227,14 +2227,18 @@ def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None,
     target_pct = float(t.target_pct) if t else 5.0
     days_remaining = t.days_remaining() if t else 30
 
-    # 14k-61: 撤回 14k-57 retry loop (user "轮回很没意义" — brief 没变 LLM 答案差不多)
-    # 改成单次 attempt + 不过门槛就 dismiss, 4h cooldown 后下次 advisor cycle 用新 brief 重新触发
-    # few-shot examples 保留 (catalog 优秀模板是真改进)
-    r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining,
-                            user_id=user_id, hint=hint, target_timeframe=target_timeframe)
+    # 14k-62: 用 v2 multi-step + Python verify hypothesis + 真实 trades few-shot
+    # v2 链路: 拉真 K 线 → Step1 LLM 提假设 → Step2 Python 验命中率 → Step3 LLM 编码
+    # Step2 不过门槛 (命中率<55% 或样本<10) 直接放弃, 省 Step3 LLM 调用
+    from app.services.llm_prompts.strategy_synthesize_v2 import synthesize_strategy_v2
+    tf_use = target_timeframe or '15m'
+    r = synthesize_strategy_v2(symbol, tf_use, balance, target_pct, days_remaining,
+                               user_id=user_id, hint=hint)
     if not r.get('ok'):
-        audit('synth_error', symbol=symbol, error=r.get('error'))
-        return f'synth failed: {r.get("error")}'
+        audit('synth_error', symbol=symbol, error=r.get('error'),
+              stage=r.get('stage'), verify=r.get('verify'))
+        # verify 失败也算合理拒绝, 不算 hard error
+        return f'synth v2 failed at {r.get("stage")}: {r.get("error")}'
 
     cand = StrategyCandidate(
         user_id=user_id,
