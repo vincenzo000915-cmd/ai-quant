@@ -53,6 +53,39 @@ PERMANENT_ERROR_KEYWORDS = {
     'forbidden', 'permission_denied',
 }
 
+# 14k-63: provider-level rate-limit backoff — 防 LLM 限额时雪崩 retry 浪费 + log noise
+# 每 provider 连续 N 次 fail → 进 backoff 5 分钟, 期间 call_llm 直接返回 fail 不调 LLM
+_BACKOFF_THRESHOLD = 3              # 连续 3 次 fail 触发
+_BACKOFF_DURATION_SEC = 300         # 5 分钟
+_PROVIDER_BACKOFF: dict[str, dict] = {}    # provider → {fail_count, backoff_until}
+
+
+def _provider_in_backoff(provider: str) -> tuple[bool, float]:
+    """返回 (是否 backoff 中, 剩余秒数)."""
+    state = _PROVIDER_BACKOFF.get(provider)
+    if not state:
+        return False, 0.0
+    remaining = state['backoff_until'] - time.time()
+    if remaining > 0:
+        return True, remaining
+    # backoff 过期, reset state
+    _PROVIDER_BACKOFF.pop(provider, None)
+    return False, 0.0
+
+
+def _record_provider_fail(provider: str):
+    state = _PROVIDER_BACKOFF.setdefault(provider, {'fail_count': 0, 'backoff_until': 0.0})
+    state['fail_count'] += 1
+    if state['fail_count'] >= _BACKOFF_THRESHOLD:
+        state['backoff_until'] = time.time() + _BACKOFF_DURATION_SEC
+        print(f'[llm] {provider} 连续 {state["fail_count"]} 次 fail, '
+              f'进 backoff {_BACKOFF_DURATION_SEC}s (避免雪崩 retry)')
+
+
+def _record_provider_success(provider: str):
+    """成功 → 清 backoff state."""
+    _PROVIDER_BACKOFF.pop(provider, None)
+
 
 class LlmError(Exception):
     pass
@@ -285,6 +318,11 @@ def call_llm(
         if not fn:
             last_error = f'{provider}: dispatch missing'
             continue
+        # 14k-63: backoff check — provider 在限额冷却期内直接跳过 (省 LLM call + log noise)
+        in_bo, remaining = _provider_in_backoff(provider)
+        if in_bo:
+            last_error = f'{provider}: in backoff ({remaining:.0f}s remaining)'
+            continue
         t0 = time.time()
         try:
             # Phase 12.41: 仅 claude_cli 当前支持 allowed_tools + per-call timeout
@@ -298,6 +336,8 @@ def call_llm(
             else:
                 res = fn(api_key, prompt, system, max_tokens, model)
             latency_ms = int((time.time() - t0) * 1000)
+            # 14k-63: 成功 → 清 backoff state
+            _record_provider_success(provider)
             # 寫用量（claude_cli 不記，因走訂閱沒 API token 帳）
             if provider != 'claude_cli':
                 try:
@@ -327,6 +367,9 @@ def call_llm(
             err = f'{type(e).__name__}: {e}'
             last_error = f'{provider}: {err}'
             print(f'[llm] {last_error}')
+            # 14k-63: 失败计数, 连续 3 次进 backoff (permanent error 不算 — 不会自愈)
+            if not _is_permanent_error(err):
+                _record_provider_fail(provider)
             if _is_permanent_error(err):
                 break
 
