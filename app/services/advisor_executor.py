@@ -59,6 +59,15 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     action = item['action']
     sid = item['strategy_id']
 
+    # Phase 14k-29 L6: invent 全新策略 (账户级, 不需 strategy 实例)
+    if action == 'invent_new_strategy':
+        from app.tasks.strategy_tasks import advisor_invent_strategy
+        uid = item.get('meta', {}).get('user_id') or 1
+        advisor_invent_strategy.apply_async(args=[uid], countdown=3)
+        from app.services.audit import log as audit
+        audit('advisor_invent_proposed', user_id=uid, lag_pct=item.get('meta', {}).get('lag_pct'))
+        return True, '已排程 AI invent 新策略 (async, ~60s 内完成 + 自动 backtest + 过门槛上线)'
+
     # Phase 14k-28 L2: 账户级 action 不需要 strategy 实例, 单独前置处理
     if action == 'adjust_global_sizing':
         new_sizing = item.get('meta', {}).get('new_sizing') or {}
@@ -238,6 +247,27 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                 pass
         symbols_str = ', '.join(c.symbol for c in created_objs)
         return True, f'已建立 {len(created_objs)} 個兄弟（{symbols_str}），已排回測 — 過門檻才會自動啟動'
+
+    if action == 'optimize_strategy_risk_full':
+        # Phase 14k-29 L4: 排 async task 跑 SL/TP 闪测, 通过门槛后 task 内部自动 apply
+        from app.tasks.strategy_tasks import optimize_risk_and_apply
+        optimize_risk_and_apply.apply_async(args=[sid], countdown=5)
+        from app.services.audit import log as audit
+        audit('risk_opt_proposed', strategy_id=sid)
+        return True, '已排程 SL/TP 闪测 (async, ~30s 内 + 过门槛 apply)'
+
+    if action == 'propose_signal_grid':
+        # Phase 14k-29 L5: 触发 ParamOptimization (走现有 apply_params 路径)
+        from app.models import ParamOptimization
+        from app.tasks.strategy_tasks import optimize_strategy_params
+        # 创建 record 后排 task
+        opt = ParamOptimization(strategy_id=sid, status='pending')
+        db.session.add(opt)
+        db.session.commit()
+        optimize_strategy_params.apply_async(args=[opt.id], countdown=5)
+        from app.services.audit import log as audit
+        audit('signal_grid_proposed', strategy_id=sid, optimization_id=opt.id)
+        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}, 完成后 apply_params 自动跟上)'
 
     if action == 'adjust_strategy_risk':
         # Phase 14k-28 L3: 单策略 risk_params 调整 (merge 进 strategy.params.risk_params)

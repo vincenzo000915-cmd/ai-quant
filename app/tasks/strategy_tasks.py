@@ -2014,3 +2014,103 @@ def check_hl_agent_expiry():
             warned += 1
 
     return {'warned': warned, 'expired': expired, 'checked': len(all_creds)}
+
+
+# ===== Phase 14k-29 L4: AI risk 闪测 (SL/TP grid walk-forward) =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.optimize_risk_and_apply')
+def optimize_risk_and_apply(strategy_id: int):
+    """AI risk 闪测: 跑 SL/TP grid walk-forward → 过门槛自动 merge 进 strategy.params.risk_params."""
+    from app.models import Strategy
+    from app.services.risk_optimizer import optimize_risk_params, should_apply
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as _tg
+
+    s = Strategy.query.get(strategy_id)
+    if not s:
+        return f'strategy {strategy_id} 不存在'
+    if s.status != 'running':
+        return f'strategy {strategy_id} status={s.status}, skip'
+
+    r = optimize_risk_params(s)
+    if 'error' in r:
+        audit('risk_opt_error', strategy_id=strategy_id, error=r['error'])
+        return f'risk opt error: {r["error"]}'
+
+    ok, msg = should_apply(r)
+    base = r['baseline']
+    best = r.get('best')
+
+    if not ok:
+        audit('risk_opt_no_lift', strategy_id=strategy_id,
+              baseline=base, best=best, reason=msg)
+        return f'no lift: {msg}'
+
+    # Apply: merge 进 strategy.params.risk_params
+    from sqlalchemy.orm.attributes import flag_modified
+    params = dict(s.params or {})
+    rp = dict(params.get('risk_params') or {})
+    old_sl, old_tp = rp.get('sl_pct'), rp.get('tp_pct')
+    rp['sl_pct'] = best['sl_pct']
+    rp['tp_pct'] = best['tp_pct']
+    # alias 兼容 — v8 路径用 stop_loss_pct/take_profit_pct, 同步更新
+    if 'stop_loss_pct' in rp:
+        rp['stop_loss_pct'] = best['sl_pct']
+    if 'take_profit_pct' in rp:
+        rp['take_profit_pct'] = best['tp_pct']
+    params['risk_params'] = rp
+    s.params = params
+    flag_modified(s, 'params')
+    db.session.commit()
+
+    audit('risk_opt_applied', strategy_id=strategy_id,
+          baseline=base, best=best,
+          old_sl=old_sl, old_tp=old_tp,
+          new_sl=best['sl_pct'], new_tp=best['tp_pct'])
+
+    try:
+        _tg(
+            f'🤖 <b>AI risk 闪测 apply</b>\n'
+            f'#{strategy_id} {s.name}\n'
+            f'SL: {old_sl} → {best["sl_pct"]}%\n'
+            f'TP: {old_tp} → {best["tp_pct"]}%\n'
+            f'OOS Sharpe: {base.get("oos_sharpe") or 0:.2f} → {best.get("oos_sharpe") or 0:.2f}\n'
+            f'OOS DD: {base.get("oos_dd") or 0:.1f}% → {best.get("oos_dd") or 0:.1f}%'
+        )
+    except Exception:
+        pass
+    return f'applied SL={best["sl_pct"]} TP={best["tp_pct"]}, lift={best["score"]-base["score"]:.2f}'
+
+
+# ===== Phase 14k-29 L6: advisor 主动 invent 新策略 =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.advisor_invent_strategy')
+def advisor_invent_strategy(user_id: int = 1):
+    """advisor 触发的新策略 invent — 走现有 recommend_strategies (catalog-first) 路径.
+    full_auto 模式下会自动 promote + start (走现有 _maybe_auto_apply 链路).
+    """
+    from app.services.llm_prompts.strategy_recommend import recommend_strategies
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as _tg
+
+    try:
+        r = recommend_strategies(user_id, max_recommend=2)
+    except Exception as e:
+        audit('advisor_invent_error', user_id=user_id, error=f'{type(e).__name__}: {e}')
+        return f'invent error: {e}'
+
+    if not r.get('ok'):
+        audit('advisor_invent_error', user_id=user_id, error=str(r)[:300])
+        return f'invent fail: {r}'
+
+    n = r.get('total_recommendations') or len(r.get('recommendations') or [])
+    audit('advisor_invent_applied', user_id=user_id, total=n,
+          mode=r.get('mode'))
+    try:
+        if n > 0:
+            _tg(f'🤖 <b>AI 主动创新策略</b>\n'
+                f'目标落后触发, 新增 {n} 个候选 (mode={r.get("mode")}).\n'
+                f'回测过门槛会自动上线.')
+    except Exception:
+        pass
+    return f'invented {n} candidates'

@@ -385,6 +385,32 @@ def build_recommendations(user_id: int = 1) -> dict:
     except Exception as e:
         print(f'[advisor] strategy_risk_adjust skipped: {type(e).__name__}: {e}')
 
+    # Phase 14k-29 L4: 单策略 SL/TP 闪测 (走 walk-forward, 过门槛由 task 内自动 apply)
+    try:
+        for s in running:
+            opt_item = _strategy_risk_opt_item(s)
+            if opt_item:
+                items.append(opt_item)
+    except Exception as e:
+        print(f'[advisor] strategy_risk_opt skipped: {type(e).__name__}: {e}')
+
+    # Phase 14k-29 L5: AI 提议信号 grid → 触发 ParamOptimization (走现有 apply_params 路径)
+    try:
+        for s in running:
+            grid_item = _signal_grid_propose_item(s, target_ctx)
+            if grid_item:
+                items.append(grid_item)
+    except Exception as e:
+        print(f'[advisor] signal_grid_propose skipped: {type(e).__name__}: {e}')
+
+    # Phase 14k-29 L6: 主动 invent 新策略 (目标 lag 模式 + 候选池稀薄)
+    try:
+        invent_item = _invent_new_strategy_item(user_id, target_ctx)
+        if invent_item:
+            items.append(invent_item)
+    except Exception as e:
+        print(f'[advisor] invent_new_strategy skipped: {type(e).__name__}: {e}')
+
     # 嚴重度排序：critical > warn > info
     sev_rank = {'critical': 0, 'warn': 1, 'info': 2}
     items.sort(key=lambda x: (sev_rank.get(x['severity'], 9), x['action']))
@@ -605,5 +631,133 @@ def _strategy_risk_adjust_item(strategy, target_ctx: dict) -> dict | None:
             'max_dd': max_dd,
             'target_lag_pct': target_ctx.get('lag_pct'),
             'target_dd_pct': target_ctx.get('dd_pct'),
+        },
+    }
+
+
+# ===== Phase 14k-29 L4-L6: AI 自动化突破回测护栏 =====
+
+RISK_OPT_COOLDOWN_HOURS = 24       # 单策略 SL/TP 闪测 24h 一次
+RISK_OPT_MIN_LIVE_AGE_HOURS = 6
+SIGNAL_GRID_COOLDOWN_HOURS = 24    # 信号 grid optimization 24h 一次
+INVENT_COOLDOWN_HOURS = 12         # 新策略 invent 12h 一次
+INVENT_CANDIDATE_POOL_THRESHOLD = 5  # 候选池 qualified 数 < 这个 才考虑 invent
+
+
+def _strategy_risk_opt_item(strategy) -> dict | None:
+    """L4: 排 SL/TP 闪测. executor 触发 async task, task 内部跑 walk-forward + 过门槛 apply."""
+    import datetime as _dt
+    from app.models import AuditLog
+
+    if not strategy.created_at:
+        return None
+    age_h = (_dt.datetime.utcnow() - strategy.created_at).total_seconds() / 3600.0
+    if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
+        return None
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=RISK_OPT_COOLDOWN_HOURS)
+    recent = AuditLog.query.filter(
+        AuditLog.event_type.in_(['risk_opt_applied', 'risk_opt_no_lift', 'risk_opt_error', 'risk_opt_proposed']),
+        AuditLog.created_at > cutoff,
+    ).all()
+    if any((a.context or {}).get('strategy_id') == strategy.id for a in recent):
+        return None
+
+    return {
+        'action': 'optimize_strategy_risk_full',
+        'strategy_id': strategy.id,
+        'strategy_name': strategy.name,
+        'severity': 'info',
+        'reason': '24h 未做 SL/TP 闪测, 排一次',
+        'meta': {},
+    }
+
+
+def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
+    """L5: AI 提议信号 grid → 触发 ParamOptimization → 完成后由现有 apply_params 路径接走.
+
+    复用 GRIDS 死字典 (省 LLM 钱), 但只在 24h 内未跑过 + 策略需要优化时排.
+    需要优化判定: 最近 backtest sharpe < 1.5, 或 user target lag mode.
+    """
+    import datetime as _dt
+    from app.models import AuditLog, ParamOptimization
+
+    if not strategy.created_at:
+        return None
+    age_h = (_dt.datetime.utcnow() - strategy.created_at).total_seconds() / 3600.0
+    if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
+        return None
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
+    recent_opt = ParamOptimization.query.filter(
+        ParamOptimization.strategy_id == strategy.id,
+        ParamOptimization.started_at > cutoff,
+    ).first()
+    if recent_opt:
+        return None
+
+    # 触发条件: target lag mode 或 现有 sharpe 偏弱
+    needs_optim = bool(target_ctx.get('lag_mode'))
+    if not needs_optim:
+        bt = _latest_backtest(strategy.id)
+        sharpe = (bt.sharpe_ratio if bt else None) or 0
+        needs_optim = sharpe < 1.5
+
+    if not needs_optim:
+        return None
+
+    # 24h 内 audit 标记防重排
+    audit_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIGNAL_GRID_COOLDOWN_HOURS)
+    recent_audit = AuditLog.query.filter(
+        AuditLog.event_type == 'signal_grid_proposed',
+        AuditLog.created_at > audit_cutoff,
+    ).all()
+    if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_audit):
+        return None
+
+    return {
+        'action': 'propose_signal_grid',
+        'strategy_id': strategy.id,
+        'strategy_name': strategy.name,
+        'severity': 'info',
+        'reason': '需要参数优化, 排一次 walk-forward grid search',
+        'meta': {'target_lag_mode': bool(target_ctx.get('lag_mode'))},
+    }
+
+
+def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
+    """L6: 主动让 AI 创新策略. 触发条件:
+    - 目标 lag mode (落后 > 5%)
+    - 候选池 qualified 不足
+    - 12h cooldown
+    """
+    import datetime as _dt
+    from app.models import AuditLog, StrategyCandidate
+
+    if target_ctx.get('none') or not target_ctx.get('lag_mode'):
+        return None
+
+    qualified_pool = StrategyCandidate.query.filter_by(status='qualified').count()
+    if qualified_pool >= INVENT_CANDIDATE_POOL_THRESHOLD:
+        return None
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=INVENT_COOLDOWN_HOURS)
+    recent = AuditLog.query.filter(
+        AuditLog.event_type.in_(['advisor_invent_proposed', 'advisor_invent_applied', 'advisor_invent_error']),
+        AuditLog.created_at > cutoff,
+    ).first()
+    if recent:
+        return None
+
+    return {
+        'action': 'invent_new_strategy',
+        'strategy_id': 0,
+        'strategy_name': '系统级 invent',
+        'severity': 'info',
+        'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + 候选池只有 {qualified_pool} qualified, 创新策略追赶',
+        'meta': {
+            'user_id': user_id,
+            'lag_pct': target_ctx.get('lag_pct'),
+            'qualified_pool': qualified_pool,
         },
     }
