@@ -1585,7 +1585,7 @@ def update_system_config():
             }), 403
         # 通過，附帶記錄上鎖時間
         from app.services.telegram_service import send as _tg
-        _tg('🟢 <b>TRADING MODE → LIVE</b>\nPre-flight 全過。實盤已啟動。\n下單會直接走 OKX。', force=True)
+        _tg('🟢 <b>实盘模式已启动</b>\n所有上线前检查通过，从现在开始策略会用真钱在 OKX 下单。', force=True)
     # Phase 14c/14k-23: ai_decision_mode 分级 tier 守
     # manual: 所有人
     # semi_auto: Pro+

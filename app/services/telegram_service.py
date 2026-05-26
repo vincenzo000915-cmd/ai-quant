@@ -63,31 +63,46 @@ def send(text: str, *, parse_mode: str = 'HTML', event_key: str | None = None, f
 
 # === 高層輔助：常見事件的格式化 ===
 
+# Phase 14k-34: notify_* 文案中文化 (高频通知, 之前全英文不专业)
+_SIDE_ZH = {'long': '做多', 'short': '做空', 'buy': '买入', 'sell': '卖出'}
+_CLOSE_REASON_ZH = {
+    'take_profit': '触发止盈',
+    'stop_loss': '触发止损',
+    'manual': '手动平仓',
+    'kill_switch': '紧急平仓',
+    'reverse_signal': '反向信号',
+    'end_of_period': '回测结束',
+    'close': '平仓信号',
+}
+
+
 def notify_open(strategy_name: str, symbol: str, side: str, size: float, price: float, notional: float):
-    text = (f'🟢 <b>OPEN</b> {strategy_name}\n'
-            f'{symbol} {side.upper()} {size:.6f} @ ${price:.2f}\n'
-            f'名義 ${notional:.0f}')
+    side_zh = _SIDE_ZH.get(str(side).lower(), side)
+    text = (f'🟢 <b>开仓</b> {strategy_name}\n'
+            f'{symbol} · {side_zh} · {size:.6f} 张 · ${price:.2f}\n'
+            f'仓位 ${notional:.0f}')
     return send(text, event_key=f'open:{strategy_name}')
 
 
 def notify_close(strategy_name: str, symbol: str, price: float, pnl: float, pnl_pct: float, reason: str):
     emoji = '🟢' if pnl > 0 else '🔴'
-    text = (f'{emoji} <b>CLOSE</b> {strategy_name}\n'
+    reason_zh = _CLOSE_REASON_ZH.get(str(reason).lower(), reason)
+    text = (f'{emoji} <b>平仓</b> {strategy_name}\n'
             f'{symbol} @ ${price:.2f}\n'
-            f'PnL ${pnl:+.2f} ({pnl_pct:+.2f}%) · {reason}')
+            f'盈亏 ${pnl:+.2f} ({pnl_pct:+.2f}%) · {reason_zh}')
     return send(text, event_key=f'close:{strategy_name}')
 
 
 def notify_halt(reason: str):
-    text = f'🛑 <b>SYSTEM HALTED</b>\n{reason}\n\n所有新開倉信號被拒。手動點 Dashboard 紅條解除。'
+    text = f'🛑 <b>系统已自动停单</b>\n原因: {reason}\n\n所有新开仓信号被拒. 请到 Dashboard 解除停单状态后才能继续交易.'
     return send(text, event_key='halt', force=True)
 
 
 def notify_retire(strategy_name: str, reason: str):
-    text = f'🪦 <b>策略退役</b> {strategy_name}\n{reason}'
+    text = f'🪦 <b>策略已退役</b> {strategy_name}\n原因: {reason}'
     return send(text, event_key=f'retire:{strategy_name}')
 
 
-def notify_kill_switch(reason: str = 'manual'):
-    text = f'🆘 <b>KILL SWITCH</b>\n{reason}\n所有策略已 stopped，所有持倉已強平。'
+def notify_kill_switch(reason: str = '手动'):
+    text = f'🆘 <b>紧急停止已启动</b>\n触发原因: {reason}\n所有策略已停止, 所有持仓已强制平仓.'
     return send(text, event_key='kill', force=True)

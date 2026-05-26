@@ -471,11 +471,11 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
             risk_line = ' · '.join(risk_line_parts)
 
             _tg(
-                f'🤖 <b>AI 自动上线策略</b> ({mode_zh}模式)\n'
+                f'🤖 <b>AI 已自动上线一个策略</b>（{mode_zh}模式）\n'
                 f'#{sid} {pretty_name}\n'
-                f'交易对 {sym} · OOS Sharpe {sharpe}\n'
+                f'交易对 {sym} · 回测表现评分 {sharpe}\n'
                 f'{risk_line}\n\n'
-                f'已开启运行 · <a href="https://ai-quant.medias-ai.cloud/">面板查看</a>',
+                f'已开始运行 · <a href="https://ai-quant.medias-ai.cloud/">打开控制台</a>',
                 event_key='auto_apply'
             )
     except Exception:

@@ -92,9 +92,9 @@ def reconcile() -> dict:
                     'pnl': round(pnl, 4),
                 })
                 _tg(
-                    f'⚠️ <b>對賬: 本地孤兒</b>\n'
-                    f'本地 #{lp.id} ({lp.symbol} {lp.side}) 顯示 open，但 OKX 無此倉。\n'
-                    f'已本地 close，估 PnL ${pnl:.2f}。',
+                    f'⚠️ <b>账户对账: 持仓已自动关闭</b>\n'
+                    f'系统记录的持仓 #{lp.id} ({lp.symbol} {lp.side}) 显示在持仓中，但交易所那边已经平掉了。\n'
+                    f'已同步关闭本地记录，估算盈亏 ${pnl:.2f}。',
                     event_key=f'orphan_local_{lp.id}',
                 )
             except Exception as e:
@@ -115,9 +115,9 @@ def reconcile() -> dict:
         )
         set_halted(f'reconcile: OKX 有 {len(okx_orphans)} 個本地不存在的持倉')
         _tg(
-            f'🚨 <b>對賬: OKX 孤兒（HALT 已觸發）</b>\n'
-            f'OKX 帳戶有本地不知道的持倉：\n{details}\n\n'
-            f'手動處理：到 OKX 看是哪個策略/誤開，平倉後到 Dashboard 解 halt。',
+            f'🚨 <b>账户对账: 发现异常持仓（已自动停止开新单）</b>\n'
+            f'OKX 账户有系统不知道的持仓:\n{details}\n\n'
+            f'请到 OKX 检查是手动开的还是哪个策略误开, 平仓后到 Dashboard 解除停单状态.',
             event_key='orphan_okx', force=True,
         )
         actions.append({'type': 'okx_orphan_halted', 'count': len(okx_orphans), 'details': okx_orphans})
@@ -143,7 +143,7 @@ def reconcile() -> dict:
             for d in drift_alerts
         )
         _tg(
-            f'⚠️ <b>對賬: 倉位大小不一致</b>\n{details}\n\n非 fatal 但建議手動 check。',
+            f'⚠️ <b>账户对账: 持仓大小与交易所不一致</b>\n{details}\n\n不影响运行, 但建议手动检查一下.',
             event_key='size_drift',
         )
         actions.append({'type': 'size_drift', 'items': drift_alerts})

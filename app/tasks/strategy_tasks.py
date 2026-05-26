@@ -81,7 +81,7 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                            user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
                            reason='Phase 14k-6 — HL agent 180 天授权已过期, 需重新签名')
                     from app.services.telegram_service import send as _tg
-                    _tg(f'🔴 <b>HL agent 已过期</b>\nuser_id={user_id}: agent wallet 授权过期, 已停 LIVE. 去 Settings 重新绑定.',
+                    _tg(f'🔴 <b>Hyperliquid 交易授权已过期</b>\n你的 HL 子账号授权过期了，已自动停止实盘交易。请到「设置 → Hyperliquid」重新绑定。',
                         event_key=f'hl_expired_{user_id}')
                 except Exception:
                     pass
@@ -1013,7 +1013,7 @@ def backtest_and_maybe_start(strategy_id: int):
         candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=2000)
     except Exception as e:
         try:
-            _tg(f'🟡 兄弟回測失敗 #{strategy.id} {strategy.name}：拉 K 線錯誤 {e}')
+            _tg(f'🟡 <b>新增策略回测失败</b>\n#{strategy.id} {strategy.name}: 无法拉取 K 线数据，稍后会自动重试')
         except Exception:
             pass
         return f'fetch failed: {e}'
@@ -1027,20 +1027,20 @@ def backtest_and_maybe_start(strategy_id: int):
     oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
     is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
 
-    msg_head = f'<b>兄弟策略回测</b> #{strategy.id} {strategy.name}\n交易对 {strategy.symbol} · {strategy.timeframe}'
+    msg_head = f'<b>新增策略回测完成</b> #{strategy.id} {strategy.name}\n交易对 {strategy.symbol} · {strategy.timeframe}'
     if oos is None:
-        _tg(f'🟡 {msg_head}\n样本太少, OOS Sharpe 无法计算, 保持停止状态')
+        _tg(f'🟡 {msg_head}\n历史数据样本太少, 无法判断表现, 已保持停止状态')
         return 'oos None, kept stopped'
 
     if oos >= min_sharpe:
         if auto_start:
             strategy.status = 'running'
             db.session.commit()
-            _tg(f'🟢 {msg_head}\nOOS Sharpe {oos:.2f} ≥ 门槛 {min_sharpe} → 已自动启动')
+            _tg(f'🟢 {msg_head}\n表现评分 {oos:.2f}（高于门槛 {min_sharpe}），已自动启动')
             return f'started, oos={oos:.2f}'
-        _tg(f'🟢 {msg_head}\nOOS Sharpe {oos:.2f} 通过, 但已关闭自动启动, 请手动开启')
+        _tg(f'🟢 {msg_head}\n表现评分 {oos:.2f} 通过门槛，但你关闭了自动启动，请手动启用')
         return f'passed but auto_start off, oos={oos:.2f}'
-    _tg(f'🔴 {msg_head}\nOOS Sharpe {oos:.2f} < 门槛 {min_sharpe}, 行情不适合, 未启动')
+    _tg(f'🔴 {msg_head}\n表现评分 {oos:.2f} 低于门槛 {min_sharpe}，当前行情不适合，未启动')
     return f'rejected, oos={oos:.2f}'
 
 
@@ -1417,17 +1417,17 @@ def auto_ai_improve_strategies():
         mode_zh = {'manual': '手动', 'semi_auto': '半自动', 'full_auto': '全自动'}.get(mode, mode)
         if auto_applied:
             _tg(
-                f'🤖 <b>AI 自动上线策略</b> ({mode_zh}模式)\n'
-                f'已上架 {len(auto_applied)} 个 / 推荐 {len(recs)} 个\n\n'
+                f'🤖 <b>AI 已自动上线策略</b>（{mode_zh}模式）\n'
+                f'本轮上线 {len(auto_applied)} 个 / AI 推荐 {len(recs)} 个\n\n'
                 + '\n'.join(lines)
-                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">面板查看</a>',
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">打开控制台</a>',
                 event_key='ai_improve_daily',
             )
         elif awaiting:
             _tg(
-                f'🤖 <b>AI 推荐 {len(awaiting)} 个策略待审核</b> ({mode_zh}模式)\n\n'
+                f'🤖 <b>AI 推荐了 {len(awaiting)} 个策略等你审核</b>（{mode_zh}模式）\n\n'
                 + '\n'.join(lines)
-                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键应用</a>',
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键启用</a>',
                 event_key='ai_improve_daily',
             )
     except Exception:
@@ -2118,12 +2118,12 @@ def optimize_risk_and_apply(self, strategy_id: int):
 
     try:
         _tg(
-            f'🤖 <b>AI risk 闪测 apply</b>\n'
+            f'🤖 <b>AI 已优化策略止损/止盈</b>\n'
             f'#{strategy_id} {s.name}\n'
-            f'SL: {old_sl} → {best["sl_pct"]}%\n'
-            f'TP: {old_tp} → {best["tp_pct"]}%\n'
-            f'OOS Sharpe: {base.get("oos_sharpe") or 0:.2f} → {best.get("oos_sharpe") or 0:.2f}\n'
-            f'OOS DD: {base.get("oos_dd") or 0:.1f}% → {best.get("oos_dd") or 0:.1f}%'
+            f'止损: {old_sl}% → {best["sl_pct"]}%\n'
+            f'止盈: {old_tp}% → {best["tp_pct"]}%\n'
+            f'表现评分: {base.get("oos_sharpe") or 0:.2f} → {best.get("oos_sharpe") or 0:.2f}\n'
+            f'回撤: {base.get("oos_dd") or 0:.1f}% → {best.get("oos_dd") or 0:.1f}%'
         )
     except Exception:
         pass
@@ -2156,9 +2156,9 @@ def advisor_invent_strategy(user_id: int = 1):
           mode=r.get('mode'))
     try:
         if n > 0:
-            _tg(f'🤖 <b>AI 主动创新策略</b>\n'
-                f'目标落后触发, 新增 {n} 个候选 (mode={r.get("mode")}).\n'
-                f'回测过门槛会自动上线.')
+            _tg(f'🤖 <b>AI 已加入新策略候选</b>\n'
+                f'因为离目标进度有差距, AI 主动加了 {n} 个候选策略.\n'
+                f'回测通过后会自动上线.')
     except Exception:
         pass
     return f'invented {n} candidates'
@@ -2275,11 +2275,17 @@ def auto_revert_ai_changes():
               reason='; '.join(reason),
               restored_params=before)
         try:
-            _tg(f'⏪ <b>AI 改动 auto-revert</b>\n'
+            ACTION_LABELS = {
+                'apply_params': '调整信号参数',
+                'adjust_strategy_risk': '调整杠杆/仓位',
+                'risk_opt_applied': '优化止损/止盈',
+            }
+            action_label = ACTION_LABELS.get(ctx.get('action'), ctx.get('action') or '调整参数')
+            _tg(f'⏪ <b>AI 已自动还原参数</b>\n'
                 f'#{sid} {s.name}\n'
-                f'原动作: {ctx.get("action")}\n'
-                f'退化原因: {"; ".join(reason)}\n'
-                f'已还原到改前 params')
+                f'原本动作: {action_label}\n'
+                f'还原原因: {"; ".join(reason)}\n'
+                f'已恢复到改动前的设置')
         except Exception:
             pass
         reverted += 1

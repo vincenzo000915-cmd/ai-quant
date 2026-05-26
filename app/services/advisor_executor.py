@@ -135,10 +135,10 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         if cfg.get('trading_mode') == 'live':
             # Phase 10.9: 不再靜默 — 推 Telegram 告訴 user「該退役但跳過」
             _telegram_safe(
-                f'⚠️ <b>AI 托管: 建议退役但已跳过</b> (LIVE 模式安全网)\n'
+                f'⚠️ <b>AI 建议退役一个策略</b>（实盘安全机制：未自动执行）\n'
                 f'#{sid} {strategy.name}\n'
                 f'原因: {item.get("reason", "")[:200]}\n'
-                f'若同意, 请手动到策略表退役'
+                f'如果你同意, 请到「策略列表」手动退役'
             )
             return False, 'LIVE 模式禁止自动 retire, 已推 Telegram 提醒手动处理'
         if strategy.status == 'retired':
@@ -204,10 +204,10 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             new_strat.status = 'running'
             db.session.commit()
         _telegram_safe(
-            f'🚀 <b>AI 托管: 自動上線新策略</b>\n'
+            f'🚀 <b>AI 已自动上线新策略</b>\n'
             f'#{new_sid} · {new_strat.name if new_strat else "?"}\n'
-            f'OOS Sharpe = {oos:.2f}\n'
-            f'已開啟運行, 等待下次信號'
+            f'回测表现评分 = {oos:.2f}\n'
+            f'已开始运行, 等待下次买/卖信号'
         )
         return True, f'已 promote 候選 #{cid} → strategy #{new_sid}（已啟動）'
 
@@ -397,11 +397,25 @@ def run_auto_apply() -> dict:
             skipped.append({'item': item, 'why': msg})
 
     if applied:
-        lines = [f'🤖 <b>智能托管自動執行</b>（{len(applied)} 項）']
+        # 14k-33: action 中文化, 用 user 看得懂的描述
+        ACTION_LABELS = {
+            'apply_params': '调整信号参数',
+            'pause': '暂停策略',
+            'retire': '退役策略',
+            'fan_out': '扩展到其他币种',
+            'promote_candidate': '上线新策略',
+            'adjust_global_sizing': '调整账户级仓位',
+            'adjust_strategy_risk': '调整杠杆/仓位',
+            'optimize_strategy_risk_full': '优化止损/止盈',
+            'propose_signal_grid': '排程参数优化',
+            'invent_new_strategy': '创建新候选策略',
+        }
+        lines = [f'🤖 <b>AI 已自动执行 {len(applied)} 项操作</b>']
         for r in applied:
-            lines.append(f"• {r['action']} #{r['strategy_id']} {r['strategy_name']}: {r['message']}")
+            label = ACTION_LABELS.get(r['action'], r['action'])
+            lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")
         if already_today + len(applied) >= daily_cap:
-            lines.append(f'\n今日已達上限 {daily_cap}，剩下今日不會再動。')
+            lines.append(f'\n今日已达上限 {daily_cap} 项, 剩下时间不会再自动操作.')
         _telegram_safe('\n'.join(lines))
 
     return {
