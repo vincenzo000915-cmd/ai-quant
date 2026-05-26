@@ -2538,12 +2538,80 @@ def cleanup_stale_candidates():
 
     db.session.commit()
 
+    # 14k-53 步骤 8: 大 JSON 字段瘦身 — backtest_results 关联 dismissed/archived/error
+    # 30d+ 的 candidate, 删 equity_curve/trades_json/walkforward_json (保留 sharpe/PnL metrics)
+    # 这是 DB 真 hog — 一个 backtest ~360 KB, 数百个累积 100+ MB
+    from app.models import BacktestResult
+    cutoff_30d_bt = now - _dt.timedelta(days=30)
+    # 不在 SQL 层比 JSON 是否空 (PG JSON 不支持 !=), 拉出后 Python 判
+    fat_bt = (db.session.query(BacktestResult)
+              .join(StrategyCandidate, BacktestResult.id == StrategyCandidate.backtest_result_id)
+              .filter(StrategyCandidate.status.in_(['dismissed', 'archived', 'error']))
+              .filter(BacktestResult.created_at < cutoff_30d_bt)
+              .all())
+    bt_slimmed = 0
+    for bt in fat_bt:
+        needs_slim = bool(bt.equity_curve) or bool(bt.trades_json)
+        if not needs_slim:
+            continue
+        bt.equity_curve = []
+        bt.trades_json = []
+        # walkforward_json 保留 metrics (sharpe / decay / oos_sharpe), 只清内嵌 equity_curve/trades
+        wf = dict(bt.walkforward_json or {})
+        for seg_key in ('full', 'in_sample', 'out_sample'):
+            seg = wf.get(seg_key)
+            if isinstance(seg, dict):
+                seg = dict(seg)
+                seg['equity_curve'] = []
+                seg['trades'] = []
+                wf[seg_key] = seg
+        bt.walkforward_json = wf
+        bt_slimmed += 1
+
+    # 14k-53 步骤 8.5: orphan backtest_results (没 strategy 引用 + 没 candidate 引用) → 直接 delete
+    # 真 DB hog — retest 每次 INSERT 新 row, candidate.backtest_result_id 只指向最新, 旧的孤儿
+    from sqlalchemy import text as _sql_text
+    cutoff_3d_orphan = now - _dt.timedelta(days=3)   # 3d+ 才删, 给现跑的 backtest 缓冲
+    orphan_result = db.session.execute(_sql_text("""
+        DELETE FROM backtest_results br
+        WHERE br.strategy_id IS NULL
+          AND br.created_at < :cutoff
+          AND NOT EXISTS (
+              SELECT 1 FROM strategy_candidates sc WHERE sc.backtest_result_id = br.id
+          )
+    """), {'cutoff': cutoff_3d_orphan})
+    orphan_deleted = orphan_result.rowcount or 0
+
+    # 14k-53 步骤 9: 物理 delete dismissed/archived candidates > 60d
+    # (保留 promoted 历史不动 — 用作 audit / 强化学习数据)
+    cutoff_60d = now - _dt.timedelta(days=60)
+    deletable = StrategyCandidate.query.filter(
+        StrategyCandidate.status.in_(['dismissed', 'archived', 'error']),
+        StrategyCandidate.created_at < cutoff_60d,
+    ).all()
+    candidates_deleted = 0
+    for c in deletable:
+        # 先删关联 backtest_result (避免孤儿)
+        if c.backtest_result_id:
+            try:
+                bt = BacktestResult.query.get(c.backtest_result_id)
+                if bt and bt.strategy_id is None:  # candidate-stage backtest, 不是 live strategy 的
+                    db.session.delete(bt)
+            except Exception:
+                pass
+        db.session.delete(c)
+        candidates_deleted += 1
+
+    db.session.commit()
+
     summary = (f'cleanup: candidates archived_no_hope={archived_no_hope} '
                f'stale={moved_to_stale} stale→archived={moved_to_archived} '
                f'translated_dismissed={stuck_translated_dismissed} '
                f'backtesting_error={stuck_backtesting_error} '
                f'old_promoted_archived={old_promoted_archived} '
-               f'strategies stopped→retired={stopped_to_retired}')
+               f'strategies stopped→retired={stopped_to_retired} '
+               f'bt_slimmed={bt_slimmed} candidates_deleted={candidates_deleted} '
+               f'orphan_bt_deleted={orphan_deleted}')
     audit('candidates_cleanup', actor='system',
           archived_no_hope=archived_no_hope,
           stale=moved_to_stale,
@@ -2551,7 +2619,10 @@ def cleanup_stale_candidates():
           translated_dismissed=stuck_translated_dismissed,
           backtesting_error=stuck_backtesting_error,
           old_promoted_archived=old_promoted_archived,
-          stopped_to_retired=stopped_to_retired)
+          stopped_to_retired=stopped_to_retired,
+          bt_slimmed=bt_slimmed,
+          candidates_deleted=candidates_deleted,
+          orphan_bt_deleted=orphan_deleted)
     return summary
 
 
