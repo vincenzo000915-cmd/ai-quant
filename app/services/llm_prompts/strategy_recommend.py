@@ -327,16 +327,18 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
     Phase 14e: 同时自适应 risk_params 到 user 实际资金
     Phase 14k-13: target_exchange 记 source_meta, 让 promote_candidate 知道分配哪个交易所
     """
+    from app.services.strategy_naming import prettify_candidate_type
     cm = entry.catalog_meta or {}
     rec_risk = cm.get('recommended_risk') or {}
     # 14e: 自适应 risk
     adapted_risk = _adapt_risk_to_capital(rec_risk, symbol, capital, prices or {}, trade_size_default)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')
     cloned_type = f'{entry.candidate_type}_u{user_id}_{timestamp}'
+    display_name = cm.get('display_name') or prettify_candidate_type(entry.candidate_type)
     clone = StrategyCandidate(
         source='catalog_clone',
         source_url=entry.source_url,
-        source_name=f'AI 推荐 {entry.candidate_type} (user {user_id})',
+        source_name=f'AI 推荐 · {display_name}',
         source_author=entry.source_author,
         source_meta={
             'symbol': symbol,
@@ -344,6 +346,7 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
             'cloned_from_catalog_id': entry.id,
             'cloned_at': timestamp,
             'description': cm.get('description'),
+            'display_name': display_name,
             'target_exchange': target_exchange,    # Phase 14k-13
         },
         raw_code=f'# Cloned from catalog id={entry.id}\n{entry.raw_code or ""}',

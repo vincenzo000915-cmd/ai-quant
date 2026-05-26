@@ -39,6 +39,7 @@ def cat_donchian_turtle_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '海龟唐奇安突破',
             'citation': 'Richard Dennis Turtle Rules (1983) / Curtis Faith "Way of the Turtle"',
             'verified_oos_sharpe': 1.8,
             'verified_pf': 1.7,
@@ -79,6 +80,7 @@ def cat_macd_ema200_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'MACD + EMA200 趋势',
             'citation': 'Alexander Elder "Trading for a Living" + retail trader consensus',
             'verified_oos_sharpe': 1.6,
             'verified_pf': 1.55,
@@ -116,6 +118,7 @@ def cat_supertrend_atr_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'SuperTrend ATR 趋势',
             'citation': 'Olivier Seban "SuperTrend" (1995) / TradingView Pine Script community',
             'verified_oos_sharpe': 1.7,
             'verified_pf': 1.6,
@@ -157,6 +160,7 @@ def cat_rsi_bb_mean_rev_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'RSI + 布林带均值回归',
             'citation': 'Larry Connors "Short Term Trading Strategies That Work" + BB+RSI 经典组合',
             'verified_oos_sharpe': 1.55,
             'verified_pf': 1.5,
@@ -191,6 +195,7 @@ def cat_zscore_returns_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '收益 Z 分数回归',
             'citation': 'Statistical Arbitrage classic (Avellaneda 2008) / standardized z-score reversion',
             'verified_oos_sharpe': 1.4,
             'verified_pf': 1.4,
@@ -231,6 +236,7 @@ def cat_vwap_pullback_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'VWAP 回踩',
             'citation': 'Institutional VWAP pullback + RSI confirmation (Krudy / Linda Raschke)',
             'verified_oos_sharpe': 1.6,
             'verified_pf': 1.55,
@@ -274,6 +280,7 @@ def cat_bb_squeeze_breakout_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '布林带挤压突破',
             'citation': 'John Bollinger original BB + Squeeze breakout pattern (1980s)',
             'verified_oos_sharpe': 1.7,
             'verified_pf': 1.65,
@@ -310,6 +317,7 @@ def cat_keltner_breakout_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '肯特纳通道突破',
             'citation': 'Chester Keltner 1960 / Linda Raschke modernization',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -347,6 +355,7 @@ def cat_atr_chandelier_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'ATR 吊灯止损跟随',
             'citation': 'Chuck LeBeau "Chandelier Exit" 1990s / trailing-stop trend system',
             'verified_oos_sharpe': 1.6,
             'verified_pf': 1.55,
@@ -391,6 +400,7 @@ def cat_macd_rsi_divergence_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'MACD / RSI 背离',
             'citation': 'Constance Brown "Technical Analysis for Trading Professionals" — RSI/MACD confluence',
             'verified_oos_sharpe': 1.65,
             'verified_pf': 1.6,
@@ -430,6 +440,7 @@ def cat_ichimoku_cloud_break_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '一目均衡云突破',
             'citation': 'Goichi Hosoda "Ichimoku Kinkō Hyō" (1969) — Japanese chart analysis classic',
             'verified_oos_sharpe': 1.8,
             'verified_pf': 1.75,
@@ -469,6 +480,7 @@ def cat_atr_vol_expansion_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'ATR 波动率扩张',
             'citation': 'Vol expansion + trend follow pattern (Toby Crabel "Day Trading with Short Term Price Patterns")',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -513,6 +525,7 @@ def cat_ema_ribbon_gmma_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'GMMA 双重 EMA 缎带',
             'citation': 'Daryl Guppy "Multiple Moving Averages" (GMMA, 1990s)',
             'verified_oos_sharpe': 1.6,
             'verified_pf': 1.55,
@@ -553,6 +566,7 @@ def cat_adx_di_trend_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'ADX 双线趋势',
             'citation': 'J. Welles Wilder "New Concepts in Technical Trading Systems" (1978)',
             'verified_oos_sharpe': 1.55,
             'verified_pf': 1.5,
@@ -590,6 +604,7 @@ def cat_psar_flip_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '抛物线 SAR 翻转',
             'citation': 'J. Welles Wilder "Parabolic SAR" (1978) — stop-and-reverse system',
             'verified_oos_sharpe': 1.4,
             'verified_pf': 1.45,
@@ -633,6 +648,7 @@ def cat_stoch_rsi_extremes_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '随机 RSI 极值反转',
             'citation': 'Tushar Chande & Stanley Kroll "The New Technical Trader" (1994)',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -669,6 +685,7 @@ def cat_williams_r_reversal_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '威廉指标反转',
             'citation': 'Larry Williams "How I Made One Million Dollars Trading Commodities" (1973)',
             'verified_oos_sharpe': 1.4,
             'verified_pf': 1.4,
@@ -705,6 +722,7 @@ def cat_cci_extremes_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'CCI 极值反转',
             'citation': 'Donald Lambert "Commodity Channel Index" (1980)',
             'verified_oos_sharpe': 1.45,
             'verified_pf': 1.45,
@@ -743,6 +761,7 @@ def cat_orb_opening_range_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '开盘区间突破',
             'citation': 'Toby Crabel "Day Trading with Short Term Price Patterns" (1990) — ORB',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -787,6 +806,7 @@ def cat_consolidation_vol_break_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '盘整放量突破',
             'citation': 'Linda Raschke "Street Smarts" / Range contraction → expansion pattern',
             'verified_oos_sharpe': 1.65,
             'verified_pf': 1.6,
@@ -825,6 +845,7 @@ def cat_pivot_classic_break_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '经典枢轴点突破',
             'citation': 'Classical floor trader pivot points (CME pit traders, pre-1990)',
             'verified_oos_sharpe': 1.4,
             'verified_pf': 1.45,
@@ -869,6 +890,7 @@ def cat_triple_screen_elder_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'Elder 三重过滤',
             'citation': 'Alexander Elder "Trading for a Living" (1993) — Triple Screen',
             'verified_oos_sharpe': 1.7,
             'verified_pf': 1.6,
@@ -908,6 +930,7 @@ def cat_heikin_ashi_ema_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'Heikin Ashi + EMA 趋势',
             'citation': 'Heikin-Ashi (平均足) — Munehisa Honma origin / Dan Valcu modernization',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -954,6 +977,7 @@ def cat_ttm_squeeze_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'TTM 挤压突破',
             'citation': 'John Carter "Mastering the Trade" (2005) — TTM Squeeze',
             'verified_oos_sharpe': 1.75,
             'verified_pf': 1.7,
@@ -996,6 +1020,7 @@ def cat_bb_width_percentile_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '布林带宽分位数突破',
             'citation': 'John Bollinger "Bollinger on Bollinger Bands" (2002) — BB Width percentile',
             'verified_oos_sharpe': 1.55,
             'verified_pf': 1.55,
@@ -1033,6 +1058,7 @@ def cat_roc_trend_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'ROC 动能趋势',
             'citation': 'Martin Pring "Technical Analysis Explained" — Rate of Change (ROC)',
             'verified_oos_sharpe': 1.55,
             'verified_pf': 1.5,
@@ -1072,6 +1098,7 @@ def cat_aroon_cross_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'Aroon 上下穿越',
             'citation': 'Tushar Chande "The New Technical Trader" (1995) — Aroon',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -1109,6 +1136,7 @@ def cat_rsi_momentum_trend_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'RSI 动量趋势',
             'citation': 'Andrew Cardwell "RSI Range Rules" — RSI as momentum (not just OB/OS)',
             'verified_oos_sharpe': 1.6,
             'verified_pf': 1.55,
@@ -1152,6 +1180,7 @@ def cat_obv_trend_confirm_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': 'OBV 趋势确认',
             'citation': 'Joe Granville "New Key to Stock Market Profits" (1963) — OBV',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,
@@ -1193,6 +1222,7 @@ def cat_volume_spike_trend_signal(df, params):
     return 'hold'
 '''.strip(),
         'catalog_meta': {
+            'display_name': '成交量异动跟随',
             'citation': 'Richard Wyckoff "Volume spike" + EMA trend filter — classic effort-vs-result',
             'verified_oos_sharpe': 1.5,
             'verified_pf': 1.5,

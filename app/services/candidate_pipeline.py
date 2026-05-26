@@ -334,8 +334,9 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
         _exchange = 'okx'
 
     # 建立 Strategy 條目
+    from app.services.strategy_naming import format_strategy_name
     strategy = Strategy(
-        name=name or f'{c.source_name or "candidate"} (#{c.id})',
+        name=name or format_strategy_name(c, symbol=symbol),
         type=promoted_type,
         category=c.category or 'swing',
         params=c.default_params or {},
