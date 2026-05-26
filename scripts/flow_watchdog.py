@@ -58,8 +58,8 @@ CHECK_LABELS = {
     'translate_pipeline':    '策略翻译队列',
     'llm_errors_1h':         '近 1 小时 LLM 错误',
     'pg_connection_pool':    '数据库连接数',
-    'okx_connectivity':      'OKX API 连通',
-    'reconcile_recent':      '持仓对账',
+    'okx_connectivity':      '交易所余额',
+    'reconcile_health':      '当前持仓状态',
     'running_strategies':    '运行中策略数',
 }
 
@@ -155,24 +155,36 @@ def check_ai_improve_recent() -> dict:
 
 
 def check_translate_pipeline() -> dict:
-    """4. Translate 流: pending 不能 >5 长时间 + 最近 6h 有 translated"""
+    """4. Translate 流健康度 (Phase 14k-35 重写, 之前 'pending' status 不存在永远 OK).
+
+    candidates 真实生命周期: translated → backtesting → qualified → promoted (或 dismissed/error)
+    检测:
+      - WARN: backtesting 状态卡住 > 6h (回测 task 挂了)
+      - WARN: 24h 内无新 translated (translate cron 可能挂)
+      - 都没问题 → OK
+    """
     t = t0()
     rc, out = psql("""
         SELECT
-          (SELECT COUNT(*) FROM strategy_candidates WHERE status='pending'),
-          (SELECT COUNT(*) FROM strategy_candidates WHERE status='translated' AND updated_at > NOW() - INTERVAL '6 hours'),
-          (SELECT COUNT(*) FROM strategy_candidates WHERE status='error')
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='backtesting' AND updated_at < NOW() - INTERVAL '6 hours'),
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='translated' AND created_at > NOW() - INTERVAL '24 hours'),
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='error' AND created_at > NOW() - INTERVAL '24 hours'),
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='qualified')
     """)
     if rc != 0:
-        return {'status': WARN, 'detail': 'pg query fail', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
     try:
-        pending, recent_translated, errored = [int(x) for x in out.strip().split('|')]
-    except:
-        return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
-    if pending > 10:
-        return {'status': FAIL, 'detail': f'翻译队列堆积 {pending} 个候选（翻译定时任务可能挂了）', 'latency_ms': ms(t),
-                'autofix_hint': '跑 translate_cli.py 清池子'}
-    return {'status': OK, 'detail': f'待翻译 {pending} 个 / 近 6 小时新增 {recent_translated} 个 / 失败 {errored} 个', 'latency_ms': ms(t)}
+        stuck_bt, new_translated_24h, errored_24h, qualified_pool = [int(x) for x in out.strip().split('|')]
+    except Exception as e:
+        return {'status': WARN, 'detail': f'解析失败: {e}', 'latency_ms': ms(t)}
+    if stuck_bt > 5:
+        return {'status': WARN, 'detail': f'有 {stuck_bt} 个候选卡在回测超过 6 小时（回测 task 可能挂）', 'latency_ms': ms(t),
+                'autofix_hint': '重启 celery-worker 释放卡住的回测'}
+    if new_translated_24h == 0 and qualified_pool < 10:
+        return {'status': WARN, 'detail': '近 24 小时无新翻译候选 + 候选池余量偏少（翻译流可能闲置）', 'latency_ms': ms(t)}
+    return {'status': OK,
+            'detail': f'近 24 小时新增翻译 {new_translated_24h} 个 / 卡住回测 {stuck_bt} 个 / 失败 {errored_24h} 个 / 候选池 {qualified_pool} 个',
+            'latency_ms': ms(t)}
 
 
 def check_llm_errors_recent() -> dict:
@@ -211,7 +223,11 @@ def check_pg_pool() -> dict:
 
 
 def check_okx_connectivity() -> dict:
-    """7. OKX /api/account 通"""
+    """7. 交易所 /api/account 通 + 总余额 > 0.
+
+    Phase 14k-35: schema 变了 (14k-11 多交易所重构后), balances 是 {exchange_name: total}
+    不再是 {coin: detail}. 用 top-level data.balance 总余额判定.
+    """
     t = t0()
     try:
         req = urllib.request.Request('http://localhost:5005/api/account',
@@ -219,11 +235,17 @@ def check_okx_connectivity() -> dict:
         with urllib.request.urlopen(req, timeout=15) as r:
             data = json.loads(r.read())
     except Exception as e:
-        return {'status': FAIL, 'detail': f'OKX 账户接口失败（{type(e).__name__}）', 'latency_ms': ms(t)}
-    bal = (data.get('balances') or {}).get('USDT')
-    if bal is None:
-        return {'status': WARN, 'detail': 'OKX 接口通了但拿不到 USDT 余额', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'OKX USDT 余额 = {float(bal):.2f}', 'latency_ms': ms(t)}
+        return {'status': FAIL, 'detail': f'账户接口请求失败（{type(e).__name__}）', 'latency_ms': ms(t)}
+    accounts = data.get('accounts') or []
+    total = float(data.get('balance') or 0)
+    if not accounts:
+        return {'status': WARN, 'detail': '接口通了但未绑定任何交易所', 'latency_ms': ms(t)}
+    if total <= 0:
+        # bound 但没钱 — WARN (可能用户没充值)
+        names = ', '.join(a.get('label', '?') for a in accounts)
+        return {'status': WARN, 'detail': f'已绑 {names} 但总余额为 0（请检查交易所是否有资金）', 'latency_ms': ms(t)}
+    names = ' + '.join(f'{a.get("label", "?")} ${float(a.get("equity") or 0):.2f}' for a in accounts)
+    return {'status': OK, 'detail': f'总余额 ${total:.2f}（{names}）', 'latency_ms': ms(t)}
 
 
 def check_reconcile_recent() -> dict:
