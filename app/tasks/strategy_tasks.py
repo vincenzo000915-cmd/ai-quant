@@ -2585,6 +2585,32 @@ def cleanup_stale_candidates():
     """), {'cutoff': cutoff_3d_orphan})
     orphan_deleted = orphan_result.rowcount or 0
 
+    # 14k-55 步骤 8.7: per-user tier quota — 超 quota archived 最老的 individual candidates
+    # User insight: 只有 pro/team 接 AI 才真 invent 膨胀; basic 复用 catalog 共享池没问题
+    from app.services.subscription_service import get_invent_quota
+    from app.models import User
+    quota_archived = 0
+    # 按 user_id GROUP 找超 quota 的
+    user_ids = [row[0] for row in db.session.query(StrategyCandidate.user_id).distinct().all()
+                if row[0] is not None]   # NULL=catalog 全局不算 quota
+    for uid in user_ids:
+        quota = get_invent_quota(uid)
+        # 该 user 的 active individual candidates (catalog 不算)
+        user_actives = StrategyCandidate.query.filter(
+            StrategyCandidate.user_id == uid,
+            StrategyCandidate.source.in_(INDIVIDUAL_SOURCES + ('catalog_clone',)),
+            StrategyCandidate.status.in_(['translated', 'backtesting', 'qualified',
+                                          'stale_qualified', 'promoted']),
+        ).order_by(StrategyCandidate.created_at.asc()).all()
+        excess = len(user_actives) - quota
+        if excess > 0:
+            for c in user_actives[:excess]:
+                if c.status == 'promoted':
+                    continue  # promoted 不动 (running 策略关联)
+                c.status = 'archived'
+                c.error_log = (c.error_log or '') + f' | [14k-55 quota] user {uid} ({get_invent_quota(uid)} quota) 超额, 老的归档'
+                quota_archived += 1
+
     # 14k-53 步骤 9: 物理 delete dismissed/archived candidates > 60d
     # (保留 promoted 历史不动 — 用作 audit / 强化学习数据)
     cutoff_60d = now - _dt.timedelta(days=60)
@@ -2614,7 +2640,7 @@ def cleanup_stale_candidates():
                f'old_promoted_archived={old_promoted_archived} '
                f'strategies stopped→retired={stopped_to_retired} '
                f'bt_slimmed={bt_slimmed} candidates_deleted={candidates_deleted} '
-               f'orphan_bt_deleted={orphan_deleted}')
+               f'orphan_bt_deleted={orphan_deleted} quota_archived={quota_archived}')
     audit('candidates_cleanup', actor='system',
           archived_no_hope=archived_no_hope,
           stale=moved_to_stale,
@@ -2625,7 +2651,8 @@ def cleanup_stale_candidates():
           stopped_to_retired=stopped_to_retired,
           bt_slimmed=bt_slimmed,
           candidates_deleted=candidates_deleted,
-          orphan_bt_deleted=orphan_deleted)
+          orphan_bt_deleted=orphan_deleted,
+          quota_archived=quota_archived)
     return summary
 
 

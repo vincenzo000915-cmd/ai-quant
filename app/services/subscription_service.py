@@ -248,3 +248,22 @@ def has_tier(user_id: int, required: str) -> bool:
     """检查 user 是否达到 required tier。admin 自动通过。"""
     rank = {'preview': 0, 'basic': 1, 'pro': 2, 'team': 3, 'admin': 99}
     return rank.get(get_user_tier(user_id), 0) >= rank.get(required, 0)
+
+
+# 14k-55: tier-aware invent quota — user 指出 "只有 pro/team 真接 AI 才会有策略爆炸问题"
+# Basic 主要复用 catalog 共享池, individual invent 上限低; Pro/Team 真自动 invent 高 quota
+INVENT_QUOTA_BY_TIER = {
+    'preview': 5,    # 试用 — 几乎不让 invent
+    'basic':   20,   # 手动审批为主, catalog 复用就够
+    'pro':     100,  # 半自动智能驾驶 + AI 工具集
+    'team':    500,  # 完全自动托管, 高 invent 频率
+    'admin':   1000, # 内部, 不限制
+}
+
+
+def get_invent_quota(user_id: int) -> int:
+    """14k-55: 该 user 自己的 individual candidates 上限 (catalog 共享池不算 quota).
+    超过 quota 时 cleanup task 强制 archived 老的, 防失控膨胀.
+    """
+    tier = get_user_tier(user_id)
+    return INVENT_QUOTA_BY_TIER.get(tier, 20)
