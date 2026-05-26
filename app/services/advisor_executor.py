@@ -448,6 +448,12 @@ def run_auto_apply() -> dict:
     applied: list[dict] = []
     skipped: list[dict] = []
     mutating_applied = 0   # 14k-71: 只数 mutating action 计 cap
+    # 14k-72: 每轮 advisor 限 dispatch heavy async tasks (防 worker backlog 阻塞 prewarm/signal)
+    # 一轮跑了 5 个 risk_opt + 5 个 grid → 10 task 同时排队, 4-worker pool 卡 30+ 分钟
+    # heavy task = optimize_risk_and_apply / optimize_strategy_params / synthesize_dynamic_strategy
+    HEAVY_ACTIONS_PER_CYCLE = 3
+    heavy_dispatched = 0
+    HEAVY_ACTIONS = {'optimize_strategy_risk_full', 'propose_signal_grid', 'invent_new_strategy'}
 
     for item in items:
         action = item['action']
@@ -459,6 +465,10 @@ def run_auto_apply() -> dict:
         # 14k-71: 只对 mutating actions 检 cap, 非 mutating (invent 等) 跳过此 check
         if action in MUTATING_ACTIONS and (mutating_applied >= remaining):
             skipped.append({'item': item, 'why': f'mutating cap {daily_cap}/day 已達 (invent 等不受限)'})
+            continue
+        # 14k-72: heavy async task 一轮限 3 个 (防 worker backlog)
+        if action in HEAVY_ACTIONS and heavy_dispatched >= HEAVY_ACTIONS_PER_CYCLE:
+            skipped.append({'item': item, 'why': f'本轮 heavy task {HEAVY_ACTIONS_PER_CYCLE} 已派, 其他下轮 (防 worker backlog)'})
             continue
         # promote_candidate 額外有自己的日限
         if action == 'promote_candidate':
@@ -479,6 +489,8 @@ def run_auto_apply() -> dict:
             applied.append(rec)
             if action in MUTATING_ACTIONS:
                 mutating_applied += 1   # 14k-71: 只数 mutating 算 cap
+            if action in HEAVY_ACTIONS:
+                heavy_dispatched += 1   # 14k-72: 数 heavy task 限本轮
             audit('advisor_auto_apply', actor='system',
                   action=action, strategy_id=item['strategy_id'],
                   reason=item['reason'][:300], message=msg)
