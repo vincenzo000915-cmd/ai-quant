@@ -243,6 +243,9 @@ def build_recommendations(user_id: int = 1) -> dict:
         })
 
     # 2) regime 不匹配 → pause (14k-30: grace 按 TF 分级)
+    # 14k-70: 同步 14k-65 executor 守门 — 提议层也过滤, 不在 UI 弹一堆没意义建议
+    from app.models import Trade
+    from sqlalchemy import func as _sqlfunc
     regime_full_cache: dict[tuple, dict] = {}
     for s in running:
         key = (s.symbol, s.timeframe)
@@ -260,6 +263,20 @@ def build_recommendations(user_id: int = 1) -> dict:
         pause_grace = _dt.datetime.utcnow() - _dt.timedelta(days=_grace_days(s.timeframe))
         if s.created_at and s.created_at > pause_grace:
             continue
+        # 14k-70: 同 14k-65 executor 守门 — 真有 trades + PnL ≥ 0 不建议 pause (不追屁股)
+        total_trades = Trade.query.filter_by(strategy_id=s.id).count()
+        if total_trades >= 3:
+            total_pnl = Trade.query.with_entities(
+                _sqlfunc.coalesce(_sqlfunc.sum(Trade.pnl), 0)
+            ).filter_by(strategy_id=s.id).scalar() or 0
+            if float(total_pnl) >= 0:
+                continue   # 真赚过的不推 pause, UI 也不弹
+        # 14k-70: revive 24h 内不推 pause (尊重 user 救场决定)
+        rp = (s.params or {}).get('risk_params') or {}
+        if rp.get('_revived_by'):
+            revive_time = s.updated_at or s.created_at
+            if revive_time and (_dt.datetime.utcnow() - revive_time).total_seconds() < 86400:
+                continue
         # check: 有 open position — pause 不平倉只阻新信號，先讓現有 SL/TP 處理
         has_pos = _has_open_position(s.id)
         items.append({
@@ -625,6 +642,11 @@ def _strategy_risk_adjust_item(strategy, target_ctx: dict) -> dict | None:
     sharpe = (bt.sharpe_ratio if bt else None) or 0
     # max_dd 不在所有 backtest 都有, fallback 给一个中性值
     max_dd = abs((bt.max_drawdown_pct if bt else None) or 20)
+    # 14k-70: 加 EV 维度 (user 哲学: 追盈利率不追胜率)
+    bt_trades = (bt.total_trades if bt else None) or 0
+    bt_pnl = (bt.total_pnl if bt else None) or 0
+    bt_capital = (bt.initial_capital if bt else None) or 100.0
+    ev_pct = (bt_pnl / bt_trades / bt_capital * 100) if bt_trades else 0.0
 
     params = dict(strategy.params or {})
     rp = dict(params.get('risk_params') or {})
@@ -636,26 +658,33 @@ def _strategy_risk_adjust_item(strategy, target_ctx: dict) -> dict | None:
     new_size = cur_size
     reasons = []
 
-    # Sharpe / DD rule
-    if sharpe >= 2.0 and max_dd < 25:
-        # 健康 → 允许 +1 leverage
+    # 14k-70: Sharpe + EV 双轨 (任一好就 +lev, 任一烂才 -lev)
+    sharpe_good = sharpe >= 2.0
+    ev_good = ev_pct >= 0.5   # 每 trade EV ≥ 0.5% 算健康
+    sharpe_weak = sharpe > 0 and sharpe < 1.0
+    ev_weak = ev_pct > 0 and ev_pct < 0.2
+
+    if (sharpe_good or ev_good) and max_dd < 25:
+        # 任一指标健康 + DD 充裕 → 允许 +1 leverage
         new_lev = min(RISK_LEVERAGE_BOUNDS[1], cur_lev + RISK_LEVERAGE_STEP)
         if new_lev > cur_lev:
-            reasons.append(f'回测 Sharpe {sharpe:.2f} 健康, max DD {max_dd:.1f}% 充裕 → 加杠杆')
-    elif sharpe > 0 and sharpe < 1.0:
+            reasons.append(f'Sharpe {sharpe:.2f} / EV {ev_pct:+.2f}%/单 健康, max DD {max_dd:.1f}% 充裕 → 加杠杆')
+    elif sharpe_weak and ev_weak:
+        # 两个都弱才降 (不只看 sharpe, 14k-70 同 retire 双轨制)
         new_lev = max(RISK_LEVERAGE_BOUNDS[0], cur_lev - RISK_LEVERAGE_STEP)
         if new_lev < cur_lev:
-            reasons.append(f'回测 Sharpe {sharpe:.2f} 偏弱 → 降杠杆')
+            reasons.append(f'Sharpe {sharpe:.2f} + EV {ev_pct:+.2f}% 都偏弱 → 降杠杆')
 
     # 目标 lag/ahead rule (覆盖 Sharpe 决策, 因为目标驱动优先)
+    # 14k-70: 加仓也按 EV 维度 (sharpe ≥ 1.2 OR EV ≥ 0.3%)
     if not target_ctx.get('none'):
-        if target_ctx.get('lag_mode') and sharpe >= 1.2:
-            # 落后 + 策略不烂 → 加仓
+        if target_ctx.get('lag_mode') and (sharpe >= 1.2 or ev_pct >= 0.3):
+            # 落后 + 策略不烂 (sharpe 或 EV 任一好) → 加仓
             target_size = min(trade_size_default * RISK_POSITION_BOUNDS_FRAC[1],
                               cur_size * (1 + RISK_POSITION_STEP_FRAC))
             if target_size > cur_size * 1.05:
                 new_size = round(target_size, 2)
-                reasons.append(f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + Sharpe {sharpe:.2f} 可加仓')
+                reasons.append(f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + Sharpe {sharpe:.2f}/EV {ev_pct:+.2f}% 可加仓')
         elif target_ctx.get('ahead_mode'):
             # 领先 → 保守, 降杠杆 (不一定就 cur_lev-1, 已被 sharpe 规则可能覆盖)
             new_lev = max(RISK_LEVERAGE_BOUNDS[0], min(new_lev, cur_lev - RISK_LEVERAGE_STEP))
