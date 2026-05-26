@@ -425,8 +425,10 @@ def _step3_encode_signal(hypothesis: dict, verify_result: dict,
 
 # ============= 主入口 =============
 
-MIN_HIT_RATE = 0.55          # hypothesis verify 命中率门槛
-MIN_SAMPLE_SIZE = 10          # 至少 10 次历史触发才可信
+MIN_HIT_RATE = 0.55              # hypothesis verify 命中率门槛
+MIN_HIT_RATE_LOW = 0.45          # 14k-66 C: 命中率较低但单笔大也可过
+MIN_AVG_RETURN_FOR_LOW_HIT = 0.5 # 14k-66 C: 低命中率时需要平均收益 ≥ 0.5% 才放行
+MIN_SAMPLE_SIZE = 10              # 至少 10 次历史触发才可信
 
 
 def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
@@ -460,9 +462,14 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
         return {'ok': False,
                 'error': f'hypothesis 历史样本 {verify["sample_size"]} < {MIN_SAMPLE_SIZE}, 不可信',
                 'stage': 'verify', 'verify': verify}
-    if verify['hit_rate'] < MIN_HIT_RATE:
+    # 14k-66 C: 两路过门槛 — 高命中率 OR (中等命中率 + 高单笔收益)
+    high_hit = verify['hit_rate'] >= MIN_HIT_RATE
+    low_hit_high_return = (verify['hit_rate'] >= MIN_HIT_RATE_LOW
+                           and verify['avg_return'] >= MIN_AVG_RETURN_FOR_LOW_HIT)
+    if not (high_hit or low_hit_high_return):
         return {'ok': False,
-                'error': f'hypothesis 命中率 {verify["hit_rate"]:.0%} < {MIN_HIT_RATE:.0%}, 不编码',
+                'error': (f'hypothesis 命中率 {verify["hit_rate"]:.0%} + 平均收益 {verify["avg_return"]:+.2f}% '
+                          f'未过门槛 (需 命中≥{MIN_HIT_RATE:.0%} 或 命中≥{MIN_HIT_RATE_LOW:.0%}+均收益≥{MIN_AVG_RETURN_FOR_LOW_HIT}%)'),
                 'stage': 'verify', 'verify': verify}
 
     # 5. A Step 3: LLM 编码 (只在 verify 通过后才调)
