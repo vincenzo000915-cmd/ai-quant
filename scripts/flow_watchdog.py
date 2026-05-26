@@ -52,15 +52,15 @@ FAIL = 'FAIL'
 
 # Phase 14k-33: 给每个内部 check_name 一个人看得懂的中文显示名
 CHECK_LABELS = {
-    'celery_beat_heartbeat': 'Celery 调度器心跳',
-    'signal_cycle_health':   '回测信号循环',
-    'ai_improve_recent':     '每日 AI 策略改进任务',
-    'translate_pipeline':    '策略翻译队列',
-    'llm_errors_1h':         '近 1 小时 LLM 错误',
-    'pg_connection_pool':    '数据库连接数',
-    'okx_connectivity':      '交易所余额',
-    'reconcile_health':      '当前持仓状态',
-    'running_strategies':    '运行中策略数',
+    'celery_beat_heartbeat': 'Celery 调度器心跳 / Scheduler Heartbeat',
+    'signal_cycle_health':   '回测信号循环 / Signal Cycle',
+    'ai_improve_recent':     '每日 AI 策略改进 / Daily AI Improve',
+    'translate_pipeline':    '策略翻译队列 / Translate Queue',
+    'llm_errors_1h':         '近 1 小时 LLM 错误 / LLM Errors (1h)',
+    'pg_connection_pool':    '数据库连接数 / DB Connections',
+    'okx_connectivity':      '交易所余额 / Exchange Balance',
+    'reconcile_health':      '当前持仓状态 / Position Status',
+    'running_strategies':    '运行中策略数 / Running Strategies',
 }
 
 
@@ -432,7 +432,7 @@ def main() -> int:
                 elif r.get('autofix_hint'):
                     line += f'\n  💡 处理建议: {r["autofix_hint"]}'
                 lines.append(line)
-            text = '🚨 <b>系统监控异常</b>\n\n' + '\n\n'.join(lines)
+            text = '🚨 <b>系统监控异常 / System Health Alert</b>\n\n' + '\n\n'.join(lines)
             send_telegram(text)
 
     # stdout

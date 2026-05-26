@@ -3,7 +3,8 @@ __pycache__/
 .env
 .venv/
 node_modules/
-frontend/build/
+# 14k-42: frontend/build 进 repo (production 同 server, git pull 立即生效)
+# frontend/build/
 frontend_build/
 backups/
 *.log

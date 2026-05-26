@@ -85,10 +85,10 @@ beat_schedule = {
         'schedule': crontab(minute='*/5'),
     },
 
-    # === Phase 10.8: 智能托管 — 每 4 小時 ===
+    # === Phase 10.8 + 14k-42: 智能托管 — 每 1 小时（之前 4h 太慢, force_optimize 链路要等 4-8h 才完整）
     'advisor-auto-apply': {
         'task': 'app.tasks.strategy_tasks.auto_apply_advisor',
-        'schedule': crontab(minute='10', hour='*/4'),
+        'schedule': crontab(minute='10'),
     },
 
     # === Phase 14k-30 #1: AI 改动 auto-revert — 每 6h ===

@@ -2118,12 +2118,12 @@ def optimize_risk_and_apply(self, strategy_id: int):
 
     try:
         _tg(
-            f'🤖 <b>AI 已优化策略止损/止盈</b>\n'
+            f'🤖 <b>AI 已优化止损/止盈 · AI Optimized SL/TP</b>\n'
             f'#{strategy_id} {s.name}\n'
-            f'止损: {old_sl}% → {best["sl_pct"]}%\n'
-            f'止盈: {old_tp}% → {best["tp_pct"]}%\n'
-            f'表现评分: {base.get("oos_sharpe") or 0:.2f} → {best.get("oos_sharpe") or 0:.2f}\n'
-            f'回撤: {base.get("oos_dd") or 0:.1f}% → {best.get("oos_dd") or 0:.1f}%'
+            f'止损 / SL: {old_sl}% → {best["sl_pct"]}%\n'
+            f'止盈 / TP: {old_tp}% → {best["tp_pct"]}%\n'
+            f'表现 / Sharpe: {base.get("oos_sharpe") or 0:.2f} → {best.get("oos_sharpe") or 0:.2f}\n'
+            f'回撤 / DD: {base.get("oos_dd") or 0:.1f}% → {best.get("oos_dd") or 0:.1f}%'
         )
     except Exception:
         pass
@@ -2276,16 +2276,16 @@ def auto_revert_ai_changes():
               restored_params=before)
         try:
             ACTION_LABELS = {
-                'apply_params': '调整信号参数',
-                'adjust_strategy_risk': '调整杠杆/仓位',
-                'risk_opt_applied': '优化止损/止盈',
+                'apply_params': '调整信号参数 / Signal Params',
+                'adjust_strategy_risk': '调整杠杆/仓位 / Leverage & Size',
+                'risk_opt_applied': '优化止损/止盈 / SL/TP',
             }
-            action_label = ACTION_LABELS.get(ctx.get('action'), ctx.get('action') or '调整参数')
-            _tg(f'⏪ <b>AI 已自动还原参数</b>\n'
+            action_label = ACTION_LABELS.get(ctx.get('action'), ctx.get('action') or '调整参数 / Params Change')
+            _tg(f'⏪ <b>AI 自动还原参数 · Auto-Revert</b>\n'
                 f'#{sid} {s.name}\n'
-                f'原本动作: {action_label}\n'
-                f'还原原因: {"; ".join(reason)}\n'
-                f'已恢复到改动前的设置')
+                f'原本动作 / Action: {action_label}\n'
+                f'还原原因 / Reason: {"; ".join(reason)}\n'
+                f'已恢复改动前设置 · Reverted to previous params')
         except Exception:
             pass
         reverted += 1

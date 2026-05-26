@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Phase 12.30 Favicon: 紫色 brand + 上升 K 线趋势 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角方形背景 紫色 gradient -->
+  <rect width="64" height="64" rx="14" ry="14" fill="url(#bg)"/>
+  <!-- 上升折线 K 线趋势（金融感）+ 顶部箭头 -->
+  <path d="M12 46 L22 36 L30 42 L46 22 M40 22 L46 22 L46 28"
+        stroke="#fff" stroke-width="4.5"
+        fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 两个数据节点 dot -->
+  <circle cx="22" cy="36" r="2.5" fill="#fff"/>
+  <circle cx="30" cy="42" r="2.5" fill="#fff"/>
+</svg>

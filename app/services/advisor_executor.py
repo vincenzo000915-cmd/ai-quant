@@ -204,10 +204,10 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             new_strat.status = 'running'
             db.session.commit()
         _telegram_safe(
-            f'🚀 <b>AI 已自动上线新策略</b>\n'
+            f'🚀 <b>AI 已自动上线新策略 · Auto-Promoted</b>\n'
             f'#{new_sid} · {new_strat.name if new_strat else "?"}\n'
-            f'回测表现评分 = {oos:.2f}\n'
-            f'已开始运行, 等待下次买/卖信号'
+            f'回测表现 / Sharpe = {oos:.2f}\n'
+            f'已开始运行, 等待下次信号 · Running, awaiting next signal'
         )
         return True, f'已 promote 候選 #{cid} → strategy #{new_sid}（已啟動）'
 
@@ -410,7 +410,7 @@ def run_auto_apply() -> dict:
             'propose_signal_grid': '排程参数优化',
             'invent_new_strategy': '创建新候选策略',
         }
-        lines = [f'🤖 <b>AI 已自动执行 {len(applied)} 项操作</b>']
+        lines = [f'🤖 <b>AI 已自动执行 {len(applied)} 项操作 · AI Auto-Apply ({len(applied)})</b>']
         for r in applied:
             label = ACTION_LABELS.get(r['action'], r['action'])
             lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")

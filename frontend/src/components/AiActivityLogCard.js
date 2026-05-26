@@ -39,12 +39,22 @@ const EVENT_LABEL = {
 
 function formatRelTime(iso) {
   if (!iso) return '';
-  const t = new Date(iso);
+  // 14k-42: iso 来自后端 UTC 字符串, 不带时区。new Date() 默认按本地解析会偏差
+  // 显式当 UTC 解析 (后缀 Z), 然后让 toLocaleString 转用户本地时区显示
+  const isoUtc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+  const t = new Date(isoUtc);
   const diff = (Date.now() - t.getTime()) / 1000;
   if (diff < 60) return `${Math.round(diff)} 秒前`;
   if (diff < 3600) return `${Math.round(diff / 60)} 分前`;
   if (diff < 86400) return `${Math.round(diff / 3600)} 时前`;
   return `${Math.round(diff / 86400)} 天前`;
+}
+
+// 14k-42: 绝对时间显示 (本地时区, 24h 制) — hover tooltip 用
+function formatLocalTime(iso) {
+  if (!iso) return '';
+  const isoUtc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z';
+  return new Date(isoUtc).toLocaleString('zh-CN', { hour12: false });
 }
 
 export default function AiActivityLogCard() {
@@ -109,9 +119,11 @@ export default function AiActivityLogCard() {
                       <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
                         {it.summary}
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {formatRelTime(it.created_at)}
-                      </Typography>
+                      <Tooltip title={formatLocalTime(it.created_at)} placement="top">
+                        <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>
+                          {formatRelTime(it.created_at)}
+                        </Typography>
+                      </Tooltip>
                     </Box>
                   </Stack>
                 </ListItem>
