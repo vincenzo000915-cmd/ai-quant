@@ -257,14 +257,19 @@ def _execute_one(item: dict) -> tuple[bool, str]:
 
     if action == 'optimize_strategy_risk_full':
         # Phase 14k-29 L4: 排 async task 跑 SL/TP 闪测, 通过门槛后 task 内部自动 apply
+        # 14k-31 修: 用 random countdown 60-240s 错峰, 避免本轮多策略并发撞 OKX 429
+        import random
         from app.tasks.strategy_tasks import optimize_risk_and_apply
-        optimize_risk_and_apply.apply_async(args=[sid], countdown=5)
+        delay = random.randint(60, 240)
+        optimize_risk_and_apply.apply_async(args=[sid], countdown=delay)
         from app.services.audit import log as audit
-        audit('risk_opt_proposed', strategy_id=sid)
-        return True, '已排程 SL/TP 闪测 (async, ~30s 内 + 过门槛 apply)'
+        audit('risk_opt_proposed', strategy_id=sid, dispatch_delay_s=delay)
+        return True, f'已排程 SL/TP 闪测 ({delay}s 后, 错峰避 OKX 429)'
 
     if action == 'propose_signal_grid':
         # Phase 14k-29/30: 触发 ParamOptimization. 14k-30: 如 advisor 已让 LLM 提议 grid, 存进 opt.grid 让 task 用它而非死字典
+        # 14k-31 修: 错峰 dispatch
+        import random
         from app.models import ParamOptimization
         from app.tasks.strategy_tasks import optimize_strategy_params
         proposed_grid = item.get('meta', {}).get('proposed_grid')
@@ -272,12 +277,14 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                                 grid=proposed_grid or {})
         db.session.add(opt)
         db.session.commit()
-        optimize_strategy_params.apply_async(args=[opt.id], countdown=5)
+        delay = random.randint(60, 240)
+        optimize_strategy_params.apply_async(args=[opt.id], countdown=delay)
         from app.services.audit import log as audit
         audit('signal_grid_proposed', strategy_id=sid, optimization_id=opt.id,
-              ai_proposed=bool(proposed_grid), rationale=item.get('meta', {}).get('rationale'))
+              ai_proposed=bool(proposed_grid), rationale=item.get('meta', {}).get('rationale'),
+              dispatch_delay_s=delay)
         suffix = ' (AI 提议 grid)' if proposed_grid else ' (fallback 死字典 grid)'
-        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}){suffix}'
+        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}, {delay}s 后){suffix}'
 
     if action == 'adjust_strategy_risk':
         # Phase 14k-28 L3: 单策略 risk_params 调整 (merge 进 strategy.params.risk_params)

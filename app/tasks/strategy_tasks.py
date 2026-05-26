@@ -2021,13 +2021,18 @@ def check_hl_agent_expiry():
 
 # ===== Phase 14k-29 L4: AI risk 闪测 (SL/TP grid walk-forward) =====
 
-@celery_app.task(name='app.tasks.strategy_tasks.optimize_risk_and_apply')
-def optimize_risk_and_apply(strategy_id: int):
-    """AI risk 闪测: 跑 SL/TP grid walk-forward → 过门槛自动 merge 进 strategy.params.risk_params."""
+@celery_app.task(bind=True, name='app.tasks.strategy_tasks.optimize_risk_and_apply',
+                 max_retries=3, default_retry_delay=300)
+def optimize_risk_and_apply(self, strategy_id: int):
+    """AI risk 闪测: 跑 SL/TP grid walk-forward → 过门槛自动 merge 进 strategy.params.risk_params.
+
+    Phase 14k-31: 加 retry, OKX 429 / 网络错误 → 5min 后重试 3 次.
+    """
     from app.models import Strategy
     from app.services.risk_optimizer import optimize_risk_params, should_apply
     from app.services.audit import log as audit
     from app.services.telegram_service import send as _tg
+    import random
 
     s = Strategy.query.get(strategy_id)
     if not s:
@@ -2035,7 +2040,22 @@ def optimize_risk_and_apply(strategy_id: int):
     if s.status != 'running':
         return f'strategy {strategy_id} status={s.status}, skip'
 
-    r = optimize_risk_params(s)
+    try:
+        r = optimize_risk_params(s)
+    except Exception as e:
+        es = str(e)
+        if 'Too Many Requests' in es or '429' in es or 'timeout' in es.lower():
+            # 14k-31: API rate limit → retry 5-7min 后
+            audit('risk_opt_retry', strategy_id=strategy_id, error=es[:200], attempt=self.request.retries + 1)
+            try:
+                raise self.retry(exc=e, countdown=300 + random.randint(0, 120))
+            except self.MaxRetriesExceededError:
+                audit('risk_opt_error', strategy_id=strategy_id, error=f'max retries: {es[:200]}')
+                return f'max retries exceeded: {es[:100]}'
+        # 其他 exception 不 retry, audit + return
+        audit('risk_opt_error', strategy_id=strategy_id, error=es[:300])
+        return f'risk opt exception: {es[:100]}'
+
     if 'error' in r:
         audit('risk_opt_error', strategy_id=strategy_id, error=r['error'])
         return f'risk opt error: {r["error"]}'
