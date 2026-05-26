@@ -222,8 +222,8 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             symbol = cfg.get('default_backtest_symbol', 'BTC/USDT')
 
         # 14k-58: capital utilization gate — 防资金分散到一堆策略
+        # (Strategy 已在 top-level import, 别在 try 里再 import 让它变 local)
         try:
-            from app.models import Strategy
             from app.services.llm_prompts.strategy_recommend import _get_user_capital
             from app.services.exchange_binding import primary_exchange as _pex
             uid = item.get('meta', {}).get('user_id') or 1
