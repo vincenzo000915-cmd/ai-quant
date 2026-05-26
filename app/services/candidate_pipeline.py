@@ -335,11 +335,18 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
 
     # 建立 Strategy 條目
     from app.services.strategy_naming import format_strategy_name
+    # Phase 14k-38: 集中合并 source_meta.risk_params 进 strategy.params
+    # 避免每个 caller 各自 merge (caller 漏做就 #70 那种 risk_params 缺失 bug)
+    merged_params = dict(c.default_params or {})
+    sm_risk = (c.source_meta or {}).get('risk_params') if c.source_meta else None
+    if isinstance(sm_risk, dict) and sm_risk:
+        merged_params['risk_params'] = {k: v for k, v in sm_risk.items() if v is not None}
+
     strategy = Strategy(
         name=name or format_strategy_name(c, symbol=symbol),
         type=promoted_type,
         category=c.category or 'swing',
-        params=c.default_params or {},
+        params=merged_params,
         symbol=symbol,
         timeframe=c.timeframe or '4h',
         exchange=_exchange,                 # Phase 14k-5

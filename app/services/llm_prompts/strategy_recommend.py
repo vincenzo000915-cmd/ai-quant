@@ -311,12 +311,15 @@ def _adapt_risk_to_capital(rec_risk: dict, symbol: str, capital: float, prices: 
         min_notional = contract_size * price * 1.5
 
     max_capital_per_trade = capital * 0.20         # 单笔最多 20% 资金
+    target_per_trade = max(trade_size_default, capital * 0.10)  # 14k-38: 期望每笔 ~10% 资金 (HL min 小时 needed_size 微小会让仓位失真)
 
     # 算需要的 position_size 让 notional 至少能开 1 contract
     needed_size = min_notional / rec_lev
 
-    # 限制 ≤ max_capital_per_trade
-    final_size = min(needed_size, max_capital_per_trade)
+    # 14k-38 fix: 之前 final = min(needed, cap) 永远拿 needed (HL min 小 → 仓位极小)
+    # 正确: 取期望 target 但不低于 min、不超 cap
+    final_size = max(needed_size, target_per_trade)
+    final_size = min(final_size, max_capital_per_trade)
 
     # 但 final_size × rec_lev 还不够开 → 提杠杆 (cap 10x)
     if final_size * rec_lev < min_notional:
@@ -778,25 +781,43 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
             sel_trend_count = sum(1 for e, _, _, _ in selected if _entry_regime_type(e) == 'trend')
             sel_types_set = {e.candidate_type for e, _, _, _ in selected}
 
-            # range 主导 + selection 缺 reversion → 替换最低分 trend → 最高分 reversion
+            # Phase 14k-38: B 替换 — 不仅 skip selected 已有, 也 skip 当前 running 的 type
+            # (上轮 14k-37 bug: 找到 reversion 但已 running, _maybe_auto_apply 拒, B 没找下一个)
+            running_types = {s.type.replace('cand_', '') for s in scoped_query(Strategy).filter_by(status='running').all()}
+            skip_types = sel_types_set | running_types
+
+            def _find_replacement(target_regime: str):
+                """从 matrix_scored 找最高分 target_regime 且不在 skip_types 的 entry."""
+                for entry, mx, sc, rs in matrix_scored:
+                    if _entry_regime_type(entry) != target_regime:
+                        continue
+                    # 比对去 cat_ 前缀的 base type
+                    base = entry.candidate_type
+                    if base in skip_types:
+                        continue
+                    # 也 skip selected 里已有的 (避免重复)
+                    if base in sel_types_set:
+                        continue
+                    return entry, mx, sc, rs
+                return None
+
+            # range 主导 + selection 缺 reversion → 替换最低分 trend → 最高分非 running reversion
             if range_ratio >= 0.5 and sel_rev_count == 0 and sel_trend_count > 0:
                 trend_idx = [i for i, (e, _, _, _) in enumerate(selected) if _entry_regime_type(e) == 'trend']
-                # selected 按分数倒序 → 最后一个是最低分
                 replace_idx = trend_idx[-1] if trend_idx else None
                 if replace_idx is not None:
-                    for entry, mx, sc, rs in matrix_scored:
-                        if _entry_regime_type(entry) == 'reversion' and entry.candidate_type not in sel_types_set:
-                            selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {range_ratio:.0%} range → 换入 reversion'])
-                            break
-            # trend 主导 + selection 缺 trend → 类似
+                    found = _find_replacement('reversion')
+                    if found:
+                        entry, mx, sc, rs = found
+                        selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {range_ratio:.0%} range → 换入 reversion'])
             elif trend_ratio >= 0.5 and sel_trend_count == 0 and sel_rev_count > 0:
                 rev_idx = [i for i, (e, _, _, _) in enumerate(selected) if _entry_regime_type(e) == 'reversion']
                 replace_idx = rev_idx[-1] if rev_idx else None
                 if replace_idx is not None:
-                    for entry, mx, sc, rs in matrix_scored:
-                        if _entry_regime_type(entry) == 'trend' and entry.candidate_type not in sel_types_set:
-                            selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {trend_ratio:.0%} trend → 换入 trend'])
-                            break
+                    found = _find_replacement('trend')
+                    if found:
+                        entry, mx, sc, rs = found
+                        selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {trend_ratio:.0%} trend → 换入 trend'])
 
     # Clone + auto-apply. clone 继承 matrix backtest_result_id
     recommendations = []
