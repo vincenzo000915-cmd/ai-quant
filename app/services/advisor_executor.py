@@ -84,7 +84,10 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                   trigger_type=trigger_type, invent_method='synth',
                   synth_hint=meta.get('synth_hint'),
                   target_timeframe=meta.get('target_timeframe'))
-            return True, f'已排程 AI 合成 ({trigger_type} → synth, hint={meta.get("synth_hint")}, TF={meta.get("target_timeframe")})'
+            tf = meta.get('target_timeframe')
+            tf_say = {'15m': '15 分钟短线', '30m': '半小时短线', '1h': '1 小时',
+                      '4h': '4 小时摆动', '1d': '日线长线'}.get(tf, tf or '')
+            return True, f'AI 正在研究新的{tf_say}策略 (约 60 秒, 完成会自动回测验证)'
 
         # T1 lag_pool_thin → catalog-first (旧路径)
         from app.tasks.strategy_tasks import advisor_invent_strategy
@@ -92,7 +95,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         audit('advisor_invent_proposed', user_id=uid,
               trigger_type=trigger_type, invent_method='catalog_first',
               lag_pct=meta.get('lag_pct'))
-        return True, '已排程 AI invent 新策略 (catalog-first, async ~60s)'
+        return True, 'AI 正在从策略库挑新模板 (约 60 秒)'
 
     # Phase 14k-28/30: 账户级 action — 14k-30 #3 user-scoped (per-user UserConfig override)
     if action == 'adjust_global_sizing':
@@ -316,7 +319,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         optimize_risk_and_apply.apply_async(args=[sid], countdown=delay)
         from app.services.audit import log as audit
         audit('risk_opt_proposed', strategy_id=sid, dispatch_delay_s=delay)
-        return True, f'已排程 SL/TP 闪测 ({delay}s 后, 错峰避 OKX 429)'
+        return True, f'AI 正在重测止损/止盈, {delay} 秒后开始'
 
     if action == 'propose_signal_grid':
         # Phase 14k-29/30: 触发 ParamOptimization. 14k-30: 如 advisor 已让 LLM 提议 grid, 存进 opt.grid 让 task 用它而非死字典
@@ -335,8 +338,8 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         audit('signal_grid_proposed', strategy_id=sid, optimization_id=opt.id,
               ai_proposed=bool(proposed_grid), rationale=item.get('meta', {}).get('rationale'),
               dispatch_delay_s=delay)
-        suffix = ' (AI 提议 grid)' if proposed_grid else ' (fallback 死字典 grid)'
-        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}, {delay}s 后){suffix}'
+        suffix = '（AI 自己设计的参数范围）' if proposed_grid else '（用默认参数范围）'
+        return True, f'AI 正在测试更好的参数组合 {suffix}, {delay} 秒后开始'
 
     if action == 'adjust_strategy_risk':
         # Phase 14k-28 L3: 单策略 risk_params 调整 (merge 进 strategy.params.risk_params)

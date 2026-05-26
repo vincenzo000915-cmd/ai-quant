@@ -1039,9 +1039,9 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
         return {
             'action': 'invent_new_strategy',
             'strategy_id': 0,
-            'strategy_name': '系统级 invent (T1 lag_pool_thin)',
+            'strategy_name': '寻找新策略 (落后追赶)',
             'severity': 'info',
-            'reason': f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + promote-eligible 池只有 {eligible_pool} (OOS≥{PROMOTE_MIN_OOS_SHARPE}), 创新策略追赶',
+            'reason': f'目标进度落后 {target_ctx.get("lag_pct", 0):.1f}%, 可用策略只剩 {eligible_pool} 个, AI 去找点新的来追赶',
             'meta': {
                 'user_id': user_id,
                 'trigger_type': 'lag_pool_thin',
@@ -1057,9 +1057,9 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
         return {
             'action': 'invent_new_strategy',
             'strategy_id': 0,
-            'strategy_name': '系统级 invent (T2 dry_spell)',
+            'strategy_name': '寻找新策略 (最近没开单)',
             'severity': 'warn',
-            'reason': f'系统干旱期: 24h {dry_info["trades_24h"]} trades, 7d {dry_info["trades_7d"]} trades. AI 合成高频策略救场',
+            'reason': f'最近一天没开过单, 一周才 {dry_info["trades_7d"]} 单. AI 想试试更敏感的短线策略, 多抓机会',
             'meta': {
                 'user_id': user_id,
                 'trigger_type': 'dry_spell',
@@ -1072,12 +1072,13 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     # T3 tf_gap — 高频 TF 候选空 + swing TF 充裕 → synth 指定 TF
     tf_triggered, tf_info, missing_tf = _tf_coverage_gap(user_id)
     if tf_triggered:
+        tf_label = {'15m': '15 分钟短线', '30m': '半小时短线', '1h': '1 小时'}.get(missing_tf, missing_tf)
         return {
             'action': 'invent_new_strategy',
             'strategy_id': 0,
-            'strategy_name': f'系统级 invent (T3 tf_gap → {missing_tf})',
+            'strategy_name': f'寻找新策略 ({tf_label})',
             'severity': 'info',
-            'reason': f'TF 偏科: 15m={tf_info["15m"]} 30m={tf_info["30m"]} qualified, 4h+1d={tf_info["4h"]+tf_info["1d"]} qualified. AI 合成 {missing_tf} 策略补空',
+            'reason': f'目前长线策略 {tf_info["4h"]+tf_info["1d"]} 个但短线 ({tf_label}) 一个都没有, AI 去补齐这个时段的策略',
             'meta': {
                 'user_id': user_id,
                 'trigger_type': 'tf_gap',
@@ -1091,12 +1092,16 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     # T4 regime_mismatch — brief vs running 不匹配 → synth 互补 archetype
     rm_triggered, rm_info = _regime_archetype_mismatch(user_id)
     if rm_triggered:
+        arch_zh = {'trend_follower': '趋势跟随', 'mean_reverter': '反弹回归',
+                   'breakout': '突破', 'wait': '观望'}
+        market_say = arch_zh.get(rm_info["brief_archetype"], rm_info["brief_archetype"])
+        running_say = '+'.join(arch_zh.get(a, a) for a in rm_info["running_archetypes"])
         return {
             'action': 'invent_new_strategy',
             'strategy_id': 0,
-            'strategy_name': '系统级 invent (T4 regime_mismatch)',
+            'strategy_name': '寻找新策略 (跟市场不搭)',
             'severity': 'info',
-            'reason': f'组合错配: 市场 archetype={rm_info["brief_archetype"]}, running={rm_info["running_archetypes"]}. AI 合成互补策略',
+            'reason': f'市场现在适合「{market_say}」, 但你现有策略都是「{running_say}」, AI 找互补的来配',
             'meta': {
                 'user_id': user_id,
                 'trigger_type': 'regime_mismatch',
