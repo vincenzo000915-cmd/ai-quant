@@ -368,6 +368,23 @@ def build_recommendations(user_id: int = 1) -> dict:
             },
         })
 
+    # Phase 14k-28 L2: AI 账户级 sizing (24h cooldown, 仅当 diff 够大才出 item)
+    try:
+        sizing_item = _sizing_recommendation_item(user_id)
+        if sizing_item:
+            items.append(sizing_item)
+    except Exception as e:
+        print(f'[advisor] sizing_recommendation skipped: {type(e).__name__}: {e}')
+
+    # Phase 14k-28 L3: 单策略 risk_params 调整 (leverage / position_size, 守 backtest 真理不动 SL/TP)
+    try:
+        for s in running:
+            risk_item = _strategy_risk_adjust_item(s, target_ctx)
+            if risk_item:
+                items.append(risk_item)
+    except Exception as e:
+        print(f'[advisor] strategy_risk_adjust skipped: {type(e).__name__}: {e}')
+
     # 嚴重度排序：critical > warn > info
     sev_rank = {'critical': 0, 'warn': 1, 'info': 2}
     items.sort(key=lambda x: (sev_rank.get(x['severity'], 9), x['action']))
@@ -385,5 +402,208 @@ def build_recommendations(user_id: int = 1) -> dict:
             'apply_params_lift': apply_lift,
             'fan_out_min_sharpe': fan_out_min,
             'fan_out_locked': fan_out_locked,
+        },
+    }
+
+
+# ====================== Phase 14k-28: L2 + L3 risk advisor ======================
+
+SIZING_COOLDOWN_HOURS = 24      # AI sizing 一天最多推 1 次
+SIZING_DIFF_THRESHOLD = 0.25    # 字段差 ≥ 25% 才推
+RISK_LEVERAGE_BOUNDS = (1.0, 20.0)
+RISK_LEVERAGE_STEP = 1.0        # 单次调幅 cap
+RISK_POSITION_BOUNDS_FRAC = (0.3, 3.0)  # position 相对 trade_size_default 的范围
+RISK_POSITION_STEP_FRAC = 0.5   # 单次调幅 cap (相对当前)
+RISK_ADJUST_COOLDOWN_HOURS = 6  # 单策略 6h 最多调 1 次
+RISK_MIN_LIVE_AGE_HOURS = 2     # 策略 running 不足 2h 不调
+
+
+def _sizing_recommendation_item(user_id: int = 1) -> dict | None:
+    """L2: AI 账户级 sizing (trade_size / leverage / max_daily_loss).
+    守 backtest 真理: 不动 SL/TP. 24h cooldown 避免 LLM 重复烧钱.
+    """
+    import datetime as _dt
+    from app.models import AuditLog
+    from app.services.config_service import get_config
+    from app.services.audit import log as audit_log
+
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=SIZING_COOLDOWN_HOURS)
+    last = AuditLog.query.filter(
+        AuditLog.event_type == 'sizing_advisor_recommend',
+        AuditLog.created_at > cutoff,
+    ).first()
+    if last:
+        return None
+
+    # 拉账户余额 — 失败就 skip (advisor 不该因此挂)
+    try:
+        from app.services.exchange_service import fetch_balance, _resolve_creds
+        creds = _resolve_creds(user_id) if user_id != 1 else None
+        balances = fetch_balance(creds=creds) if creds else fetch_balance()
+        usd_total = sum(v.get('total', 0) for v in (balances or {}).values())
+        free_usdt = (balances or {}).get('USDT', {}).get('free', 0)
+    except Exception:
+        return None
+    if usd_total <= 0:
+        return None
+
+    from app.services.llm_prompts.sizing_advisor import recommend_sizing
+    r = recommend_sizing(user_id, {'balance': usd_total, 'free_margin': free_usdt, 'unrealized_pnl': 0})
+    if not r.get('ok'):
+        return None
+
+    rec = r.get('recommended') or {}
+    cur = r.get('current') or get_config()
+
+    # 只看不会动 PnL 回测 invariant 的字段 (跳过 SL/TP)
+    fields = ['trade_size_usdt', 'leverage', 'max_daily_loss_usdt']
+    deltas = {}
+    significant = False
+    for f in fields:
+        rv = rec.get(f)
+        cv = cur.get(f)
+        if rv is None or cv is None:
+            continue
+        try:
+            rv = float(rv); cv = float(cv)
+        except (TypeError, ValueError):
+            continue
+        if cv == 0:
+            if rv > 0.01:
+                significant = True
+                deltas[f] = 'set'
+        else:
+            pct = abs(rv - cv) / cv
+            deltas[f] = round(pct, 3)
+            if pct >= SIZING_DIFF_THRESHOLD:
+                significant = True
+
+    # 不管是否 significant, 写 cooldown 记录避免 24h 内重复 LLM
+    try:
+        audit_log('sizing_advisor_recommend', user_id=user_id,
+                  current=cur, recommended=rec, deltas=deltas, significant=significant)
+    except Exception:
+        pass
+
+    if not significant:
+        return None
+
+    new_sizing = {f: float(rec[f]) for f in fields if rec.get(f) is not None}
+    return {
+        'action': 'adjust_global_sizing',
+        'strategy_id': 0,
+        'strategy_name': '账户级 sizing',
+        'severity': 'info',
+        'reason': f'AI 资金顾问: {(rec.get("rationale") or "")[:200]}',
+        'meta': {
+            'new_sizing': new_sizing,
+            'current': {f: cur.get(f) for f in fields},
+            'rationale': rec.get('rationale'),
+            'balance': round(usd_total, 2),
+        },
+    }
+
+
+def _strategy_risk_adjust_item(strategy, target_ctx: dict) -> dict | None:
+    """L3: 单策略 risk_params 启发式调整 (leverage + position_size_usdt).
+    不动 SL/TP (那是回测 PnL invariant). 不调 LLM (启发式可解释/可测).
+    规则:
+      - 策略最近 OOS Sharpe ≥ 2.0 + max_dd_pct 充裕 → leverage +1 (cap 20)
+      - 策略最近 OOS Sharpe < 1.0 持续 → leverage -1 (floor 1)
+      - 目标 lag > 10% + 策略表现 good → position_size × 1.3 (cap 3× default)
+      - 目标 ahead > 15% → 保守, leverage -1
+      - 单策略 6h cooldown / 不超 [1, 20] / 调幅 cap 1 步
+    """
+    import datetime as _dt
+    from app.models import AuditLog, BacktestResult
+    from app.services.config_service import get_config
+
+    # 守: 创建/启动不足 2h 不动 (新策略让它自己跑跑看)
+    if not strategy.created_at:
+        return None
+    age_h = (_dt.datetime.utcnow() - strategy.created_at).total_seconds() / 3600.0
+    if age_h < RISK_MIN_LIVE_AGE_HOURS:
+        return None
+
+    # 6h cooldown
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=RISK_ADJUST_COOLDOWN_HOURS)
+    last = AuditLog.query.filter(
+        AuditLog.event_type == 'advisor_apply_strategy_risk',
+        AuditLog.created_at > cutoff,
+    ).all()
+    if any((a.context or {}).get('strategy_id') == strategy.id for a in last):
+        return None
+
+    bt = _latest_backtest(strategy.id)
+    sharpe = (bt.sharpe_ratio if bt else None) or 0
+    # max_dd 不在所有 backtest 都有, fallback 给一个中性值
+    max_dd = abs((bt.max_drawdown_pct if bt else None) or 20)
+
+    params = dict(strategy.params or {})
+    rp = dict(params.get('risk_params') or {})
+    cur_lev = float(rp.get('leverage') or get_config().get('leverage') or 5)
+    cur_size = float(rp.get('position_size_usdt') or get_config().get('trade_size_usdt') or 10)
+    trade_size_default = float(get_config().get('trade_size_usdt') or 10)
+
+    new_lev = cur_lev
+    new_size = cur_size
+    reasons = []
+
+    # Sharpe / DD rule
+    if sharpe >= 2.0 and max_dd < 25:
+        # 健康 → 允许 +1 leverage
+        new_lev = min(RISK_LEVERAGE_BOUNDS[1], cur_lev + RISK_LEVERAGE_STEP)
+        if new_lev > cur_lev:
+            reasons.append(f'回测 Sharpe {sharpe:.2f} 健康, max DD {max_dd:.1f}% 充裕 → 加杠杆')
+    elif sharpe > 0 and sharpe < 1.0:
+        new_lev = max(RISK_LEVERAGE_BOUNDS[0], cur_lev - RISK_LEVERAGE_STEP)
+        if new_lev < cur_lev:
+            reasons.append(f'回测 Sharpe {sharpe:.2f} 偏弱 → 降杠杆')
+
+    # 目标 lag/ahead rule (覆盖 Sharpe 决策, 因为目标驱动优先)
+    if not target_ctx.get('none'):
+        if target_ctx.get('lag_mode') and sharpe >= 1.2:
+            # 落后 + 策略不烂 → 加仓
+            target_size = min(trade_size_default * RISK_POSITION_BOUNDS_FRAC[1],
+                              cur_size * (1 + RISK_POSITION_STEP_FRAC))
+            if target_size > cur_size * 1.05:
+                new_size = round(target_size, 2)
+                reasons.append(f'目标落后 {target_ctx.get("lag_pct", 0):.1f}% + Sharpe {sharpe:.2f} 可加仓')
+        elif target_ctx.get('ahead_mode'):
+            # 领先 → 保守, 降杠杆 (不一定就 cur_lev-1, 已被 sharpe 规则可能覆盖)
+            new_lev = max(RISK_LEVERAGE_BOUNDS[0], min(new_lev, cur_lev - RISK_LEVERAGE_STEP))
+            if new_lev < cur_lev:
+                reasons.append(f'目标已领先 → 保守降杠杆')
+        if target_ctx.get('dd_warn'):
+            # DD 警戒 → 缩仓 (压过 lag 的加仓)
+            target_size = max(trade_size_default * RISK_POSITION_BOUNDS_FRAC[0],
+                              cur_size * (1 - RISK_POSITION_STEP_FRAC))
+            if target_size < cur_size * 0.95:
+                new_size = round(target_size, 2)
+                reasons.append(f'DD 接近上限 {target_ctx.get("dd_pct", 0):.1f}% → 缩仓')
+
+    # 还是没动 → 不出 item
+    if abs(new_lev - cur_lev) < 0.01 and abs(new_size - cur_size) < 0.01:
+        return None
+
+    changes = {}
+    if abs(new_lev - cur_lev) >= 0.01:
+        changes['leverage'] = new_lev
+    if abs(new_size - cur_size) >= 0.01:
+        changes['position_size_usdt'] = new_size
+
+    return {
+        'action': 'adjust_strategy_risk',
+        'strategy_id': strategy.id,
+        'strategy_name': strategy.name,
+        'severity': 'info',
+        'reason': '; '.join(reasons) or 'AI 风险调整',
+        'meta': {
+            'current': {'leverage': cur_lev, 'position_size_usdt': cur_size},
+            'new_risk_params': changes,
+            'sharpe': sharpe,
+            'max_dd': max_dd,
+            'target_lag_pct': target_ctx.get('lag_pct'),
+            'target_dd_pct': target_ctx.get('dd_pct'),
         },
     }

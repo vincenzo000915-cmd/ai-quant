@@ -58,6 +58,36 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     """
     action = item['action']
     sid = item['strategy_id']
+
+    # Phase 14k-28 L2: 账户级 action 不需要 strategy 实例, 单独前置处理
+    if action == 'adjust_global_sizing':
+        new_sizing = item.get('meta', {}).get('new_sizing') or {}
+        if not new_sizing:
+            return False, 'meta.new_sizing 缺失'
+        safe = {}
+        bounds = {
+            'trade_size_usdt': (1.0, 1000.0),
+            'leverage': (1.0, 20.0),
+            'max_daily_loss_usdt': (1.0, 10000.0),
+        }
+        for k, v in new_sizing.items():
+            if k not in bounds:
+                continue
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return False, f'{k} 非数字: {v}'
+            lo, hi = bounds[k]
+            if not (lo <= v <= hi):
+                return False, f'{k}={v} 超出合理范围 [{lo}, {hi}]'
+            safe[k] = v
+        if not safe:
+            return False, '没有合法字段可应用 (回测覆盖字段 SL/TP 已被过滤)'
+        from app.services.config_service import update as update_cfg
+        update_cfg(safe)
+        kv = ', '.join(f'{k}={v}' for k, v in safe.items())
+        return True, f'账户级 sizing: {kv}'
+
     strategy = Strategy.query.get(sid)
     if not strategy:
         return False, f'strategy {sid} 不存在'
@@ -66,9 +96,13 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         new_params = item.get('meta', {}).get('best_params')
         if not isinstance(new_params, dict) or not new_params:
             return False, 'meta.best_params 缺失或無效'
-        strategy.params = new_params
+        # Phase 14k-28: merge 保住 risk_params 等子项, 不被参数网格搜索结果(只含信号参数)清空
+        merged = dict(strategy.params or {})
+        merged.update(new_params)
+        strategy.params = merged
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(strategy, 'params')
         db.session.commit()
-        # Phase 14k-11: 友好措辞 — 不 dump dict, 列关键参数
         kv = ', '.join(f'{k}={v}' for k, v in list(new_params.items())[:4])
         return True, f'优化参数: {kv}'
 
@@ -204,6 +238,36 @@ def _execute_one(item: dict) -> tuple[bool, str]:
                 pass
         symbols_str = ', '.join(c.symbol for c in created_objs)
         return True, f'已建立 {len(created_objs)} 個兄弟（{symbols_str}），已排回測 — 過門檻才會自動啟動'
+
+    if action == 'adjust_strategy_risk':
+        # Phase 14k-28 L3: 单策略 risk_params 调整 (merge 进 strategy.params.risk_params)
+        new_rp = item.get('meta', {}).get('new_risk_params') or {}
+        if not new_rp:
+            return False, 'meta.new_risk_params 缺失'
+        # 安全护栏
+        if 'leverage' in new_rp:
+            v = float(new_rp['leverage'])
+            if not (1.0 <= v <= 20.0):
+                return False, f'leverage {v} 超出范围 [1, 20]'
+        if 'position_size_usdt' in new_rp:
+            v = float(new_rp['position_size_usdt'])
+            if not (0.1 <= v <= 10000):
+                return False, f'position_size_usdt {v} 超出范围'
+        # 守: 这里只接受 leverage / position_size_usdt, 拒绝 SL/TP/信号参数 (backtest 真理)
+        rejected = [k for k in new_rp if k not in ('leverage', 'position_size_usdt')]
+        if rejected:
+            return False, f'不接受字段 (回测覆盖): {rejected}'
+        # merge 到 strategy.params.risk_params
+        params = dict(strategy.params or {})
+        rp = dict(params.get('risk_params') or {})
+        rp.update(new_rp)
+        params['risk_params'] = rp
+        strategy.params = params
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(strategy, 'params')
+        db.session.commit()
+        kv = ', '.join(f'{k}={v}' for k, v in new_rp.items())
+        return True, f'策略 risk: {kv}'
 
     return False, f'未知 action: {action}'
 

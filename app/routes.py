@@ -1554,7 +1554,9 @@ def update_system_config():
         return jsonify({'error': 'atr_tp_mult out of range [0.5, 20]'}), 400
     # Phase 10.8: 智能托管 config 守衛
     if 'auto_apply_actions' in patch:
-        allowed = {'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate'}
+        # Phase 14k-28: 加 adjust_global_sizing + adjust_strategy_risk (AI 真·风险经理)
+        allowed = {'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate',
+                   'adjust_global_sizing', 'adjust_strategy_risk'}
         actions = patch['auto_apply_actions']
         if not isinstance(actions, list) or any(a not in allowed for a in actions):
             return jsonify({'error': f'auto_apply_actions 必須是 list，元素限：{sorted(allowed)}'}), 400
@@ -2528,7 +2530,8 @@ def me_profit_target_set():
         auto_config = {
             'ai_decision_mode': 'full_auto',
             'auto_apply_enabled': True,
-            'auto_apply_actions': ['apply_params', 'pause', 'fan_out', 'retire', 'promote_candidate'],
+            'auto_apply_actions': ['apply_params', 'pause', 'fan_out', 'retire', 'promote_candidate',
+                                   'adjust_global_sizing', 'adjust_strategy_risk'],
             'auto_promote_max_per_day': max(int(cfg_before.get('auto_promote_max_per_day') or 8), 8),
         }
         _update_cfg(auto_config)
