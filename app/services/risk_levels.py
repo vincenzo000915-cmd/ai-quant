@@ -30,9 +30,12 @@ def compute_sl_tp(*, symbol: str, timeframe: str, side: str, entry_price: float,
         return None, None, {'mode': 'flat_pct'}
 
     if mode == 'atr':
+        # 14k-48: ATR mult 也 TF-aware (15m 1.5×/2.5×, 4h 2×/3× ...). cfg fallback 仅为 paranoid.
+        from app.services.backtest_engine import resolve_default_atr_mult
+        _tf_sl_mult, _tf_tp_mult = resolve_default_atr_mult(timeframe)
         period = int(cfg.get('atr_period', 14))
-        sl_mult = float(cfg.get('atr_sl_mult', 2.0))
-        tp_mult = float(cfg.get('atr_tp_mult', 3.0))
+        sl_mult = float(cfg.get('atr_sl_mult') or _tf_sl_mult)
+        tp_mult = float(cfg.get('atr_tp_mult') or _tf_tp_mult)
         df = _fetch_candle_df(symbol, timeframe, n=max(period * 4, 60))
         if df is None or len(df) < period + 5:
             return None, None, {'mode': 'atr', 'fallback': f'candle 不足 (have {0 if df is None else len(df)}, need {period+5})'}

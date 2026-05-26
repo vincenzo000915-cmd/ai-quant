@@ -257,6 +257,32 @@ def _run_signals(strategy_id=None, category_filter=None):
     halted = cfg.get('halted', False)
     mode = cfg.get('trading_mode', 'paper')
 
+    def _strategy_merged_cfg(s):
+        """14k-48: per-strategy risk_params 覆盖 cfg 的 sizing/atr/mode 字段.
+        让 position_sizing.compute_size 和 risk_levels.compute_sl_tp 能拿到 per-strategy 配置.
+
+        优先级: strategy.params.risk_params > TF-aware (downstream 函数自己解) > cfg
+
+        允许 strategy.params.risk_params 显式设: sizing_mode / sl_mode / atr_sl_mult /
+        atr_tp_mult / atr_period / target_vol_pct / sizing_min_mult / sizing_max_mult
+
+        关键: cfg 的 atr_sl_mult / atr_tp_mult 默认 hardcoded 2/3 (跨 TF 单一值, 反模式).
+        这里 strategy.params 没设时把这两个 key **pop 掉**, 让 risk_levels 看 cfg.get→None
+        → 走 TF-aware fallback (15m:1.5×, 4h:2× ...). 这才符合"非 AI 用户用 TF 业界标准"原则.
+        """
+        rp = (s.params or {}).get('risk_params') or {}
+        overridable = ('sizing_mode', 'sl_mode', 'atr_sl_mult', 'atr_tp_mult',
+                       'atr_period', 'target_vol_pct', 'sizing_min_mult', 'sizing_max_mult')
+        merged = dict(cfg)
+        # cfg 默认值会 shadow TF-aware → 清掉 strategy 没显式覆盖的 ATR 字段
+        for k in ('atr_sl_mult', 'atr_tp_mult'):
+            if k not in rp:
+                merged.pop(k, None)
+        for k in overridable:
+            if k in rp:
+                merged[k] = rp[k]
+        return merged
+
     def _resolve_risk(s):
         """Phase 12.42 v8 + 13 + 14d + 14e + 14k-47: per-strategy risk_params override
         14e: 同时接受 sl_pct/tp_pct (catalog 简写) 和 stop_loss_pct/take_profit_pct (v8) — alias 修
@@ -372,8 +398,9 @@ def _run_signals(strategy_id=None, category_filter=None):
                     continue
 
                 # Phase 9.3: 動態倉位（依 sizing_mode）
+                # 14k-48: per-strategy sizing_mode/target_vol_pct 优先 (strategy.params > cfg)
                 from app.services.position_sizing import compute_size
-                effective_size, sizing_debug = compute_size(s, cfg, trade_size)
+                effective_size, sizing_debug = compute_size(s, _strategy_merged_cfg(s), trade_size)
                 amount_base = round(effective_size / price, 6)
                 notional = amount_base * price * lev
 
@@ -409,10 +436,11 @@ def _run_signals(strategy_id=None, category_filter=None):
                     continue
 
                 # Phase 9.4: 開倉時計算絕對 SL/TP（ATR mode）
+                # 14k-48: per-strategy sl_mode/atr_*_mult 优先 (strategy.params > cfg)
                 from app.services.risk_levels import compute_sl_tp
                 sl_price, tp_price, sl_dbg = compute_sl_tp(
                     symbol=s.symbol, timeframe=s.timeframe, side=side,
-                    entry_price=price, cfg=cfg,
+                    entry_price=price, cfg=_strategy_merged_cfg(s),
                 )
 
                 pos = Position(

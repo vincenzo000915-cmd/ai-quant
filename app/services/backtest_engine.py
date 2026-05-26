@@ -24,10 +24,25 @@ TF_DEFAULT_SL_TP = {
     '1d':  (10.0, 18.0),
 }
 
+# Phase 14k-48: timeframe-aware ATR multiplier (ATR-based SL/TP 用)
+# 短 TF ATR 计算窗口短, 倍数大会震出止损; 长 TF 倍数可大点抓波段
+TF_DEFAULT_ATR_MULT = {
+    '15m': (1.5, 2.5),    # SL 1.5× ATR / TP 2.5× ATR
+    '30m': (1.8, 3.0),
+    '1h':  (2.0, 3.0),
+    '4h':  (2.0, 3.0),    # 旧默认
+    '1d':  (2.5, 4.0),
+}
+
 
 def resolve_default_sl_tp(timeframe: str) -> tuple[float, float]:
     """按 timeframe 返回业界标准 SL/TP. 未知 TF fallback 5%/8% (4h 老默认)."""
     return TF_DEFAULT_SL_TP.get(timeframe or '4h', (5.0, 8.0))
+
+
+def resolve_default_atr_mult(timeframe: str) -> tuple[float, float]:
+    """按 timeframe 返回 ATR SL/TP 倍数. 未知 TF fallback 2/3 (4h 老默认)."""
+    return TF_DEFAULT_ATR_MULT.get(timeframe or '4h', (2.0, 3.0))
 
 
 def _calc_drawdown(equity_series):
