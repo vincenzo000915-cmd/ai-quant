@@ -2541,11 +2541,11 @@ def cleanup_stale_candidates():
 
     db.session.commit()
 
-    # 14k-53 步骤 8: 大 JSON 字段瘦身 — backtest_results 关联 dismissed/archived/error
-    # 30d+ 的 candidate, 删 equity_curve/trades_json/walkforward_json (保留 sharpe/PnL metrics)
-    # 这是 DB 真 hog — 一个 backtest ~360 KB, 数百个累积 100+ MB
+    # 14k-56 步骤 8: 大 JSON 字段瘦身 — backtest_results 关联 dismissed/archived/error
+    # 3d+ 的 candidate, 删 equity_curve/trades_json/walkforward_json (保留 sharpe/PnL metrics)
+    # 旧 14k-53 30d 太宽 — dismissed 一旦判定就没人看 trades 明细, 3d 缓冲足够
     from app.models import BacktestResult
-    cutoff_30d_bt = now - _dt.timedelta(days=30)
+    cutoff_30d_bt = now - _dt.timedelta(days=3)
     # 不在 SQL 层比 JSON 是否空 (PG JSON 不支持 !=), 拉出后 Python 判
     fat_bt = (db.session.query(BacktestResult)
               .join(StrategyCandidate, BacktestResult.id == StrategyCandidate.backtest_result_id)
@@ -2611,12 +2611,14 @@ def cleanup_stale_candidates():
                 c.error_log = (c.error_log or '') + f' | [14k-55 quota] user {uid} ({get_invent_quota(uid)} quota) 超额, 老的归档'
                 quota_archived += 1
 
-    # 14k-53 步骤 9: 物理 delete dismissed/archived candidates > 60d
-    # (保留 promoted 历史不动 — 用作 audit / 强化学习数据)
-    cutoff_60d = now - _dt.timedelta(days=60)
+    # 14k-56 步骤 9: 物理 delete dismissed/archived/error candidates > 7d
+    # 旧 60d 太宽 + dismissed 没 LLM few-shot 价值 (strategy_research:192 不看 dismissed/archived)
+    # → audit_log 已记录历史, candidate row 占空间没意义
+    # promoted 历史不动 (走 30d→archived 路径 by 步骤 6)
+    cutoff_dismiss = now - _dt.timedelta(days=7)
     deletable = StrategyCandidate.query.filter(
         StrategyCandidate.status.in_(['dismissed', 'archived', 'error']),
-        StrategyCandidate.created_at < cutoff_60d,
+        StrategyCandidate.created_at < cutoff_dismiss,
     ).all()
     candidates_deleted = 0
     for c in deletable:
