@@ -86,14 +86,13 @@ category 选择:
 def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
                         target_pct: float, days_remaining: int,
                         user_id: int = 1, hint: str | None = None,
-                        target_timeframe: str | None = None,
-                        prev_attempt_feedback: dict | None = None) -> dict:
+                        target_timeframe: str | None = None) -> dict:
     """LLM 根据当前市场 + user 目标合成 signal_fn.
 
     14k-49: hint + target_timeframe 让 invent meta-trigger 给 LLM 强方向
-    14k-57: 加 few-shot examples + prev_attempt_feedback (retry 用)
-      prev_attempt_feedback={'sharpe', 'trades', 'sample_trades', 'reason'}
-      → 第一次 backtest 烂时透传给 LLM 重写
+    14k-57: few-shot examples (catalog 优秀模板) — 仍保留, 这是真改进
+    14k-61: 撤回 retry loop (brief 没变 LLM 答案差不多, 浪费 token).
+      失败就 4h cooldown 等下次 brief 变化重新触发, 别原地轮回.
 
     Returns: {'ok', 'signal_fn_name', 'signal_code', 'default_params', 'risk_params',
               'category', 'timeframe', 'rationale_zh', 'rationale_en'} or {'ok': False, 'error'}
@@ -106,6 +105,7 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
     archetype = market_brief.get('recommended_archetype')
     if archetype == 'wait' and hint != 'dry_spell':
         return {'ok': False, 'error': 'AI brief 判 wait, 不合成新策略'}
+    # 14k-61: 删除 prev_attempt_feedback dead code 参数 (上面 signature 不再接收)
 
     # 14k-57: few-shot examples 让 LLM 看 catalog 优秀 signal_fn 风格
     few_shot_block = ''
@@ -126,21 +126,7 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
                           '**学这些风格的简洁度 + 信号严谨度, 不要发散瞎写**\n\n'
                           + '\n'.join(ex_lines))
 
-    # 14k-57: retry 反馈 — 第一次 backtest 烂时把 metrics 给 LLM 重写
-    retry_block = ''
-    if prev_attempt_feedback:
-        f = prev_attempt_feedback
-        retry_block = (
-            f"\n## ⚠️ 你上一次写的策略回测不达标 (这是第 2 次尝试)\n"
-            f"- IS Sharpe: {f.get('is_sharpe', '?')}\n"
-            f"- OOS Sharpe: {f.get('oos_sharpe', '?')}\n"
-            f"- 总 trades: {f.get('total_trades', '?')}\n"
-            f"- 失败原因: {f.get('reason', '?')[:200]}\n"
-            f"**改进方向**: 看上面 few-shot 例子的简洁度, "
-            f"避免过拟合, 信号阈值要保守, 不要堆太多 indicator. "
-            f"重写一个完全不同思路的 signal_fn (不要小调上次代码).\n"
-        )
-
+    # 14k-61: retry_block 删了 — 同 brief 同 prompt 让 LLM 改写, 实际答案差不多, 烧 token 无意义
     hint_block = ''
     if hint:
         hint_messages = {
@@ -169,15 +155,14 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
 - 余额 / Balance: ${balance:.2f}
 - 目标 / Target: +{target_pct}% / {days_remaining} 天剩
 - 月化等价: {((1 + target_pct/100) ** (30.0/max(1, days_remaining)) - 1) * 100:.1f}%
-{hint_block}{tf_constraint}{retry_block}{few_shot_block}
+{hint_block}{tf_constraint}{few_shot_block}
 
 请合成一个**针对当前市场 + 用户目标的实时 signal_fn**, 输出 JSON.
 """
 
-    retry_marker = bool(prev_attempt_feedback)
     sig_key = hashlib.sha256(
         json.dumps([symbol, target_pct, days_remaining, archetype,
-                    market_brief.get('regime'), hint, target_timeframe, retry_marker],
+                    market_brief.get('regime'), hint, target_timeframe],
                    sort_keys=True).encode()
     ).hexdigest()[:20]
 

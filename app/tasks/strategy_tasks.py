@@ -2227,96 +2227,57 @@ def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None,
     target_pct = float(t.target_pct) if t else 5.0
     days_remaining = t.days_remaining() if t else 30
 
-    # 14k-57: synth 用 retry loop — 第一次 backtest 不过门槛 → 反馈给 LLM 重写第二版
-    from app.services.candidate_pipeline import backtest_candidate
-    MAX_ATTEMPTS = 2
-    cand = None
-    prev_feedback = None
-    last_r = None
+    # 14k-61: 撤回 14k-57 retry loop (user "轮回很没意义" — brief 没变 LLM 答案差不多)
+    # 改成单次 attempt + 不过门槛就 dismiss, 4h cooldown 后下次 advisor cycle 用新 brief 重新触发
+    # few-shot examples 保留 (catalog 优秀模板是真改进)
+    r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining,
+                            user_id=user_id, hint=hint, target_timeframe=target_timeframe)
+    if not r.get('ok'):
+        audit('synth_error', symbol=symbol, error=r.get('error'))
+        return f'synth failed: {r.get("error")}'
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        r = synthesize_strategy(brief, symbol, balance, target_pct, days_remaining,
-                                user_id=user_id, hint=hint, target_timeframe=target_timeframe,
-                                prev_attempt_feedback=prev_feedback)
-        if not r.get('ok'):
-            audit('synth_error', symbol=symbol, attempt=attempt, error=r.get('error'))
-            if attempt == MAX_ATTEMPTS:
-                return f'synth failed: {r.get("error")}'
-            continue
-        last_r = r
+    cand = StrategyCandidate(
+        user_id=user_id,
+        source='synth',
+        source_url=None,
+        source_name=f"AI 合成 · {r.get('rationale_zh', '')[:50]}",
+        source_author='ai_synth',
+        source_meta={
+            'symbol': symbol,
+            'risk_params': r['risk_params'],
+            'brief_regime': brief.get('regime'),
+            'brief_archetype': brief.get('recommended_archetype'),
+            'rationale_zh': r.get('rationale_zh'),
+            'rationale_en': r.get('rationale_en'),
+            'target_exchange': 'hyperliquid',
+        },
+        raw_code=f"# AI synth at {_dt.datetime.utcnow().isoformat()}\n{r['signal_code']}",
+        raw_lang='python',
+        parsed_signal=r['signal_code'],
+        signal_fn_name=r['signal_fn_name'],
+        candidate_type=f'synth_{r["signal_fn_name"]}',
+        category=r['category'],
+        timeframe=r['timeframe'],
+        default_params=r['default_params'],
+        llm_notes=r.get('rationale_zh'),
+        llm_model='ai_synth_v1',
+        status='translated',
+    )
+    db.session.add(cand)
+    db.session.commit()
 
-        # 写 candidate
-        cand = StrategyCandidate(
-            user_id=user_id,
-            source='synth',
-            source_url=None,
-            source_name=f"AI 合成 v{attempt} · {r.get('rationale_zh', '')[:50]}",
-            source_author='ai_synth',
-            source_meta={
-                'symbol': symbol,
-                'risk_params': r['risk_params'],
-                'brief_regime': brief.get('regime'),
-                'brief_archetype': brief.get('recommended_archetype'),
-                'rationale_zh': r.get('rationale_zh'),
-                'rationale_en': r.get('rationale_en'),
-                'target_exchange': 'hyperliquid',
-                'synth_attempt': attempt,
-            },
-            raw_code=f"# AI synth v{attempt} at {_dt.datetime.utcnow().isoformat()}\n{r['signal_code']}",
-            raw_lang='python',
-            parsed_signal=r['signal_code'],
-            signal_fn_name=r['signal_fn_name'],
-            candidate_type=f'synth_{r["signal_fn_name"]}_v{attempt}',
-            category=r['category'],
-            timeframe=r['timeframe'],
-            default_params=r['default_params'],
-            llm_notes=r.get('rationale_zh'),
-            llm_model='ai_synth_v1',
-            status='translated',
-        )
-        db.session.add(cand)
-        db.session.commit()
+    audit('synth_candidate_created', user_id=user_id, symbol=symbol, candidate_id=cand.id,
+          regime=brief.get('regime'), archetype=brief.get('recommended_archetype'))
 
-        audit('synth_candidate_created', user_id=user_id, symbol=symbol, candidate_id=cand.id,
-              attempt=attempt,
-              regime=brief.get('regime'), archetype=brief.get('recommended_archetype'))
-
-        # 14k-57: 同步跑 backtest (不 async) — 拿结果判断是否 retry
-        if attempt < MAX_ATTEMPTS:
-            try:
-                bt_r = backtest_candidate(cand.id, symbol=symbol)
-                if bt_r.get('ok') and bt_r.get('qualified'):
-                    audit('synth_qualified_first_try', user_id=user_id, candidate_id=cand.id)
-                    break   # 第一次就过, 不 retry
-                # 没过 — 收集反馈
-                wf = bt_r.get('walkforward') or {}
-                prev_feedback = {
-                    'is_sharpe': wf.get('is_sharpe'),
-                    'oos_sharpe': wf.get('oos_sharpe'),
-                    'total_trades': (wf.get('is_trades') or 0) + (wf.get('oos_trades') or 0),
-                    'reason': ', '.join(bt_r.get('qualified_reasons') or [])[:300],
-                }
-                audit('synth_retry_triggered', user_id=user_id, candidate_id=cand.id,
-                      is_sharpe=prev_feedback['is_sharpe'],
-                      oos_sharpe=prev_feedback['oos_sharpe'])
-            except Exception as e:
-                audit('synth_backtest_error', candidate_id=cand.id, error=f'{type(e).__name__}: {e}')
-                break
-        else:
-            # 最后一次 attempt — 不再 retry, 异步走正常 backtest 链路
-            try:
-                backtest_and_maybe_start.apply_async(args=[cand.id], countdown=10)
-            except Exception:
-                pass
-
-    r = last_r or {}
-    if cand is None:
-        return f'synth failed all {MAX_ATTEMPTS} attempts'
+    # 异步走正常 backtest 链路 (不同步等结果, 节省 task 时间)
+    try:
+        backtest_and_maybe_start.apply_async(args=[cand.id], countdown=10)
+    except Exception:
+        pass
 
     try:
         from app.services.telegram_service import send as _tg
-        attempt_info = f' (重试第 {cand.source_meta.get("synth_attempt", 1)} 次)' if (cand.source_meta or {}).get('synth_attempt', 1) > 1 else ''
-        _tg(f'🧪 <b>AI 合成新策略 · Strategy Synthesized</b>{attempt_info}\n'
+        _tg(f'🧪 <b>AI 合成新策略 · Strategy Synthesized</b>\n'
             f'交易对 / Symbol: {symbol}\n'
             f'适配 / Archetype: {brief.get("recommended_archetype")} ({brief.get("regime")})\n'
             f'候选 / Candidate: #{cand.id}\n'
