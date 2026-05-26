@@ -878,14 +878,24 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
 
 
 def _promote_eligible_count() -> int:
-    """14k-50: qualified 池里真能 promote 的数 (OOS sharpe ≥ PROMOTE_MIN_OOS_SHARPE).
-    旧版 invent T1 用 qualified count, 但 qualified OOS 0.8-1.5 卡死不 promote → AI
-    永远看 30 觉得满 → 不触发 invent. 用 promote-eligible 反映真实可上线数.
+    """14k-50/51: qualified 池里真能 promote 的数. 两条路径:
+    A. catalog / catalog_clone: 看 catalog_meta.verified_oos_sharpe (走 _maybe_auto_apply)
+    B. synth / research / improve / github: 看 backtest_result_id walkforward_json out_sample
+
+    旧 14k-50 只看 B, 错认为 30 个 catalog clone 是死池.
+    实际 catalog clone 全有 verified_oos_sharpe, 真能 promote.
     """
     from app.models import StrategyCandidate, BacktestResult
     qualified = StrategyCandidate.query.filter_by(status='qualified').all()
     eligible = 0
     for c in qualified:
+        # A. catalog 路径 — verified_oos_sharpe
+        cm = c.catalog_meta or {}
+        verified = cm.get('verified_oos_sharpe')
+        if verified is not None and float(verified) >= PROMOTE_MIN_OOS_SHARPE:
+            eligible += 1
+            continue
+        # B. individual backtest 路径
         if not c.backtest_result_id:
             continue
         bt = BacktestResult.query.get(c.backtest_result_id)

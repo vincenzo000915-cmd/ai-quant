@@ -2406,6 +2406,85 @@ def advisor_invent_strategy(user_id: int = 1):
     return f'invented {n} candidates'
 
 
+# ===== Phase 14k-51: 候选池生命周期管理 (防止累积无用策略拖后 AI) =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.cleanup_stale_candidates')
+def cleanup_stale_candidates():
+    """14k-51: 阶梯归档无用 individual qualified candidates, 防止累积拖后 AI 判断.
+
+    Scope: source IN ('synth', 'research', 'improve', 'github') — individual backtest 出来的
+    NOT 包括: catalog / catalog_clone (它们走 _maybe_auto_apply 用 verified_oos_sharpe, 不死池)
+
+    生命周期:
+      qualified (个体 backtest 但 OOS<1.5) → 立刻 archived (永远不能 promote)
+      qualified (OOS≥1.5 但 24h+ 未 promote) → stale_qualified
+      stale_qualified (7d+ 仍未 promote)    → archived
+
+    保留 backtest_result + parsed_signal 作 LLM few-shot examples.
+    不删 DB row, 只改 status.
+    """
+    import datetime as _dt
+    from app.models import StrategyCandidate, BacktestResult
+    from app.services.strategy_advisor import PROMOTE_MIN_OOS_SHARPE
+    from app.services.audit import log as audit
+
+    INDIVIDUAL_SOURCES = ('synth', 'research', 'improve', 'github')
+    now = _dt.datetime.utcnow()
+    moved_to_stale = 0
+    moved_to_archived = 0
+    archived_no_hope = 0
+
+    # 步骤 1: individual qualified OOS<1.5 → 立刻 archived
+    qualified = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'qualified',
+        StrategyCandidate.source.in_(INDIVIDUAL_SOURCES),
+    ).all()
+    for c in qualified:
+        if not c.backtest_result_id:
+            continue
+        bt = BacktestResult.query.get(c.backtest_result_id)
+        if not bt or not bt.walkforward_json:
+            continue
+        oos_sh = (bt.walkforward_json.get('out_sample') or {}).get('sharpe_ratio')
+        if oos_sh is None or oos_sh < PROMOTE_MIN_OOS_SHARPE:
+            c.status = 'archived'
+            c.error_log = f'[14k-51 archived] OOS sharpe {oos_sh} < promote min {PROMOTE_MIN_OOS_SHARPE}, 永远不能 promote'
+            archived_no_hope += 1
+
+    # 步骤 2: individual qualified (OOS≥1.5 但) 24h+ 未 promote → stale_qualified
+    cutoff_24h = now - _dt.timedelta(hours=24)
+    qualified_24h = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'qualified',
+        StrategyCandidate.source.in_(INDIVIDUAL_SOURCES),
+        StrategyCandidate.updated_at < cutoff_24h,
+    ).all()
+    for c in qualified_24h:
+        c.status = 'stale_qualified'
+        moved_to_stale += 1
+
+    # 步骤 3: stale_qualified 7d+ → archived
+    cutoff_7d = now - _dt.timedelta(days=7)
+    stale_7d = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'stale_qualified',
+        StrategyCandidate.updated_at < cutoff_7d,
+    ).all()
+    for c in stale_7d:
+        c.status = 'archived'
+        c.error_log = (c.error_log or '') + ' | [14k-51 archived] stale_qualified 7d+ 仍无 promote'
+        moved_to_archived += 1
+
+    from app.extensions import db
+    db.session.commit()
+
+    summary = (f'cleanup: archived_no_hope={archived_no_hope} '
+               f'stale={moved_to_stale} stale→archived={moved_to_archived}')
+    audit('candidates_cleanup', actor='system',
+          archived_no_hope=archived_no_hope,
+          stale=moved_to_stale,
+          stale_archived=moved_to_archived)
+    return summary
+
+
 # ===== Phase 14k-30 #1: AI 改动 auto-revert =====
 
 @celery_app.task(name='app.tasks.strategy_tasks.auto_revert_ai_changes')

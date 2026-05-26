@@ -11,11 +11,29 @@ from app.services.candidate_sandbox import verify_signal_fn, load_signal_fn
 from app.services.llm_translator import translate, translate_via_provider, LLMTranslatorError
 
 
-# 候選策略 qualified 門檻（Phase 5.4 嚴格化）
-QUALIFIED_SHARPE_IS = 1.5        # in-sample Sharpe
-QUALIFIED_SHARPE_OOS = 0.8       # out-of-sample 較寬鬆，但必須是正的且合理
-QUALIFIED_MAX_DECAY_PCT = 70     # OOS sharpe 相對 IS 衰減超過 70% → 過擬合 reject
-QUALIFIED_MIN_TRADES_PER_SIDE = 5  # IS / OOS 各自至少這麼多筆，否則 Sharpe 估不準
+# 候選策略 qualified 門檻（Phase 5.4 嚴格化 + 14k-51 per-TF）
+# 14k-51: 跨 TF 同门槛是反模式 — 15m noise 大该严, 1d 样本少该宽. 跟 promote per-TF gates 对称.
+QUALIFIED_TF_GATES = {
+    # tf: (is_sharpe, oos_sharpe, min_trades_per_side, max_decay_pct)
+    '15m': (2.0, 1.0, 20, 70),   # 15m 一年 35040 K 线, trades 多, sharpe 估准 → 高门槛
+    '30m': (1.8, 0.9, 15, 70),
+    '1h':  (1.5, 0.8, 10, 70),
+    '4h':  (1.5, 0.8, 8,  70),   # 旧默认 (5 → 8, 平衡 noise)
+    '1d':  (1.2, 0.6, 5,  80),   # 1d 一年 365 K 线, sample 少, 容忍点
+    '1w':  (1.0, 0.5, 4,  85),
+}
+QUALIFIED_DEFAULT_GATE = (1.5, 0.8, 5, 70)   # 未知 TF fallback (4h 旧默认)
+
+# 旧名 alias (向后兼容) — 注意: 别处导入仍可用, 但实际判定走 TF gate
+QUALIFIED_SHARPE_IS = 1.5
+QUALIFIED_SHARPE_OOS = 0.8
+QUALIFIED_MAX_DECAY_PCT = 70
+QUALIFIED_MIN_TRADES_PER_SIDE = 5
+
+
+def gate_for_tf(timeframe: str) -> tuple[float, float, int, int]:
+    """按 timeframe 返回 qualified gate (is_sharpe, oos_sharpe, min_trades, max_decay_pct)."""
+    return QUALIFIED_TF_GATES.get(timeframe or '4h', QUALIFIED_DEFAULT_GATE)
 
 
 def translate_and_verify(candidate_id: int, *, user_id: int | None = None) -> dict:
@@ -244,7 +262,7 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
 
     c.backtest_result_id = bt.id
 
-    # Phase 5.4: qualified 門檻 = IS sharpe ≥ 1.5 AND OOS sharpe ≥ 0.8 AND decay ≤ 70%
+    # Phase 5.4 + 14k-51: qualified 門檻 per-TF (15m noise 大该严, 1d 样本少该宽)
     # 14k-50: 先检查 signal_fn 异常 (优先于 sharpe), code error 单独标记便于 LLM 修
     is_res = wf.get('in_sample') or {}
     oos_res = wf.get('out_sample') or {}
@@ -254,6 +272,9 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     full_res = wf.get('full') or {}
     sfn_err_count = full_res.get('signal_fn_error_count', 0)
     sfn_first_err = full_res.get('signal_fn_first_error')
+
+    # 14k-51: per-TF gate 替代跨 TF 同门槛
+    tf_is_sh, tf_oos_sh, tf_min_trades, tf_max_decay = gate_for_tf(timeframe)
 
     qualified_reasons = []
     # 14k-50: signal_fn 大量 raise (>10% candles) → 不是策略烂, 是 code 错; 单独标记
@@ -266,16 +287,16 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
 
     is_trades = is_res.get('total_trades') or 0
     oos_trades = oos_res.get('total_trades') or 0
-    if is_trades < QUALIFIED_MIN_TRADES_PER_SIDE:
-        qualified_reasons.append(f'IS trades={is_trades} < {QUALIFIED_MIN_TRADES_PER_SIDE} (Sharpe 樣本不足)')
-    if oos_trades < QUALIFIED_MIN_TRADES_PER_SIDE:
-        qualified_reasons.append(f'OOS trades={oos_trades} < {QUALIFIED_MIN_TRADES_PER_SIDE} (Sharpe 樣本不足)')
-    if is_sh is None or is_sh < QUALIFIED_SHARPE_IS:
-        qualified_reasons.append(f'IS sharpe={is_sh} < {QUALIFIED_SHARPE_IS}')
-    if oos_sh is None or oos_sh < QUALIFIED_SHARPE_OOS:
-        qualified_reasons.append(f'OOS sharpe={oos_sh} < {QUALIFIED_SHARPE_OOS}')
-    if decay is not None and decay > QUALIFIED_MAX_DECAY_PCT:
-        qualified_reasons.append(f'OOS decay={decay}% > {QUALIFIED_MAX_DECAY_PCT}% (suspected overfit)')
+    if is_trades < tf_min_trades:
+        qualified_reasons.append(f'IS trades={is_trades} < {tf_min_trades} ({timeframe} 门槛, Sharpe 样本不足)')
+    if oos_trades < tf_min_trades:
+        qualified_reasons.append(f'OOS trades={oos_trades} < {tf_min_trades} ({timeframe} 门槛, Sharpe 样本不足)')
+    if is_sh is None or is_sh < tf_is_sh:
+        qualified_reasons.append(f'IS sharpe={is_sh} < {tf_is_sh} ({timeframe} 门槛)')
+    if oos_sh is None or oos_sh < tf_oos_sh:
+        qualified_reasons.append(f'OOS sharpe={oos_sh} < {tf_oos_sh} ({timeframe} 门槛)')
+    if decay is not None and decay > tf_max_decay:
+        qualified_reasons.append(f'OOS decay={decay}% > {tf_max_decay}% ({timeframe} 门槛, suspected overfit)')
 
     if not qualified_reasons:
         c.status = 'qualified'

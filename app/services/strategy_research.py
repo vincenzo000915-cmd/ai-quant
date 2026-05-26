@@ -188,8 +188,10 @@ def pull_translated_candidate_refs(limit: int = 8) -> list[dict]:
     返回 {type, category, timeframe, source, source_name, fn_source, params}
     """
     refs: list[dict] = []
+    # 14k-51: LLM few-shot 看 qualified + stale_qualified (好但没被 promote 也算正面例)
+    # 不看 archived (永远不能 promote, 避免 LLM 学失败案例)
     cands = StrategyCandidate.query.filter(
-        StrategyCandidate.status.in_(['translated', 'qualified']),
+        StrategyCandidate.status.in_(['translated', 'qualified', 'stale_qualified']),
         StrategyCandidate.parsed_signal.isnot(None),
     ).order_by(desc(StrategyCandidate.created_at)).limit(limit * 2).all()
     seen_types: set[str] = set()

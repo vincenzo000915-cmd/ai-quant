@@ -168,26 +168,33 @@ def check_translate_pipeline() -> dict:
       - 都没问题 → OK
     """
     t = t0()
+    # 14k-51: 加 stale_qualified / archived 分级 (qualified pool 应该看真能 promote 的)
     rc, out = psql("""
         SELECT
           (SELECT COUNT(*) FROM strategy_candidates WHERE status='backtesting' AND updated_at < NOW() - INTERVAL '6 hours'),
           (SELECT COUNT(*) FROM strategy_candidates WHERE status='translated' AND created_at > NOW() - INTERVAL '24 hours'),
           (SELECT COUNT(*) FROM strategy_candidates WHERE status='error' AND created_at > NOW() - INTERVAL '24 hours'),
-          (SELECT COUNT(*) FROM strategy_candidates WHERE status='qualified')
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='qualified'),
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='stale_qualified'),
+          (SELECT COUNT(*) FROM strategy_candidates WHERE status='archived')
     """)
     if rc != 0:
         return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
     try:
-        stuck_bt, new_translated_24h, errored_24h, qualified_pool = [int(x) for x in out.strip().split('|')]
+        parts = [int(x) for x in out.strip().split('|')]
+        stuck_bt, new_translated_24h, errored_24h, qualified_pool, stale_pool, archived_pool = parts
     except Exception as e:
         return {'status': WARN, 'detail': f'解析失败: {e}', 'latency_ms': ms(t)}
     if stuck_bt > 5:
         return {'status': WARN, 'detail': f'有 {stuck_bt} 个候选卡在回测超过 6 小时（回测 task 可能挂）', 'latency_ms': ms(t),
                 'autofix_hint': '重启 celery-worker 释放卡住的回测'}
-    if new_translated_24h == 0 and qualified_pool < 10:
-        return {'status': WARN, 'detail': '近 24 小时无新翻译候选 + 候选池余量偏少（翻译流可能闲置）', 'latency_ms': ms(t)}
+    # 14k-51: 看真能 promote 的池 (qualified), stale/archived 不算
+    if new_translated_24h == 0 and qualified_pool < 5:
+        return {'status': WARN,
+                'detail': f'近 24h 无新翻译 + 真 promote-eligible 池薄 (qualified={qualified_pool}, stale={stale_pool}, archived={archived_pool})',
+                'latency_ms': ms(t)}
     return {'status': OK,
-            'detail': f'近 24 小时新增翻译 {new_translated_24h} 个 / 卡住回测 {stuck_bt} 个 / 失败 {errored_24h} 个 / 候选池 {qualified_pool} 个',
+            'detail': f'24h 翻译 {new_translated_24h} / 卡 backtesting {stuck_bt} / err {errored_24h} / qualified {qualified_pool} / stale {stale_pool} / archived {archived_pool}',
             'latency_ms': ms(t)}
 
 

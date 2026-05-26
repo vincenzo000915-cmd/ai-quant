@@ -139,6 +139,12 @@ beat_schedule = {
         'schedule': crontab(hour='6', minute='0', day_of_week='sun'),
     },
 
+    # === Phase 14k-51: 每日 06:30 阶梯归档死池, 防止 qualified 累积拖后 AI ===
+    'daily-cleanup-stale-candidates': {
+        'task': 'app.tasks.strategy_tasks.cleanup_stale_candidates',
+        'schedule': crontab(hour='6', minute='30'),
+    },
+
     # === Phase 12.17: AI 改進提速 1次/週 → 1次/日 (07:00 UTC = 北京 15:00)
     # admin 走 claude_cli 訂閱免費，加速生成候選不燒 API token
     'daily-auto-ai-improve': {
