@@ -219,7 +219,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     if action == 'fan_out':
         # 直接複用 routes 的邏輯太重；重寫精簡版
         import re
-        from app.services.symbols import SUPPORTED_SYMBOLS
+        from app.services.symbols import is_supported
         if strategy.template_group is None:
             strategy.template_group = strategy.id
         group = strategy.template_group
@@ -227,7 +227,8 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         base_name = re.sub(r'\s*\([A-Z]{2,6}\)\s*$', '', strategy.name).strip()
         created_objs = []
         for sym in FAN_OUT_DEFAULTS:
-            if sym not in SUPPORTED_SYMBOLS or sym == strategy.symbol or sym in existing:
+            # 14k-46: is_supported 动态查 okx_meta, 不再 hardcode SUPPORTED_SYMBOLS
+            if not is_supported(sym) or sym == strategy.symbol or sym in existing:
                 continue
             clone = Strategy(
                 name=f'{base_name} ({sym.split("/")[0]})',

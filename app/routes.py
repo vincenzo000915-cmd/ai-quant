@@ -234,7 +234,7 @@ def fan_out_strategy(id):
     - 已存在同 group 同 symbol 的兄弟會被跳過（回傳 skipped）
     """
     from app.services.audit import log as audit
-    from app.services.symbols import SUPPORTED_SYMBOLS
+    from app.services.symbols import is_supported
 
     source = _owned_strategy(id)
     data = request.get_json() or {}
@@ -242,8 +242,8 @@ def fan_out_strategy(id):
     if not isinstance(raw_symbols, list) or not raw_symbols:
         return jsonify({'error': '需要 symbols 陣列'}), 400
 
-    # 驗證 symbol
-    invalid = [s for s in raw_symbols if s not in SUPPORTED_SYMBOLS]
+    # 驗證 symbol — 14k-46: is_supported 动态查 OKX universe (不再 hardcode 8 个)
+    invalid = [s for s in raw_symbols if not is_supported(s)]
     if invalid:
         return jsonify({'error': f'不支援的幣種：{invalid}'}), 400
 

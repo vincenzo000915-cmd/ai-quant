@@ -1,36 +1,92 @@
-"""Phase 9.1: 支援的交易對清單 + OKX SWAP 合約規格
+"""Phase 14k-46: 守门切到动态 okx_meta — SUPPORTED_SYMBOLS 仅保留作"推荐种子".
 
-合約大小（ctVal）來自 OKX instruments endpoint，這裡 hardcode 常見的避免每次 query。
-未來要新增交易對：
-  - 看 https://www.okx.com/priapi/v5/public/instruments?instType=SWAP&instId=XXX-USDT-SWAP
-  - 加進 SUPPORTED_SYMBOLS dict
+旧 (Phase 9.1 ~ 14k-45):
+  SUPPORTED_SYMBOLS hardcode 8 个 OKX SWAP → is_supported / get_contract_size 都 lookup 它.
+  问题: OKX 一直在加币, hardcode 名单过期; symbol 不在里头时 get_contract_size silent
+  fallback 0.01 (BTC 量级) → AI 推荐路径 _adapt_risk_to_capital 算出 position=0 空跑策略
+  (14k-36 已经在 AI 推荐 stage 加 is_supported 守门遏制症状, 但根因 fallback 还在).
+
+新 (14k-46):
+  守门走 okx_meta — 真实 OKX instruments endpoint 1h 缓存. OKX 上 ~200+ USDT-SWAP
+  全自动可用, 不用改代码. get_contract_size **不存在 raise**, 杜绝 silent 0 root cause.
+
+  SUPPORTED_SYMBOLS dict 改成"推荐种子" — 主流稳定币 + 我们有 catalog 的, UI 推荐 /
+  fan_out 默认列表用. 不再充当守门白名单.
 """
 
-SUPPORTED_SYMBOLS = {
-    # symbol → { okx_inst_id, contract_size (base ccy per contract), category_hint }
-    'BTC/USDT': {'okx_inst_id': 'BTC-USDT-SWAP', 'contract_size': 0.01,  'min_size': 1},
-    'ETH/USDT': {'okx_inst_id': 'ETH-USDT-SWAP', 'contract_size': 0.1,   'min_size': 1},
-    'SOL/USDT': {'okx_inst_id': 'SOL-USDT-SWAP', 'contract_size': 1.0,   'min_size': 1},
-    'AVAX/USDT': {'okx_inst_id': 'AVAX-USDT-SWAP', 'contract_size': 1.0, 'min_size': 1},
-    'DOGE/USDT': {'okx_inst_id': 'DOGE-USDT-SWAP', 'contract_size': 1000.0, 'min_size': 1},
-    'XRP/USDT':  {'okx_inst_id': 'XRP-USDT-SWAP',  'contract_size': 100.0,  'min_size': 1},
-    'LINK/USDT': {'okx_inst_id': 'LINK-USDT-SWAP', 'contract_size': 1.0,    'min_size': 1},
-    'SUI/USDT':  {'okx_inst_id': 'SUI-USDT-SWAP',  'contract_size': 1.0,    'min_size': 1},
+# 推荐种子 — 主流稳定币 + 系统 catalog 覆盖较全的. UI 推荐展示 / 默认 fan_out 用.
+# 不是守门白名单 — 守门走 okx_meta (动态拉 OKX universe).
+RECOMMENDED_SYMBOLS = {
+    'BTC/USDT': {'category_hint': 'trend'},
+    'ETH/USDT': {'category_hint': 'trend'},
+    'SOL/USDT': {'category_hint': 'trend'},
+    'AVAX/USDT': {'category_hint': 'trend'},
+    'DOGE/USDT': {'category_hint': 'reversion'},
+    'XRP/USDT':  {'category_hint': 'reversion'},
+    'LINK/USDT': {'category_hint': 'trend'},
+    'SUI/USDT':  {'category_hint': 'trend'},
 }
+
+# 旧名兼容 alias — 已有调用 import SUPPORTED_SYMBOLS 的地方不破. 内部不再用作守门.
+SUPPORTED_SYMBOLS = RECOMMENDED_SYMBOLS
 
 
 def is_supported(symbol: str) -> bool:
-    return symbol in SUPPORTED_SYMBOLS
+    """OKX 上是否有这个 USDT-SWAP. 走 okx_meta 动态后端 (14k-46).
+    okx_meta 拉不到 (网络挂) 时 fallback 推荐种子 dict, 保守不空白.
+    """
+    try:
+        from app.services.okx_meta import is_okx_supported, _load_okx_instruments
+        cache = _load_okx_instruments()
+        if cache:  # 缓存有数据 = okx_meta 工作中, 信它
+            return is_okx_supported(symbol)
+    except Exception:
+        pass
+    # okx_meta 完全没 cache (首次 + 拉失败) → fallback 种子
+    return symbol in RECOMMENDED_SYMBOLS
 
 
 def get_inst_id(symbol: str) -> str:
-    return SUPPORTED_SYMBOLS.get(symbol, {}).get('okx_inst_id') or symbol.replace('/', '-') + '-SWAP'
+    """BTC/USDT -> BTC-USDT-SWAP. 优先 okx_meta, fallback 命名规则."""
+    try:
+        from app.services.okx_meta import get_okx_inst_id
+        return get_okx_inst_id(symbol)
+    except Exception:
+        return symbol.replace('/', '-') + '-SWAP'
 
 
 def get_contract_size(symbol: str) -> float:
-    """每張合約對應多少 base currency。BTC = 0.01, ETH = 0.1, SOL = 1, DOGE = 1000, …"""
-    return SUPPORTED_SYMBOLS.get(symbol, {}).get('contract_size', 0.01)
+    """每张合约对应多少 base ccy. **不存在 raise ValueError** (14k-46 根因修).
+
+    旧版 silent return 0.01 → 上游 _adapt_risk_to_capital 算出 position=0 空跑.
+    新版让调用方面对异常 — 要么过滤掉 unsupported, 要么显式 fallback.
+    """
+    try:
+        from app.services.okx_meta import get_okx_contract_size, _load_okx_instruments
+        if _load_okx_instruments():  # cache 有数据
+            return get_okx_contract_size(symbol)
+    except ValueError:
+        raise  # okx_meta 已经 raise, 直接传
+    except Exception:
+        pass
+    # okx_meta 完全挂掉 → 用种子 dict 兜底 (旧 hardcode 值)
+    seed_ctvals = {
+        'BTC/USDT': 0.01, 'ETH/USDT': 0.1, 'SOL/USDT': 1.0,
+        'AVAX/USDT': 1.0, 'DOGE/USDT': 1000.0, 'XRP/USDT': 100.0,
+        'LINK/USDT': 1.0, 'SUI/USDT': 1.0,
+    }
+    if symbol in seed_ctvals:
+        return seed_ctvals[symbol]
+    raise ValueError(f'symbols.get_contract_size: {symbol} 既不在 okx_meta cache 也不在 fallback 种子里')
 
 
 def supported_list() -> list:
-    return [{'symbol': k, **v} for k, v in SUPPORTED_SYMBOLS.items()]
+    """完整 OKX 可用列表 (动态). 失败时 fallback 推荐种子."""
+    try:
+        from app.services.okx_meta import _load_okx_instruments
+        cache = _load_okx_instruments()
+        if cache:
+            return [{'symbol': k, **v} for k, v in cache.items()]
+    except Exception:
+        pass
+    return [{'symbol': k, **v} for k, v in RECOMMENDED_SYMBOLS.items()]

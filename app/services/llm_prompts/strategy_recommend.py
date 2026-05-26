@@ -149,7 +149,11 @@ def _is_capital_feasible(entry: StrategyCandidate, user_capital: float, prices: 
         if exchange == 'hyperliquid':
             min_notional = _hl_min_notional(sym, price)
         else:
-            contract_size = get_contract_size(sym)
+            # 14k-46: get_contract_size 在 unsupported 时 raise → 推荐路径吞掉, 跳过该 sym
+            try:
+                contract_size = get_contract_size(sym)
+            except ValueError:
+                continue
             if not contract_size:
                 continue
             min_notional = contract_size * price
@@ -259,7 +263,11 @@ def _pick_symbol_for_recommendation(entry: StrategyCandidate, user_symbols: list
     def _feasible(sym):
         if not prices:
             return True
-        cs = get_contract_size(sym)
+        # 14k-46: get_contract_size unsupported → raise; 这里转 False 跳过
+        try:
+            cs = get_contract_size(sym)
+        except ValueError:
+            return False
         price = prices.get(sym, 0)
         if not price or not cs:
             return False
@@ -304,7 +312,12 @@ def _adapt_risk_to_capital(rec_risk: dict, symbol: str, capital: float, prices: 
     if exchange_lc == 'hyperliquid':
         min_notional = _hl_min_notional(symbol, price) * 1.5    # HL 用 szDecimals
     else:
-        contract_size = get_contract_size(symbol)
+        # 14k-46: get_contract_size unsupported → raise; 推荐路径转 trade_size_default fallback
+        try:
+            contract_size = get_contract_size(symbol)
+        except ValueError:
+            adapted['position_size_usdt'] = trade_size_default
+            return adapted
         if not contract_size:
             adapted['position_size_usdt'] = trade_size_default
             return adapted
