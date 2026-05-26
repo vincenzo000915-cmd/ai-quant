@@ -696,7 +696,7 @@ export default function Strategies() {
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }}>策略</TableCell>
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">年化</TableCell>
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">最大回撤</TableCell>
-                      <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">勝率</TableCell>
+                      <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right" title="14k-67: 我们追盈利率不追胜率, 但保留参考">勝率<br/><Typography variant="caption" sx={{ color: '#94a3b8', fontSize: 9 }}>(参考)</Typography></TableCell>
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">每月</TableCell>
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">每日</TableCell>
                       <TableCell sx={{ color: 'text.secondary', fontWeight: 600 }} align="right">1年後</TableCell>

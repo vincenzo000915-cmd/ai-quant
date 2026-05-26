@@ -116,7 +116,7 @@ const Ticker = ({ btcPrice, account, pnlSummary }) => {
     btcPrice && `24H LOW $${btcPrice.low_24h?.toLocaleString()}`,
     `SIMULATION MODE · LEV 15×`,
     account && `BAL $${account.balance?.toFixed(2)} USDT`,
-    pnlSummary && `TRADES ${pnlSummary.total_trades} · WIN ${pnlSummary.win_rate}%`,
+    pnlSummary && pnlSummary.total_trades > 0 && `TRADES ${pnlSummary.total_trades} · EV $${(pnlSummary.total_pnl / pnlSummary.total_trades).toFixed(2)}/单`,
     pnlSummary && `OPEN POS ${pnlSummary.open_positions}`,
     `OKX · BTC-USDT-SWAP`,
     `RISK PROFILE: HIGH`,
@@ -531,7 +531,9 @@ export default function Dashboard() {
         <Grid item xs={6} sm={4} md={2}>
           <KpiCell size="compact" label="累计 PnL"
             value={pnlSummary ? `${pnlSummary.total_pnl >= 0 ? '+' : ''}$${pnlSummary.total_pnl?.toFixed(2)}` : '—'}
-            sub={pnlSummary ? `${pnlSummary.win_rate}% 胜率` : ''}
+            sub={pnlSummary && pnlSummary.total_trades > 0
+                  ? `EV ${((pnlSummary.total_pnl / pnlSummary.total_trades) >= 0 ? '+' : '')}${(pnlSummary.total_pnl / pnlSummary.total_trades).toFixed(2)}$/单`
+                  : '—'}
             accent={pnlSummary?.total_pnl > 0 ? 'success' : pnlSummary?.total_pnl < 0 ? 'error' : null}
             trendValue={pnlSummary?.total_pnl} loading={!pnlSummary}
             badge={pnlSummary ? { text: `${pnlSummary.total_trades}笔`, color: '#94a3b8' } : null} />

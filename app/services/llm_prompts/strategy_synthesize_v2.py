@@ -94,23 +94,22 @@ def get_few_shot_with_trades(target_timeframe: str | None = None, max_n: int = 3
 # ============= A Step 2: Python verify hypothesis =============
 
 def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
-    """A Step 2: Python 算 hypothesis 在历史 K 线上的真实命中率.
+    """A Step 2: 14k-67 改 — 模拟真实 trade (SL/TP 哪个先到) + 算 EV (期望收益).
 
-    hypothesis schema (LLM Step 1 输出, structured):
+    user 哲学: "我们追的是盈利率不是胜率, R:R 不对称 (SL 小 TP 大), 低胜率也能赚"
+    例: SL 2% TP 8%, 25% 胜率 = 0.25*8 - 0.75*2 = +0.5%/trade (有正期望)
+
+    hypothesis schema (LLM Step 1 输出):
     {
-      "name": "RSI 超卖反弹",
-      "entry_condition": {
-        "indicator": "RSI" | "BB_lower_touch" | "MACD_cross" | "EMA_cross" | "ATR_spike",
-        "params": {"period": 14},
-        "op": "<" | ">" | "cross_up" | "cross_down" | "touch",
-        "threshold": 30
-      },
-      "exit_horizon_bars": 5,
+      "entry_condition": {indicator, params, op, threshold},
+      "exit_horizon_bars": 5,    # 最大持仓 bars (SL/TP 都没到才平)
       "expected_direction": "long" | "short",
-      "expected_return_pct": 0.5
+      "sl_pct": 1.5,             # 14k-67 新: LLM 提议 SL/TP, 自主 R:R
+      "tp_pct": 6.0,             # 14k-67 新
     }
 
-    Returns: {triggers, hits, hit_rate, avg_return, sample_size, ok}
+    Returns: {triggers, win_rate, avg_pnl, expected_value, profit_factor, sample_size, ok}
+    avg_pnl 就是真实 EV (含 SL/TP 触发逻辑)
     """
     if not candles or len(candles) < 50:
         return {'ok': False, 'reason': f'candles 不足 ({len(candles) if candles else 0})'}
@@ -126,7 +125,9 @@ def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
     threshold = float(ec.get('threshold', 30))
     horizon = int(hypothesis.get('exit_horizon_bars', 5))
     direction = hypothesis.get('expected_direction', 'long')
-    expected_return = float(hypothesis.get('expected_return_pct', 0.5))
+    # 14k-67: LLM 提议 sl/tp, fallback TF-aware 默认 (15m 1%/2% / 4h 5%/8%)
+    sl_pct = float(hypothesis.get('sl_pct') or 2.0)
+    tp_pct = float(hypothesis.get('tp_pct') or 6.0)
 
     # 算 indicator series (14k-64.1 扩到 12 种, 加 PSAR / Donchian / Stoch / CCI / EMA_cross)
     try:
@@ -191,34 +192,77 @@ def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
             triggers.append(i)
 
     if not triggers:
-        return {'ok': True, 'triggers': 0, 'hits': 0, 'hit_rate': 0.0,
-                'avg_return': 0.0, 'sample_size': 0,
+        return {'ok': True, 'triggers': 0, 'win_rate': 0.0, 'avg_pnl': 0.0,
+                'expected_value': 0.0, 'profit_factor': None, 'sample_size': 0,
                 'reason': 'hypothesis 在历史从未触发'}
 
-    # 算每个触发后 horizon bars 的实际收益
-    hits = 0
-    returns = []
+    # 14k-67: 模拟真实 trade — 每次触发后跟 SL/TP, 哪个先到
+    pnl_list = []
+    wins = []
+    losses = []
     for i in triggers:
         entry = df['close'].iloc[i]
-        exit_close = df['close'].iloc[i + horizon]
         if direction == 'long':
-            ret = (exit_close - entry) / entry * 100
+            sl_price = entry * (1 - sl_pct / 100)
+            tp_price = entry * (1 + tp_pct / 100)
         else:
-            ret = (entry - exit_close) / entry * 100
-        returns.append(ret)
-        if ret >= expected_return:
-            hits += 1
+            sl_price = entry * (1 + sl_pct / 100)
+            tp_price = entry * (1 - tp_pct / 100)
+        # 跟 horizon 内 SL/TP 哪个先到
+        trade_pnl = None
+        for j in range(1, horizon + 1):
+            if i + j >= len(df):
+                break
+            bar = df.iloc[i + j]
+            if direction == 'long':
+                # bar 内最低先到 SL → 假设 SL 触发 (悲观假设, 同一根 high/low 谁先到不知道)
+                if bar['low'] <= sl_price:
+                    trade_pnl = -sl_pct
+                    break
+                if bar['high'] >= tp_price:
+                    trade_pnl = tp_pct
+                    break
+            else:  # short
+                if bar['high'] >= sl_price:
+                    trade_pnl = -sl_pct
+                    break
+                if bar['low'] <= tp_price:
+                    trade_pnl = tp_pct
+                    break
+        if trade_pnl is None:
+            # horizon 内 SL/TP 都没到 → 用 horizon 末 close 平
+            exit_close = df['close'].iloc[i + horizon]
+            if direction == 'long':
+                trade_pnl = (exit_close - entry) / entry * 100
+            else:
+                trade_pnl = (entry - exit_close) / entry * 100
+        pnl_list.append(trade_pnl)
+        if trade_pnl > 0:
+            wins.append(trade_pnl)
+        else:
+            losses.append(trade_pnl)
 
-    hit_rate = hits / len(triggers)
-    avg_return = sum(returns) / len(returns) if returns else 0.0
+    win_rate = len(wins) / len(pnl_list)
+    avg_pnl = sum(pnl_list) / len(pnl_list)
+    sum_wins = sum(wins) if wins else 0
+    sum_losses_abs = abs(sum(losses)) if losses else 0
+    profit_factor = (sum_wins / sum_losses_abs) if sum_losses_abs > 0 else (None if not wins else float('inf'))
+    pf_str = 'PF ∞' if profit_factor == float('inf') else (f'PF {profit_factor:.2f}' if profit_factor else 'PF 0')
+    rr = tp_pct / sl_pct if sl_pct > 0 else None
+    # 14k-67: EV (期望收益, per trade) = avg_pnl. 这是 user 哲学的核心: 追盈利率不追胜率
     return {
         'ok': True,
         'triggers': len(triggers),
-        'hits': hits,
-        'hit_rate': round(hit_rate, 3),
-        'avg_return': round(avg_return, 3),
+        'win_rate': round(win_rate, 3),
+        'avg_pnl': round(avg_pnl, 3),
+        'expected_value': round(avg_pnl, 3),    # alias for clarity
+        'profit_factor': (round(profit_factor, 2) if profit_factor and profit_factor != float('inf') else profit_factor),
+        'sl_used': sl_pct,
+        'tp_used': tp_pct,
+        'rr_ratio': round(rr, 2) if rr else None,
         'sample_size': len(triggers),
-        'reason': f'命中率 {hit_rate:.0%} ({hits}/{len(triggers)} 次), 平均收益 {avg_return:+.2f}%',
+        'reason': (f'胜率 {win_rate:.0%} | EV {avg_pnl:+.2f}%/trade | {pf_str} | '
+                   f'R:R {rr:.1f} (SL {sl_pct}% TP {tp_pct}%) | {len(triggers)} 次触发'),
     }
 
 
@@ -227,38 +271,44 @@ def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
 STEP1_SYSTEM = """你是量化研究员. 我给你一段真实 K 线 + 已成功的 catalog 策略真实 trades.
 任务: 不写代码, 只观察 + 提一个**可验证的假设** (hypothesis).
 
+⚠️ 核心哲学 (14k-67): 我们追**盈利率 (EV)** 不追胜率
+- 设计 R:R 不对称: SL 紧 TP 大, TP/SL ≥ 2.5 倍 (推荐 3-5)
+- 即使胜率 25-30%, 仍赚钱: 例 SL 2% / TP 8% (R:R 4), 25% 胜率 = 0.25*8 - 0.75*2 = +0.5%/trade
+- 别写 "高胜率" 策略 — 那是传统量化思维, 加密币真实市场不可能持续
+- 你要写 "赔率不对称" 策略: 让赢的一次能吃 3-4 次小亏后还赚
+
 要求:
-1. 看 K 线找 pattern (不要凭空猜)
-2. 看 catalog 成功 trades 学风格
-3. 提一个 structured hypothesis (Python 可解析验证)
-4. hypothesis 描述要具体可验, 不要 "市场会涨"这种废话
+1. 看 K 线找 pattern + 明确 sl_pct / tp_pct (R:R ≥ 2.5)
+2. 看 catalog 成功 trades 学 R:R 风格
+3. Python 会模拟真实 trade (SL/TP 哪个先到) 算 EV
+4. hypothesis 描述要具体可验
 
 输出 **严格 JSON** (无 markdown):
 {
-  "market_observation": "中文 2-3 句描述当前 K 线最近的 pattern",
-  "hypothesis_name": "RSI 超卖反弹 / BB 下轨触底 等",
-  "rationale": "为什么这个假设成立 (1-2 句)",
+  "market_observation": "中文 2-3 句描述当前 K 线 pattern",
+  "hypothesis_name": "RSI 超卖反弹 / Donchian 突破 等",
+  "rationale": "为什么这个假设成立 + 为什么 R:R 合理",
   "entry_condition": {
     "indicator": "RSI | BB_lower_touch | BB_upper_touch | MACD_hist | EMA_ratio | ATR_pct | volume_ratio | PSAR_distance | Donchian_high_touch | Donchian_low_touch | Stoch_K | CCI",
     "params": {"period": 14},
     "op": "< | > | cross_up | cross_down | touch",
     "threshold": 30
   },
-  "exit_horizon_bars": 5,
+  "exit_horizon_bars": 10,
   "expected_direction": "long | short",
-  "expected_return_pct": 0.5
+  "sl_pct": 1.5,
+  "tp_pct": 6.0
 }
 
 约束:
-- indicator 只能用上面 12 种之一 (Python 能算的)
-- PSAR_distance 是价格距 PSAR 的 % (>0 = 上方/上涨趋势; cross_up = 翻多)
-- Donchian_high/low_touch 是 close/rolling_max(min) 比例 (touch = 1.0)
-- Stoch_K 0-100 (<20 超卖 / >80 超买)
-- CCI -∞~+∞ (典型 ±100 极值)
-- op 必须严格匹配
-- threshold 是数字
-- exit_horizon_bars 1-30 (短线 3-5, 长线 10-20)
-- expected_return_pct 必须保守 (0.3-2.0)
+- indicator 12 种, 选最贴合 hypothesis 的
+- PSAR_distance 价格距 PSAR % (>0 上方; cross_up 翻多)
+- Donchian touch = close/rolling_max(min) (=1.0 触碰)
+- Stoch_K 0-100, CCI 典型 ±100
+- op 严格匹配
+- exit_horizon_bars 5-30 (给 TP 时间到, 不要太短)
+- **tp_pct >= 2.5 × sl_pct** (R:R 至少 2.5)
+- sl_pct/tp_pct float (按 TF: 15m 0.8-1.5/2-5, 1h 1-2/3-7, 4h 2-4/6-12)
 """
 
 
@@ -325,11 +375,24 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
         spec = _extract_json(r['text'])
         if not spec:
             return {'ok': False, 'error': 'Step 1 JSON 解析失败', 'raw': r.get('text', '')[:300]}
+        # 14k-67: schema 改 — 删 expected_return_pct, 加 sl_pct/tp_pct (LLM 自主 R:R)
         required = {'market_observation', 'hypothesis_name', 'entry_condition',
-                    'exit_horizon_bars', 'expected_direction', 'expected_return_pct'}
+                    'exit_horizon_bars', 'expected_direction', 'sl_pct', 'tp_pct'}
         missing = required - set(spec.keys())
         if missing:
             return {'ok': False, 'error': f'Step 1 缺字段: {sorted(missing)}'}
+        # 14k-67: R:R 强制 ≥ 2.5
+        try:
+            sl_p = float(spec['sl_pct'])
+            tp_p = float(spec['tp_pct'])
+            if sl_p <= 0 or tp_p <= 0:
+                return {'ok': False, 'error': f'sl/tp 必须 > 0 (sl={sl_p}, tp={tp_p})'}
+            if tp_p / sl_p < 2.5:
+                return {'ok': False,
+                        'error': f'R:R {tp_p/sl_p:.1f} < 2.5 (赔率不对称要求, 让 LLM 重写)',
+                        'rr_too_low': True}
+        except (TypeError, ValueError):
+            return {'ok': False, 'error': f'sl/tp 非数字: sl={spec.get("sl_pct")}, tp={spec.get("tp_pct")}'}
         return {'ok': True, 'hypothesis': spec}
     except Exception as e:
         return {'ok': False, 'error': f'Step 1 parse: {type(e).__name__}: {e}'}
@@ -381,18 +444,19 @@ def _step3_encode_signal(hypothesis: dict, verify_result: dict,
     prompt = f"""## 已验证的 hypothesis
 {json.dumps(hypothesis, ensure_ascii=False, indent=2)}
 
-## Python verify 结果
+## Python verify 结果 (模拟真实 trade with SL/TP)
 - 历史触发次数: {verify_result['triggers']}
-- 命中次数: {verify_result['hits']}
-- 命中率: {verify_result['hit_rate']:.0%}
-- 平均收益: {verify_result['avg_return']:+.2f}%
+- 胜率: {verify_result['win_rate']:.0%}
+- **EV (盈利率/trade): {verify_result['expected_value']:+.2f}%**
+- Profit Factor: {verify_result.get('profit_factor')}
+- R:R: {verify_result.get('rr_ratio')} (SL {verify_result['sl_used']}% TP {verify_result['tp_used']}%)
 
 ## 目标
 - Symbol: {symbol}
 - Timeframe: {timeframe}
 {fs_code_block}
 
-把上面 hypothesis 编成 Python signal_fn, 输出 JSON.
+把上面 hypothesis 编成 Python signal_fn (严格按 entry_condition 实现), 输出 JSON.
 """
 
     r = call_llm(
@@ -425,9 +489,10 @@ def _step3_encode_signal(hypothesis: dict, verify_result: dict,
 
 # ============= 主入口 =============
 
-MIN_HIT_RATE = 0.55              # hypothesis verify 命中率门槛
-MIN_HIT_RATE_LOW = 0.45          # 14k-66 C: 命中率较低但单笔大也可过
-MIN_AVG_RETURN_FOR_LOW_HIT = 0.5 # 14k-66 C: 低命中率时需要平均收益 ≥ 0.5% 才放行
+# 14k-67: 撤回 14k-62/66 胜率门槛 — user 哲学 "追盈利率不追胜率"
+# 真实 trade 模拟后看 EV (期望收益/trade), > fee+slippage buffer 就过
+MIN_EXPECTED_VALUE_PCT = 0.3      # EV ≥ 0.3%/trade (留 fee 0.05+slip 0.05 双边 ~0.2% buffer)
+MIN_PROFIT_FACTOR = 1.2           # 总盈利 / 总亏损 ≥ 1.2 (双重保险)
 MIN_SAMPLE_SIZE = 10              # 至少 10 次历史触发才可信
 
 
@@ -462,14 +527,16 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
         return {'ok': False,
                 'error': f'hypothesis 历史样本 {verify["sample_size"]} < {MIN_SAMPLE_SIZE}, 不可信',
                 'stage': 'verify', 'verify': verify}
-    # 14k-66 C: 两路过门槛 — 高命中率 OR (中等命中率 + 高单笔收益)
-    high_hit = verify['hit_rate'] >= MIN_HIT_RATE
-    low_hit_high_return = (verify['hit_rate'] >= MIN_HIT_RATE_LOW
-                           and verify['avg_return'] >= MIN_AVG_RETURN_FOR_LOW_HIT)
-    if not (high_hit or low_hit_high_return):
+    # 14k-67: EV-based 门槛 (user 哲学: 追盈利率不追胜率)
+    # 真实模拟 trade (SL/TP 哪个先到) 后 EV ≥ 0.3% (含 fee buffer) + PF ≥ 1.2
+    ev = verify['expected_value']
+    pf = verify['profit_factor']
+    ev_pass = ev >= MIN_EXPECTED_VALUE_PCT
+    pf_pass = (pf == float('inf')) or (pf is not None and pf >= MIN_PROFIT_FACTOR)
+    if not (ev_pass and pf_pass):
         return {'ok': False,
-                'error': (f'hypothesis 命中率 {verify["hit_rate"]:.0%} + 平均收益 {verify["avg_return"]:+.2f}% '
-                          f'未过门槛 (需 命中≥{MIN_HIT_RATE:.0%} 或 命中≥{MIN_HIT_RATE_LOW:.0%}+均收益≥{MIN_AVG_RETURN_FOR_LOW_HIT}%)'),
+                'error': (f'未过门槛 — EV {ev:+.2f}%/trade (需≥{MIN_EXPECTED_VALUE_PCT}%) '
+                          f'/ PF {pf} (需≥{MIN_PROFIT_FACTOR})'),
                 'stage': 'verify', 'verify': verify}
 
     # 5. A Step 3: LLM 编码 (只在 verify 通过后才调)
