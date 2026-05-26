@@ -91,6 +91,12 @@ beat_schedule = {
         'schedule': crontab(minute='10', hour='*/4'),
     },
 
+    # === Phase 14k-30 #1: AI 改动 auto-revert — 每 6h ===
+    'auto-revert-ai-changes': {
+        'task': 'app.tasks.strategy_tasks.auto_revert_ai_changes',
+        'schedule': crontab(minute='20', hour='*/6'),
+    },
+
     # === Phase 10.9: 每週日 04:00 UTC 給所有 running 策略跑參數網格 ===
     'weekly-auto-optimize': {
         'task': 'app.tasks.strategy_tasks.auto_optimize_running_strategies',

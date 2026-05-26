@@ -26,13 +26,30 @@ HIGH_CORR = 0.7
 APPLY_PARAMS_LIFT = 0.5         # OOS Sharpe must beat baseline by this much
 APPLY_PARAMS_MAX_AGE_DAYS = 14  # 優化超過 14 天 → 不推（K 線早變了）
 RETIRE_MIN_SHARPE_DIFF = 0.5    # 兩支 Sharpe 差距 < 0.5 不算明顯，不推 retire
-RETIRE_GRACE_DAYS = 7           # 創建 < 7 天的策略不推 retire（跟 monitor_strategy_health 同步）
 RETIRE_REQUIRE_POSITIVE_KEEP = True   # 留下的那支 Sharpe 必須 > 0，否則「保留較好的」沒意義
-PAUSE_GRACE_DAYS = 7            # pause 推薦也走 grace
 PROMOTE_MIN_OOS_SHARPE = 1.5    # promote_candidate 至少這 Sharpe 才推（跟 executor 阈值同步）
 FAN_OUT_MIN_SHARPE = 2.0
 FAN_OUT_BACKTEST_MAX_AGE_DAYS = 14   # backtest 太老 → 不推 fan_out
-FAN_OUT_GRACE_DAYS = 7
+
+# Phase 14k-30: grace 按 timeframe 分级 — 高频策略不该等 7 天确认烂
+# 设计: 大约 = TF 跑出 ~30 根 candle 的天数 (统计显著)
+GRACE_DAYS_BY_TF = {
+    '15m': 1,    # 96 candles/day, 1 天 = 96 根
+    '30m': 1,
+    '1h':  2,    # 24/day, 2 天 = 48 根
+    '2h':  2,
+    '4h':  3,    # 6/day, 3 天 = 18 根
+    '6h':  4,
+    '8h':  4,
+    '12h': 5,
+    '1d':  7,    # 原 7 天阈值留给 1d 策略
+    '3d':  14,
+    '1w':  21,
+}
+DEFAULT_GRACE_DAYS = 7
+
+def _grace_days(timeframe: str | None) -> int:
+    return GRACE_DAYS_BY_TF.get(timeframe or '4h', DEFAULT_GRACE_DAYS)
 
 
 def _latest_backtest(strategy_id: int) -> BacktestResult | None:
@@ -129,7 +146,6 @@ def build_recommendations(user_id: int = 1) -> dict:
     strat_map = {s.id: s for s in running}
     seen_pairs: set[frozenset] = set()
     retired_already: set[int] = set()  # dedup — 同一個 drop 只推一次
-    grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=RETIRE_GRACE_DAYS)
 
     for flag in corr.get('flagged', []):
         pair = frozenset({flag['a_id'], flag['b_id']})
@@ -166,8 +182,9 @@ def build_recommendations(user_id: int = 1) -> dict:
         if drop.template_group is not None and drop.template_group == keep.template_group:
             continue
 
-        # check 6: 7 天保護期 — 新策略還沒累積 live 數據，不該被 backtest fallback 殺
-        if drop.created_at and drop.created_at > grace_cutoff:
+        # check 6: 保护期 — 按 timeframe 分级 (14k-30): 高频 1-3 天, 日线 7 天, 周线 21 天
+        drop_grace = _dt.datetime.utcnow() - _dt.timedelta(days=_grace_days(drop.timeframe))
+        if drop.created_at and drop.created_at > drop_grace:
             continue
 
         # check 7: 有 open position — retire 不會平倉只是阻新信號，沒救急效果
@@ -187,8 +204,7 @@ def build_recommendations(user_id: int = 1) -> dict:
             'meta': {'twin_id': keep_id, 'corr': flag['corr']},
         })
 
-    # 2) regime 不匹配 → pause（Phase 12.12: 加 grace + open position + 數據可靠檢查）
-    pause_grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=PAUSE_GRACE_DAYS)
+    # 2) regime 不匹配 → pause (14k-30: grace 按 TF 分级)
     regime_full_cache: dict[tuple, dict] = {}
     for s in running:
         key = (s.symbol, s.timeframe)
@@ -202,8 +218,9 @@ def build_recommendations(user_id: int = 1) -> dict:
         # check: regime 數據不可靠（K 線太少 / 數據沒拉到）→ 不推 pause
         if rd.get('n', 0) < 100:
             continue
-        # check: 7 天 grace — 新策略還沒累積實盤數據
-        if s.created_at and s.created_at > pause_grace_cutoff:
+        # check: grace 按 TF 分级 — 新策略還沒累積實盤數據
+        pause_grace = _dt.datetime.utcnow() - _dt.timedelta(days=_grace_days(s.timeframe))
+        if s.created_at and s.created_at > pause_grace:
             continue
         # check: 有 open position — pause 不平倉只阻新信號，先讓現有 SL/TP 處理
         has_pos = _has_open_position(s.id)
@@ -273,12 +290,12 @@ def build_recommendations(user_id: int = 1) -> dict:
                 'meta': {'per_tf': m['per_tf'], 'consensus': m['consensus']},
             })
 
-    # 5) fan-out 機會（Phase 12.12: 加 backtest freshness + 7 天 grace）
+    # 5) fan-out 機會 (14k-30: grace 按 TF 分级)
     fanout_age_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=FAN_OUT_BACKTEST_MAX_AGE_DAYS)
-    fanout_grace_cutoff = _dt.datetime.utcnow() - _dt.timedelta(days=FAN_OUT_GRACE_DAYS)
     for s in running:
-        # check: 7 天 grace — 新策略還沒累積實盤數據，先別 fan-out
-        if s.created_at and s.created_at > fanout_grace_cutoff:
+        # check: grace 按 TF 分级 — 新策略還沒累積實盤數據, 先別 fan-out
+        fanout_grace = _dt.datetime.utcnow() - _dt.timedelta(days=_grace_days(s.timeframe))
+        if s.created_at and s.created_at > fanout_grace:
             continue
         bt = _latest_backtest(s.id)
         # 14k-24: DD 警戒区锁 fan_out (别扩张)
@@ -522,6 +539,7 @@ def _sizing_recommendation_item(user_id: int = 1) -> dict | None:
         'severity': 'info',
         'reason': f'AI 资金顾问: {(rec.get("rationale") or "")[:200]}',
         'meta': {
+            'user_id': user_id,   # 14k-30 #3: per-user scoped
             'new_sizing': new_sizing,
             'current': {f: cur.get(f) for f in fields},
             'rationale': rec.get('rationale'),
@@ -715,13 +733,36 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_audit):
         return None
 
+    # 14k-30 #2: 调 LLM 让 AI 真提议 grid
+    proposed_grid = None
+    rationale = None
+    try:
+        from app.services.llm_prompts.grid_proposer import propose_signal_grid as _propose
+        bt = _latest_backtest(strategy.id)
+        metrics = {
+            'oos_sharpe': bt.sharpe_ratio if bt else None,
+            'oos_dd': bt.max_drawdown_pct if bt else None,
+            'win_rate': bt.win_rate_pct if bt else None,
+            'trades': bt.total_trades if bt else None,
+        }
+        r = _propose(strategy.type, strategy.params or {}, metrics)
+        if r.get('ok'):
+            proposed_grid = r.get('grid')
+            rationale = r.get('rationale')
+    except Exception as e:
+        print(f'[advisor] grid_proposer LLM failed: {type(e).__name__}: {e}')
+
     return {
         'action': 'propose_signal_grid',
         'strategy_id': strategy.id,
         'strategy_name': strategy.name,
         'severity': 'info',
-        'reason': '需要参数优化, 排一次 walk-forward grid search',
-        'meta': {'target_lag_mode': bool(target_ctx.get('lag_mode'))},
+        'reason': rationale or '需要参数优化, 排一次 walk-forward grid search',
+        'meta': {
+            'target_lag_mode': bool(target_ctx.get('lag_mode')),
+            'proposed_grid': proposed_grid,  # AI 提议的 grid (None 则 fallback 死字典)
+            'rationale': rationale,
+        },
     }
 
 

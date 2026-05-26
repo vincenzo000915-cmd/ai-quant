@@ -340,6 +340,96 @@ def auto_apply_history():
     return jsonify([r.to_dict() for r in rows])
 
 
+@api_bp.route('/me/ai-activity-log', methods=['GET'])
+@require_actor
+def ai_activity_log():
+    """Phase 14k-30 #4: AI 操作日记 — UI dashboard 卡片用.
+
+    汇总所有 AI 改动相关 audit 事件 + 渲染友好的 message + before/after diff.
+    """
+    limit = min(int(request.args.get('limit', 30)), 100)
+    ai_events = [
+        'ai_strategy_params_change',
+        'ai_change_reverted',
+        'advisor_auto_apply',
+        'risk_opt_applied',
+        'risk_opt_no_lift',
+        'sizing_advisor_recommend',
+        'signal_grid_proposed',
+        'risk_opt_proposed',
+        'advisor_invent_proposed',
+        'advisor_invent_applied',
+        'candidate_promote_and_start',
+    ]
+    rows = (
+        scoped_query(AuditLog)
+        .filter(AuditLog.event_type.in_(ai_events))
+        .order_by(AuditLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    def render_summary(row):
+        ctx = row.context or {}
+        ev = row.event_type
+        sid = ctx.get('strategy_id')
+        sname = ''
+        if sid:
+            s = Strategy.query.get(sid)
+            sname = s.name if s else f'#{sid}'
+
+        if ev == 'ai_strategy_params_change':
+            before_rp = (ctx.get('before_params') or {}).get('risk_params') or {}
+            after_rp = (ctx.get('after_params') or {}).get('risk_params') or {}
+            diffs = []
+            for k in set(before_rp) | set(after_rp):
+                if before_rp.get(k) != after_rp.get(k):
+                    diffs.append(f'{k} {before_rp.get(k)} → {after_rp.get(k)}')
+            for k in (ctx.get('changed_keys') or []):
+                if k not in before_rp and k not in after_rp:
+                    bv = (ctx.get('before_params') or {}).get(k)
+                    av = (ctx.get('after_params') or {}).get(k)
+                    diffs.append(f'{k} {bv} → {av}')
+            return f'{ctx.get("action") or "改参"}: {sname} | ' + (', '.join(diffs[:4]) or '(无明显 diff)')
+        if ev == 'ai_change_reverted':
+            return f'⏪ 还原: {sname} | {ctx.get("reason")}'
+        if ev == 'risk_opt_applied':
+            return f'SL/TP 闪测过门槛: {sname} | SL {ctx.get("old_sl")}→{ctx.get("new_sl")}%, TP {ctx.get("old_tp")}→{ctx.get("new_tp")}%'
+        if ev == 'risk_opt_no_lift':
+            return f'SL/TP 闪测无提升: {sname} | {ctx.get("reason")}'
+        if ev == 'sizing_advisor_recommend':
+            sig = '✓' if ctx.get('significant') else '·'
+            return f'账户级 sizing 评估 {sig}: 余额 → {ctx.get("recommended", {}).get("trade_size_usdt")} USDT/笔'
+        if ev == 'signal_grid_proposed':
+            mode = 'AI 提议' if ctx.get('ai_proposed') else '死字典 fallback'
+            return f'信号 grid 优化排上: {sname} | {mode}'
+        if ev == 'risk_opt_proposed':
+            return f'SL/TP 闪测排上: {sname}'
+        if ev == 'advisor_invent_proposed':
+            return f'排 AI invent 新策略 (lag {ctx.get("lag_pct", 0):.1f}%)'
+        if ev == 'advisor_invent_applied':
+            return f'AI invent 完成: +{ctx.get("total")} 候选'
+        if ev == 'candidate_promote_and_start':
+            return f'AI 自动上线: {sname or ctx.get("strategy_name") or "?"}'
+        if ev == 'advisor_auto_apply':
+            return f'{ctx.get("action")}: {sname} | {ctx.get("message", "")[:80]}'
+        return ev
+
+    return jsonify({
+        'items': [
+            {
+                'id': r.id,
+                'event_type': r.event_type,
+                'summary': render_summary(r),
+                'context': r.context,
+                'created_at': r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        'total': len(rows),
+    })
+
+
 @api_bp.route('/strategies/<int:id>/mtf', methods=['GET'])
 def strategy_mtf(id):
     """Phase 10.4: multi-timeframe consensus check for one strategy."""

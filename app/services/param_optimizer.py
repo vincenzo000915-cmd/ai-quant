@@ -130,13 +130,14 @@ def iter_combos(grid: dict[str, list]) -> Iterator[dict]:
         yield dict(zip(keys, combo))
 
 
-def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pct):
+def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pct, symbol=None):
     """跑一次 walk-forward，回傳精簡指標。"""
     wf = run_walkforward_backtest(
         strategy_type, params, candles,
         timeframe=timeframe,
         slippage_pct=slippage_pct,
         fee_pct=fee_pct,
+        symbol=symbol,
     )
     if wf.get('status') == 'error':
         return {'params': params, 'error': wf.get('error_message', 'unknown')}
@@ -163,24 +164,19 @@ def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pc
 
 
 def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
-             on_progress=None) -> dict:
+             on_progress=None, grid_override: dict | None = None) -> dict:
     """執行 walk-forward 網格搜尋。
 
-    回傳 dict：
-      {
-        'grid': {...},
-        'baseline_params': strategy.params,
-        'baseline_oos_sharpe': float,
-        'candidate_results': [{params, oos_sharpe, ...}, ...],  # 已按 oos_sharpe 降序
-        'best_params': {...},
-        'best_oos_sharpe': float,
-        'combos_total': int,
-        'combos_done': int,
-      }
+    Phase 14k-30 #2: grid_override 不空时用它 (AI 提议的 grid), 否则 fallback 死字典 GRIDS.
 
-    `on_progress(done, total)` 可選 callback，用於 Celery 任務寫進度回 DB。
+    回傳 dict：(同前, 加 grid_source)
     """
-    grid = get_grid(strategy.type)
+    if grid_override:
+        grid = grid_override
+        grid_source = 'ai_proposed'
+    else:
+        grid = get_grid(strategy.type)
+        grid_source = 'static_dict'
     if not grid:
         return {
             'error': f'strategy_type={strategy.type} 沒有定義網格，無法優化',
@@ -210,7 +206,7 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
 
     # 基線：strategy.params 自身
     baseline_params = dict(strategy.params or {})
-    baseline = _score_combo(strategy.type, baseline_params, candles, strategy.timeframe, slippage, fee)
+    baseline = _score_combo(strategy.type, baseline_params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol)
     baseline_oos = baseline.get('oos_sharpe')
 
     results = [baseline]
@@ -222,7 +218,7 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
         # 跳過跟 baseline 完全相同的組合
         if params == baseline_params:
             continue
-        r = _score_combo(strategy.type, params, candles, strategy.timeframe, slippage, fee)
+        r = _score_combo(strategy.type, params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol)
         results.append(r)
         if on_progress:
             on_progress(i, total + 1)
@@ -237,6 +233,7 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
 
     return {
         'grid': grid,
+        'grid_source': grid_source,
         'baseline_params': baseline_params,
         'baseline_oos_sharpe': baseline_oos,
         'candidate_results': results,

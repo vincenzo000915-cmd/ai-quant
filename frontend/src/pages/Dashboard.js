@@ -27,6 +27,7 @@ const RegimePanel = lazy(() => import('../components/RegimePanel'));
 const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
 const AdvisorPanel = lazy(() => import('../components/AdvisorPanel'));
 const AiInsightsCard = lazy(() => import('../components/AiInsightsCard'));
+const AiActivityLogCard = lazy(() => import('../components/AiActivityLogCard'));
 // Phase 12.42 v8: AI 精选策略一键上架面板
 const AiPickPanel = lazy(() => import('../components/AiPickPanel'));
 import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
@@ -790,6 +791,11 @@ export default function Dashboard() {
       {/* === Phase 10.7: 综合操作建议（放最显眼） === */}
       <Suspense fallback={<CardSkeleton height={280} headerWidth="35%" rows={4} />}>
         <AdvisorPanel />
+      </Suspense>
+
+      {/* === Phase 14k-30 #4: AI 操作日记 === */}
+      <Suspense fallback={<CardSkeleton height={240} headerWidth="30%" rows={4} />}>
+        <AiActivityLogCard />
       </Suspense>
 
       {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}

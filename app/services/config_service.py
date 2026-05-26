@@ -59,19 +59,31 @@ def _load_row():
     return row
 
 
-def get_config() -> dict:
-    """回傳完整 config dict（含 TTL cache）"""
+def get_config(user_id: int | None = None) -> dict:
+    """回傳完整 config dict (含 TTL cache).
+
+    Phase 14k-30 #3: user_id 不為 None → 合并 UserConfig overrides (per-user 隔离).
+    """
     now = time.time()
-    cached = _cache.get('__all__')
+    cache_key = f'__user_{user_id}__' if user_id else '__all__'
+    cached = _cache.get(cache_key)
     if cached and cached[1] > now:
         return cached[0]
     try:
         row = _load_row()
         d = row.to_dict()
+        if user_id:
+            from app.models import UserConfig
+            uc = UserConfig.query.filter_by(user_id=user_id).first()
+            if uc and uc.overrides:
+                # 仅 DEFAULTS 内字段允许覆盖 (system-level halted / trading_mode 不能 per-user)
+                for k, v in (uc.overrides or {}).items():
+                    if k in DEFAULTS:
+                        d[k] = v
     except Exception:
         # DB 未就緒（容器剛起時）回 defaults，不要崩
         d = dict(DEFAULTS)
-    _cache['__all__'] = (d, now + _CACHE_TTL_SEC)
+    _cache[cache_key] = (d, now + _CACHE_TTL_SEC)
     return d
 
 
@@ -81,18 +93,61 @@ def get(key: str, default: Any = None) -> Any:
     return d.get(key, default if default is not None else DEFAULTS.get(key))
 
 
-def update(patch: dict) -> dict:
-    """部分更新 + 失效 cache。回傳更新後完整 config。"""
+# Phase 14k-30 #3: 允许 per-user 覆盖的字段白名单 (其余仍走 system row)
+USER_SCOPED_KEYS = {
+    'leverage', 'trade_size_usdt', 'stop_loss_pct', 'take_profit_pct',
+    'max_daily_loss_usdt', 'auto_apply_enabled', 'auto_apply_actions',
+    'auto_apply_max_per_day', 'ai_decision_mode', 'auto_promote_max_per_day',
+    'auto_promote_min_oos_sharpe', 'fan_out_auto_start', 'fan_out_min_oos_sharpe',
+    'auto_apply_max_running',
+}
+
+
+def update(patch: dict, user_id: int | None = None) -> dict:
+    """部分更新 + 失效 cache. 回傳更新後完整 config.
+
+    Phase 14k-30 #3:
+      - user_id is None → 写 system row (向后兼容)
+      - user_id 指定 → user-scoped 字段写 UserConfig.overrides; 非 user-scoped 字段 (halted, trading_mode 等) 仍写 system row
+    """
     from app.extensions import db
-    row = _load_row()
-    for k, v in patch.items():
-        # halted/halt_reason 允許設為 None / False；其他 None skip
-        if k in DEFAULTS:
-            if k in ('halted', 'halt_reason') or v is not None:
-                setattr(row, k, v)
-    db.session.commit()
+    if user_id:
+        from app.models import UserConfig
+        uc = UserConfig.query.filter_by(user_id=user_id).first()
+        if uc is None:
+            uc = UserConfig(user_id=user_id, overrides={})
+            db.session.add(uc)
+        overrides = dict(uc.overrides or {})
+        sys_patch = {}
+        for k, v in patch.items():
+            if k not in DEFAULTS:
+                continue
+            if k in USER_SCOPED_KEYS:
+                if v is None:
+                    overrides.pop(k, None)   # None = 清除 override 回退到 system row
+                else:
+                    overrides[k] = v
+            else:
+                sys_patch[k] = v
+        uc.overrides = overrides
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(uc, 'overrides')
+        # 非 user-scoped 字段仍写 system row
+        if sys_patch:
+            row = _load_row()
+            for k, v in sys_patch.items():
+                if k in ('halted', 'halt_reason') or v is not None:
+                    setattr(row, k, v)
+        db.session.commit()
+    else:
+        row = _load_row()
+        for k, v in patch.items():
+            if k in DEFAULTS:
+                if k in ('halted', 'halt_reason') or v is not None:
+                    setattr(row, k, v)
+        db.session.commit()
     invalidate()
-    return row.to_dict()
+    return get_config(user_id)
 
 
 def set_halted(reason: str | None):

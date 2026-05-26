@@ -77,6 +77,7 @@ def _run_wf(strategy, base_params, candles, sl, tp):
             timeframe=strategy.timeframe,
             stop_loss_pct=float(sl),
             take_profit_pct=float(tp),
+            symbol=strategy.symbol,
         )
     except Exception as e:
         return {'oos_sharpe': None, 'oos_dd': None, 'oos_trades': 0, 'error': f'{type(e).__name__}: {e}'}

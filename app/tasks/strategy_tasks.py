@@ -925,7 +925,10 @@ def optimize_strategy_params(self, optimization_id: int, max_combos: int = 24):
             db.session.rollback()
 
     try:
-        out = optimize(strategy, max_combos=max_combos, on_progress=_progress)
+        # Phase 14k-30 #2: 如 opt.grid 不空 (AI 提议) 走它, 否则 fallback 死字典
+        grid_override = opt.grid if opt.grid else None
+        out = optimize(strategy, max_combos=max_combos, on_progress=_progress,
+                       grid_override=grid_override)
         if 'error' in out:
             opt.status = 'error'
             opt.error_message = out['error']
@@ -2048,6 +2051,7 @@ def optimize_risk_and_apply(strategy_id: int):
 
     # Apply: merge 进 strategy.params.risk_params
     from sqlalchemy.orm.attributes import flag_modified
+    before_params = dict(s.params or {})
     params = dict(s.params or {})
     rp = dict(params.get('risk_params') or {})
     old_sl, old_tp = rp.get('sl_pct'), rp.get('tp_pct')
@@ -2067,6 +2071,10 @@ def optimize_risk_and_apply(strategy_id: int):
           baseline=base, best=best,
           old_sl=old_sl, old_tp=old_tp,
           new_sl=best['sl_pct'], new_tp=best['tp_pct'])
+    # 14k-30: 统一 ai_strategy_params_change 让 auto_revert 单一查询
+    audit('ai_strategy_params_change', strategy_id=strategy_id, action='risk_opt_applied',
+          before_params=before_params, after_params=params,
+          changed_keys=['sl_pct', 'tp_pct'])
 
     try:
         _tg(
@@ -2114,3 +2122,126 @@ def advisor_invent_strategy(user_id: int = 1):
     except Exception:
         pass
     return f'invented {n} candidates'
+
+
+# ===== Phase 14k-30 #1: AI 改动 auto-revert =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.auto_revert_ai_changes')
+def auto_revert_ai_changes():
+    """每 6h 跑: 看最近 24-48h AI 改动的 strategy, 退化就还原 params.
+
+    退化判定 (任一满足即视为退化):
+      - 改后窗口实盘 trades = 0 (策略停止开单, lev 太大/太小)
+      - 改后 PnL < 改前 PnL × 0.5 (且改前 PnL 非零正值)
+      - 改后 win_rate 比改前低 ≥ 20 个百分点 (且各窗口 trades ≥ 5)
+    """
+    import datetime as _dt
+    from app.models import AuditLog, Strategy, Trade
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as _tg
+    from sqlalchemy.orm.attributes import flag_modified
+
+    now = _dt.datetime.utcnow()
+    cutoff_lo = now - _dt.timedelta(hours=48)
+    cutoff_hi = now - _dt.timedelta(hours=24)
+
+    # 找 24-48h 内的 AI 改动 (留 24h 给改后表现累积)
+    changes = AuditLog.query.filter(
+        AuditLog.event_type == 'ai_strategy_params_change',
+        AuditLog.created_at >= cutoff_lo,
+        AuditLog.created_at < cutoff_hi,
+    ).order_by(AuditLog.created_at.asc()).all()
+
+    if not changes:
+        return 'no AI changes in 24-48h window'
+
+    reverted = 0
+    skipped = 0
+    for c in changes:
+        ctx = c.context or {}
+        sid = ctx.get('strategy_id')
+        before = ctx.get('before_params')
+        if not sid or not before:
+            skipped += 1
+            continue
+        s = Strategy.query.get(sid)
+        if not s or s.status != 'running':
+            skipped += 1
+            continue
+
+        # 跳过已经 revert 过的 (避免反复来回)
+        already_reverted = AuditLog.query.filter(
+            AuditLog.event_type == 'ai_change_reverted',
+            AuditLog.created_at > c.created_at,
+        ).all()
+        if any((a.context or {}).get('original_audit_id') == c.id for a in already_reverted):
+            continue
+
+        # 窗口: change 时点前 24h vs change 后 24h
+        before_start = c.created_at - _dt.timedelta(hours=24)
+        before_end = c.created_at
+        after_start = c.created_at
+        after_end = c.created_at + _dt.timedelta(hours=24)
+
+        before_trades = Trade.query.filter(
+            Trade.strategy_id == sid,
+            Trade.exit_time >= before_start,
+            Trade.exit_time < before_end,
+        ).all()
+        after_trades = Trade.query.filter(
+            Trade.strategy_id == sid,
+            Trade.exit_time >= after_start,
+            Trade.exit_time < after_end,
+        ).all()
+
+        before_pnl = sum(t.pnl or 0 for t in before_trades)
+        after_pnl = sum(t.pnl or 0 for t in after_trades)
+        before_wins = sum(1 for t in before_trades if (t.pnl or 0) > 0)
+        after_wins = sum(1 for t in after_trades if (t.pnl or 0) > 0)
+        before_wr = (before_wins / len(before_trades) * 100) if before_trades else None
+        after_wr = (after_wins / len(after_trades) * 100) if after_trades else None
+
+        degraded = False
+        reason = []
+
+        # check 1: 改后 24h 0 trades, 但改前有 trades (策略被卡住了)
+        if not after_trades and before_trades:
+            degraded = True
+            reason.append(f'改后 24h 无开单 (改前 {len(before_trades)} 笔)')
+        # check 2: PnL 显著下滑 (改前正盈利且改后亏 50%+)
+        elif before_pnl > 0 and after_pnl < before_pnl * 0.5:
+            degraded = True
+            reason.append(f'PnL 退化 ${before_pnl:.2f} → ${after_pnl:.2f}')
+        # check 3: win_rate 显著下滑
+        elif (before_wr is not None and after_wr is not None
+              and len(before_trades) >= 5 and len(after_trades) >= 5
+              and before_wr - after_wr >= 20):
+            degraded = True
+            reason.append(f'胜率下滑 {before_wr:.0f}% → {after_wr:.0f}%')
+
+        if not degraded:
+            skipped += 1
+            continue
+
+        # 还原
+        s.params = before
+        flag_modified(s, 'params')
+        db.session.commit()
+
+        audit('ai_change_reverted', strategy_id=sid, original_audit_id=c.id,
+              original_action=ctx.get('action'),
+              before_pnl=before_pnl, after_pnl=after_pnl,
+              before_trades=len(before_trades), after_trades=len(after_trades),
+              reason='; '.join(reason),
+              restored_params=before)
+        try:
+            _tg(f'⏪ <b>AI 改动 auto-revert</b>\n'
+                f'#{sid} {s.name}\n'
+                f'原动作: {ctx.get("action")}\n'
+                f'退化原因: {"; ".join(reason)}\n'
+                f'已还原到改前 params')
+        except Exception:
+            pass
+        reverted += 1
+
+    return f'reviewed {len(changes)} changes: reverted {reverted}, skipped {skipped}'

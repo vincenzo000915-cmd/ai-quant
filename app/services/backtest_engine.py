@@ -34,6 +34,52 @@ def _calc_sharpe(daily_returns, periods_per_year=365):
     return float(arr.mean() / arr.std() * math.sqrt(periods_per_year))
 
 
+# Phase 14k-30: per-symbol 平均 funding rate (per 8h, decimal).
+# 数据来源: 历史均值 (2024-2025 BTC ~0.01% / ETH ~0.008% / alt ~0.012%). 持仓段累加估 funding cost.
+# 实际 funding 有正有负, 这里用 abs 平均, 偏保守 (假设 trader 总在 funding 不利方向)
+AVG_FUNDING_PER_8H = {
+    'BTC/USDT': 0.0001,    # 0.01% / 8h ≈ 11% / yr
+    'ETH/USDT': 0.00008,
+    'SOL/USDT': 0.00012,
+    'BNB/USDT': 0.0001,
+    'ARB/USDT': 0.00015,
+    'SUI/USDT': 0.00018,
+    'AVAX/USDT': 0.00015,
+    'DOGE/USDT': 0.00015,
+}
+DEFAULT_FUNDING_PER_8H = 0.00012   # 没列表的 alt 用这个
+
+
+def _funding_cost(position_size_usdt: float, leverage: float,
+                  hours_held: float, symbol: str) -> float:
+    """Phase 14k-30: 估算持仓段 funding 成本 (USDT).
+    Funding 按 8h 累计, 杠杆放大 (借的钱也算): cost = position × lev × rate × (hours/8).
+    """
+    rate = AVG_FUNDING_PER_8H.get(symbol, DEFAULT_FUNDING_PER_8H)
+    intervals = hours_held / 8.0
+    return position_size_usdt * leverage * rate * intervals
+
+
+def _compute_atr_series(candles: list, period: int = 14) -> list:
+    """Phase 14k-30: 预算 ATR 序列 (Wilder smoothing 简化版).
+    回传跟 candles 等长的 list, 前 period 个为 None.
+    """
+    if not candles or len(candles) < period + 1:
+        return [None] * len(candles)
+    trs = []
+    prev_close = candles[0]['close']
+    for c in candles:
+        h, l = c['high'], c['low']
+        tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+        trs.append(tr)
+        prev_close = c['close']
+    atrs = [None] * len(candles)
+    # 简单 rolling mean 而不是 Wilder, 够用
+    for i in range(period, len(candles)):
+        atrs[i] = sum(trs[i - period + 1:i + 1]) / period
+    return atrs
+
+
 def _periods_per_year(timeframe):
     """timeframe → 一年的 K 線數量（用於年化、Sharpe）"""
     minutes = {
@@ -115,6 +161,7 @@ def run_backtest(
     warmup: int = 60,
     signal_fn=None,
     exchange: str = 'okx',          # Phase 14k-10: 决定 fee_pct 默认值
+    symbol: str | None = None,      # Phase 14k-30: 用于查 funding rate
 ):
     """跑單一策略的完整回測
 
@@ -140,12 +187,31 @@ def run_backtest(
     # 預先排序
     candles = sorted(candles, key=lambda c: c['timestamp'])
 
-    # Phase 9.5: 滑點 — entry 往不利方向偏，exit 也往不利方向
-    slip = slippage_pct / 100.0
-    def entry_fill(price, side):
-        return price * (1 + slip) if side == 'long' else price * (1 - slip)
-    def exit_fill(price, side):
-        return price * (1 - slip) if side == 'long' else price * (1 + slip)
+    # 14k-30: timeframe → candle hours (用于 funding 累计 hours_held)
+    _tf_minutes_map = {'1m':1,'3m':3,'5m':5,'15m':15,'30m':30,'1h':60,'2h':120,'4h':240,
+                       '6h':360,'8h':480,'12h':720,'1d':1440,'3d':4320,'1w':10080}
+    candle_hours = _tf_minutes_map.get(timeframe, 240) / 60.0
+
+    # Phase 9.5 + 14k-30: 滑点 — entry 往不利方向偏, exit 也往不利方向
+    # 14k-30: ATR 动态化, base slippage_pct 作 floor; 高波动期估高 (实测高波动 0.2-0.5% slip)
+    base_slip = slippage_pct / 100.0
+    atr_series = _compute_atr_series(candles, period=14)
+    ATR_SLIP_MULTIPLIER = 0.15  # ATR/close 1% → slippage 0.15%
+
+    def slip_at(i):
+        """返回第 i 根 candle 的有效 slippage (decimal)."""
+        if i < len(atr_series) and atr_series[i] and candles[i]['close'] > 0:
+            vol = atr_series[i] / candles[i]['close']
+            dyn = vol * ATR_SLIP_MULTIPLIER
+            return max(base_slip, dyn)
+        return base_slip
+
+    def entry_fill(price, side, i):
+        s = slip_at(i)
+        return price * (1 + s) if side == 'long' else price * (1 - s)
+    def exit_fill(price, side, i):
+        s = slip_at(i)
+        return price * (1 - s) if side == 'long' else price * (1 + s)
 
     equity = initial_capital
     position = None  # { entry_price, size_btc, opened_idx, opened_ts }
@@ -174,7 +240,7 @@ def run_backtest(
 
             if close_reason:
                 # 重算 raw_pct 用 filled exit price（之前的 raw_pct 用 raw price）
-                filled_exit = exit_fill(price, position['side'])
+                filled_exit = exit_fill(price, position['side'], i)
                 if position['side'] == 'short':
                     raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
                 else:
@@ -182,7 +248,10 @@ def run_backtest(
                 pnl_pct = raw_pct * leverage
                 pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
                 fee = position_size_usdt * (fee_pct / 100) * 2  # 開倉 + 平倉
-                pnl_net = pnl - fee
+                # 14k-30: funding cost — 持仓段每 8h 累计
+                hours_held = (i - position['opened_idx']) * candle_hours
+                funding = _funding_cost(position_size_usdt, leverage, hours_held, symbol or '') if symbol else 0.0
+                pnl_net = pnl - fee - funding
                 equity += pnl_net
                 trades.append({
                     'entry_ts': position['opened_ts'],
@@ -193,6 +262,7 @@ def run_backtest(
                     'side': position['side'],
                     'pnl': round(pnl_net, 4),
                     'pnl_pct': round(pnl_pct, 4),
+                    'funding_cost': round(funding, 4),
                     'reason': close_reason,
                     'bars_held': i - position['opened_idx'],
                 })
@@ -219,7 +289,7 @@ def run_backtest(
             # 開倉
             if is_buy or is_sell:
                 side_open = 'long' if is_buy else 'short'
-                filled_entry = entry_fill(price, side_open)
+                filled_entry = entry_fill(price, side_open, i)
                 size_btc = round(position_size_usdt / filled_entry, 6)
                 position = {
                     'entry_price': filled_entry,
@@ -236,7 +306,7 @@ def run_backtest(
                 signal == 'close'
             )
             if should_close:
-                filled_exit = exit_fill(price, position['side'])
+                filled_exit = exit_fill(price, position['side'], i)
                 if position['side'] == 'short':
                     raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
                 else:
@@ -244,7 +314,10 @@ def run_backtest(
                 pnl_pct = raw_pct * leverage
                 pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
                 fee = position_size_usdt * (fee_pct / 100) * 2
-                pnl_net = pnl - fee
+                # 14k-30: funding cost
+                hours_held = (i - position['opened_idx']) * candle_hours
+                funding = _funding_cost(position_size_usdt, leverage, hours_held, symbol or '') if symbol else 0.0
+                pnl_net = pnl - fee - funding
                 equity += pnl_net
                 trades.append({
                     'entry_ts': position['opened_ts'],
@@ -253,6 +326,7 @@ def run_backtest(
                     'exit_price': filled_exit,
                     'size': position['size_btc'],
                     'side': position['side'],
+                    'funding_cost': round(funding, 4),
                     'pnl': round(pnl_net, 4),
                     'pnl_pct': round(pnl_pct, 4),
                     'reason': 'signal',
@@ -280,7 +354,7 @@ def run_backtest(
     if position:
         last = candles[-1]
         price = last['close']
-        filled_exit = exit_fill(price, position['side'])
+        filled_exit = exit_fill(price, position['side'], len(candles) - 1)
         if position['side'] == 'short':
             raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
         else:
@@ -288,7 +362,10 @@ def run_backtest(
         pnl_pct = raw_pct * leverage
         pnl = raw_pct * position['size_btc'] * position['entry_price'] * leverage / 100
         fee = position_size_usdt * (fee_pct / 100) * 2
-        pnl_net = pnl - fee
+        # 14k-30: funding cost
+        hours_held = (len(candles) - 1 - position['opened_idx']) * candle_hours
+        funding = _funding_cost(position_size_usdt, leverage, hours_held, symbol or '') if symbol else 0.0
+        pnl_net = pnl - fee - funding
         equity += pnl_net
         trades.append({
             'entry_ts': position['opened_ts'],
@@ -297,6 +374,7 @@ def run_backtest(
             'exit_price': filled_exit,
             'size': position['size_btc'],
             'side': position['side'],
+            'funding_cost': round(funding, 4),
             'pnl': round(pnl_net, 4),
             'pnl_pct': round(pnl_pct, 4),
             'reason': 'end_of_period',

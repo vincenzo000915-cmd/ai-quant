@@ -696,6 +696,29 @@ class SystemConfig(db.Model):
         }
 
 
+class UserConfig(db.Model):
+    """Phase 14k-30 #3: per-user 配置覆盖 (sparse).
+
+    SystemConfig 是全局 base; UserConfig 让每 user 覆盖部分字段 (sizing/lev/auto_apply 等).
+    overrides 是 sparse JSON dict, 只存非默认值; get_config(user_id) 合并 base + overrides.
+    """
+    __tablename__ = 'user_config'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), unique=True, nullable=False, index=True)
+    overrides = db.Column(db.JSON, default=dict)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'overrides': self.overrides or {},
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class AuditLog(db.Model):
     """Phase 8.4: 审计日志 — 任何 mutating 事件都記一條"""
     __tablename__ = 'audit_log'

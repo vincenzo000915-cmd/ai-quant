@@ -68,7 +68,7 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         audit('advisor_invent_proposed', user_id=uid, lag_pct=item.get('meta', {}).get('lag_pct'))
         return True, '已排程 AI invent 新策略 (async, ~60s 内完成 + 自动 backtest + 过门槛上线)'
 
-    # Phase 14k-28 L2: 账户级 action 不需要 strategy 实例, 单独前置处理
+    # Phase 14k-28/30: 账户级 action — 14k-30 #3 user-scoped (per-user UserConfig override)
     if action == 'adjust_global_sizing':
         new_sizing = item.get('meta', {}).get('new_sizing') or {}
         if not new_sizing:
@@ -93,9 +93,11 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         if not safe:
             return False, '没有合法字段可应用 (回测覆盖字段 SL/TP 已被过滤)'
         from app.services.config_service import update as update_cfg
-        update_cfg(safe)
+        uid = item.get('meta', {}).get('user_id')
+        update_cfg(safe, user_id=uid)
         kv = ', '.join(f'{k}={v}' for k, v in safe.items())
-        return True, f'账户级 sizing: {kv}'
+        scope = f'user={uid}' if uid else 'system'
+        return True, f'账户级 sizing ({scope}): {kv}'
 
     strategy = Strategy.query.get(sid)
     if not strategy:
@@ -105,6 +107,8 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         new_params = item.get('meta', {}).get('best_params')
         if not isinstance(new_params, dict) or not new_params:
             return False, 'meta.best_params 缺失或無效'
+        # Phase 14k-30: snapshot baseline 给 auto-revert
+        before_params = dict(strategy.params or {})
         # Phase 14k-28: merge 保住 risk_params 等子项, 不被参数网格搜索结果(只含信号参数)清空
         merged = dict(strategy.params or {})
         merged.update(new_params)
@@ -112,6 +116,9 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(strategy, 'params')
         db.session.commit()
+        from app.services.audit import log as audit
+        audit('ai_strategy_params_change', strategy_id=sid, action='apply_params',
+              before_params=before_params, after_params=merged, changed_keys=list(new_params.keys()))
         kv = ', '.join(f'{k}={v}' for k, v in list(new_params.items())[:4])
         return True, f'优化参数: {kv}'
 
@@ -257,17 +264,20 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         return True, '已排程 SL/TP 闪测 (async, ~30s 内 + 过门槛 apply)'
 
     if action == 'propose_signal_grid':
-        # Phase 14k-29 L5: 触发 ParamOptimization (走现有 apply_params 路径)
+        # Phase 14k-29/30: 触发 ParamOptimization. 14k-30: 如 advisor 已让 LLM 提议 grid, 存进 opt.grid 让 task 用它而非死字典
         from app.models import ParamOptimization
         from app.tasks.strategy_tasks import optimize_strategy_params
-        # 创建 record 后排 task
-        opt = ParamOptimization(strategy_id=sid, status='pending')
+        proposed_grid = item.get('meta', {}).get('proposed_grid')
+        opt = ParamOptimization(strategy_id=sid, status='pending',
+                                grid=proposed_grid or {})
         db.session.add(opt)
         db.session.commit()
         optimize_strategy_params.apply_async(args=[opt.id], countdown=5)
         from app.services.audit import log as audit
-        audit('signal_grid_proposed', strategy_id=sid, optimization_id=opt.id)
-        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}, 完成后 apply_params 自动跟上)'
+        audit('signal_grid_proposed', strategy_id=sid, optimization_id=opt.id,
+              ai_proposed=bool(proposed_grid), rationale=item.get('meta', {}).get('rationale'))
+        suffix = ' (AI 提议 grid)' if proposed_grid else ' (fallback 死字典 grid)'
+        return True, f'已排程信号 grid 优化 (ParamOpt #{opt.id}){suffix}'
 
     if action == 'adjust_strategy_risk':
         # Phase 14k-28 L3: 单策略 risk_params 调整 (merge 进 strategy.params.risk_params)
@@ -287,6 +297,8 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         rejected = [k for k in new_rp if k not in ('leverage', 'position_size_usdt')]
         if rejected:
             return False, f'不接受字段 (回测覆盖): {rejected}'
+        # Phase 14k-30: snapshot before
+        before_params = dict(strategy.params or {})
         # merge 到 strategy.params.risk_params
         params = dict(strategy.params or {})
         rp = dict(params.get('risk_params') or {})
@@ -296,6 +308,9 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(strategy, 'params')
         db.session.commit()
+        from app.services.audit import log as audit
+        audit('ai_strategy_params_change', strategy_id=sid, action='adjust_strategy_risk',
+              before_params=before_params, after_params=params, changed_keys=list(new_rp.keys()))
         kv = ', '.join(f'{k}={v}' for k, v in new_rp.items())
         return True, f'策略 risk: {kv}'
 
