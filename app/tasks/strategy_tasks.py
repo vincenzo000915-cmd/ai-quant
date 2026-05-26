@@ -81,7 +81,10 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                            user_id=user_id, symbol=symbol, side=side, amount_usdt=amount_usdt,
                            reason='Phase 14k-6 — HL agent 180 天授权已过期, 需重新签名')
                     from app.services.telegram_service import send as _tg
-                    _tg(f'🔴 <b>Hyperliquid 交易授权已过期</b>\n你的 HL 子账号授权过期了，已自动停止实盘交易。请到「设置 → Hyperliquid」重新绑定。',
+                    _tg(f'🔴 <b>Hyperliquid 授权已过期 · HL Auth Expired</b>\n'
+                        f'你的 HL 子账号授权过期, 已自动停止实盘交易.\n'
+                        f'Your HL agent expired, LIVE trading auto-stopped.\n'
+                        f'请到「设置 → Hyperliquid」重新绑定 / Settings → Hyperliquid to re-bind.',
                         event_key=f'hl_expired_{user_id}')
                 except Exception:
                     pass
@@ -357,10 +360,10 @@ def _run_signals(strategy_id=None, category_filter=None):
                     )
                     from app.services.telegram_service import send as _tg
                     _tg(
-                        f'⚠️ <b>{s.name} 信号跳过</b>\n'
+                        f'⚠️ <b>{s.name} 信号跳过 · Signal Skipped</b>\n'
                         f'{s.symbol} {side} 已被策略 #{existing_pos.strategy_id} 持仓\n'
-                        f'OKX 合并仓位防错，本次 {action} 信号不下单。\n'
-                        f'等持仓策略平仓后才能开新仓。'
+                        f'Already held by strategy #{existing_pos.strategy_id} (first-mover lock)\n'
+                        f'本次 {action} 不下单, 等平仓后才能开新仓 / Waiting for close to free slot'
                     )
                     continue
 
@@ -390,9 +393,9 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         from app.services.telegram_service import send as _tg
                         _tg(
-                            f'⚠️ <b>{s.name} 跳過下單</b>\n'
-                            f'{s.symbol} 最小合約 ${real_notional:.0f} >> 目標 ${intended_notional:.0f}\n'
-                            f'建議：提高 trade_size 或關掉此 symbol。'
+                            f'⚠️ <b>{s.name} 跳过下单 · Order Skipped</b>\n'
+                            f'{s.symbol} 最小合约 / Min contract: ${real_notional:.0f} 远超目标 / >> target ${intended_notional:.0f}\n'
+                            f'建议提高 trade_size 或关掉此 symbol / Raise trade_size or disable this symbol'
                         )
                         continue
 
@@ -1013,7 +1016,8 @@ def backtest_and_maybe_start(strategy_id: int):
         candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=2000)
     except Exception as e:
         try:
-            _tg(f'🟡 <b>新增策略回测失败</b>\n#{strategy.id} {strategy.name}: 无法拉取 K 线数据，稍后会自动重试')
+            _tg(f'🟡 <b>新增策略回测失败 · Backtest Failed</b>\n'
+                f'#{strategy.id} {strategy.name}: 无法拉取 K 线 / Failed to fetch candles, 稍后自动重试 / will retry')
         except Exception:
             pass
         return f'fetch failed: {e}'
@@ -1027,20 +1031,21 @@ def backtest_and_maybe_start(strategy_id: int):
     oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
     is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
 
-    msg_head = f'<b>新增策略回测完成</b> #{strategy.id} {strategy.name}\n交易对 {strategy.symbol} · {strategy.timeframe}'
+    msg_head = (f'<b>新增策略回测完成 · Backtest Done</b> #{strategy.id} {strategy.name}\n'
+                f'交易对 / Symbol: {strategy.symbol} · {strategy.timeframe}')
     if oos is None:
-        _tg(f'🟡 {msg_head}\n历史数据样本太少, 无法判断表现, 已保持停止状态')
+        _tg(f'🟡 {msg_head}\n数据样本太少 / Not enough data, 已保持停止 / Kept stopped')
         return 'oos None, kept stopped'
 
     if oos >= min_sharpe:
         if auto_start:
             strategy.status = 'running'
             db.session.commit()
-            _tg(f'🟢 {msg_head}\n表现评分 {oos:.2f}（高于门槛 {min_sharpe}），已自动启动')
+            _tg(f'🟢 {msg_head}\n表现 / Sharpe: {oos:.2f} (≥ {min_sharpe}), 已自动启动 / Auto-started')
             return f'started, oos={oos:.2f}'
-        _tg(f'🟢 {msg_head}\n表现评分 {oos:.2f} 通过门槛，但你关闭了自动启动，请手动启用')
+        _tg(f'🟢 {msg_head}\n表现 / Sharpe: {oos:.2f} 通过门槛, 但你关闭了自动启动 / passed threshold but auto-start disabled')
         return f'passed but auto_start off, oos={oos:.2f}'
-    _tg(f'🔴 {msg_head}\n表现评分 {oos:.2f} 低于门槛 {min_sharpe}，当前行情不适合，未启动')
+    _tg(f'🔴 {msg_head}\n表现 / Sharpe: {oos:.2f} < 门槛 {min_sharpe}, 行情不合适未启动 / Not suitable, kept stopped')
     return f'rejected, oos={oos:.2f}'
 
 
@@ -1417,17 +1422,17 @@ def auto_ai_improve_strategies():
         mode_zh = {'manual': '手动', 'semi_auto': '半自动', 'full_auto': '全自动'}.get(mode, mode)
         if auto_applied:
             _tg(
-                f'🤖 <b>AI 已自动上线策略</b>（{mode_zh}模式）\n'
-                f'本轮上线 {len(auto_applied)} 个 / AI 推荐 {len(recs)} 个\n\n'
+                f'🤖 <b>AI 自动上线策略 · Auto-Promoted</b>（{mode_zh} / {mode}）\n'
+                f'本轮 / Promoted: {len(auto_applied)} / AI 推荐 / Recommended: {len(recs)}\n\n'
                 + '\n'.join(lines)
-                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">打开控制台</a>',
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">控制台 / Console</a>',
                 event_key='ai_improve_daily',
             )
         elif awaiting:
             _tg(
-                f'🤖 <b>AI 推荐了 {len(awaiting)} 个策略等你审核</b>（{mode_zh}模式）\n\n'
+                f'🤖 <b>AI 推荐 {len(awaiting)} 个策略等审核 · {len(awaiting)} Recs Awaiting Review</b>（{mode_zh} / {mode}）\n\n'
                 + '\n'.join(lines)
-                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键启用</a>',
+                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键启用 / Apply</a>',
                 event_key='ai_improve_daily',
             )
     except Exception:

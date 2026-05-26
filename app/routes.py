@@ -1585,7 +1585,9 @@ def update_system_config():
             }), 403
         # 通過，附帶記錄上鎖時間
         from app.services.telegram_service import send as _tg
-        _tg('🟢 <b>实盘模式已启动</b>\n所有上线前检查通过，从现在开始策略会用真钱在 OKX 下单。', force=True)
+        _tg('🟢 <b>实盘模式已启动 · LIVE Mode Activated</b>\n'
+            '所有上线前检查通过 / All pre-flight checks passed.\n'
+            '从现在开始策略会用真钱下单 / Strategies will trade with real funds from now.', force=True)
     # Phase 14c/14k-23: ai_decision_mode 分级 tier 守
     # manual: 所有人
     # semi_auto: Pro+
@@ -2180,10 +2182,10 @@ def candidate_promote_and_start(cid):
         if tp: risk_parts.append(f'止盈 {tp}%')
         risk_line = ' · '.join(risk_parts) if risk_parts else '使用默认风控'
         _tg(
-            f'🚀 <b>AI 策略已上架</b>\n'
+            f'🚀 <b>AI 策略已上架 · Strategy Promoted</b>\n'
             f'#{new_sid} · {m.get("name", "?")}\n'
-            f'交易对 {symbol} · {risk_line}\n'
-            f'已开启运行, 等待下次信号'
+            f'交易对 / Symbol: {symbol} · {risk_line}\n'
+            f'已运行, 等待信号 / Running, awaiting signal'
         )
     except Exception:
         pass

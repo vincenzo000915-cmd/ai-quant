@@ -92,9 +92,10 @@ def reconcile() -> dict:
                     'pnl': round(pnl, 4),
                 })
                 _tg(
-                    f'⚠️ <b>账户对账: 持仓已自动关闭</b>\n'
-                    f'系统记录的持仓 #{lp.id} ({lp.symbol} {lp.side}) 显示在持仓中，但交易所那边已经平掉了。\n'
-                    f'已同步关闭本地记录，估算盈亏 ${pnl:.2f}。',
+                    f'⚠️ <b>账户对账 · Reconcile: 持仓已自动关闭 / Position Auto-Closed</b>\n'
+                    f'系统记录的持仓 #{lp.id} ({lp.symbol} {lp.side}) 显示在持仓中，但交易所已平掉。\n'
+                    f'Local position #{lp.id} was still open, but already closed on exchange.\n'
+                    f'已同步关闭本地记录 / Synced local close · 估算盈亏 / Est PnL: ${pnl:.2f}',
                     event_key=f'orphan_local_{lp.id}',
                 )
             except Exception as e:
@@ -115,9 +116,10 @@ def reconcile() -> dict:
         )
         set_halted(f'reconcile: OKX 有 {len(okx_orphans)} 個本地不存在的持倉')
         _tg(
-            f'🚨 <b>账户对账: 发现异常持仓（已自动停止开新单）</b>\n'
-            f'OKX 账户有系统不知道的持仓:\n{details}\n\n'
-            f'请到 OKX 检查是手动开的还是哪个策略误开, 平仓后到 Dashboard 解除停单状态.',
+            f'🚨 <b>账户对账 · Reconcile: 发现异常持仓 / Unknown Position (已自动停单 / Auto-Halted)</b>\n'
+            f'交易所有系统不知道的持仓 / Exchange has positions not in our DB:\n{details}\n\n'
+            f'请到交易所检查是手动开的还是策略误开, 平仓后到 Dashboard 解除停单.\n'
+            f'Check exchange manually, close positions, then resolve halt on Dashboard.',
             event_key='orphan_okx', force=True,
         )
         actions.append({'type': 'okx_orphan_halted', 'count': len(okx_orphans), 'details': okx_orphans})
@@ -143,7 +145,8 @@ def reconcile() -> dict:
             for d in drift_alerts
         )
         _tg(
-            f'⚠️ <b>账户对账: 持仓大小与交易所不一致</b>\n{details}\n\n不影响运行, 但建议手动检查一下.',
+            f'⚠️ <b>账户对账 · Reconcile: 持仓大小不一致 / Size Drift</b>\n{details}\n\n'
+            f'不影响运行, 但建议手动检查 / Not blocking but please verify manually.',
             event_key='size_drift',
         )
         actions.append({'type': 'size_drift', 'items': drift_alerts})
