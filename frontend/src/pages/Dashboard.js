@@ -664,7 +664,7 @@ export default function Dashboard() {
             <TradingViewWidget
               symbol={chartSymbol}
               timeframe={tfBtc}
-              height={520}
+              height={720}
             />
 
             {btcPrice && (

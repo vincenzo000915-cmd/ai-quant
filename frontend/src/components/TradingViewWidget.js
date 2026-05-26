@@ -34,7 +34,7 @@ const TF_TO_INTERVAL = {
   '1w':  'W',
 };
 
-function TradingViewWidgetInner({ symbol = 'BTC/USDT', timeframe = '1h', height = 520 }) {
+function TradingViewWidgetInner({ symbol = 'BTC/USDT', timeframe = '1h', height = 720 }) {
   const containerRef = useRef(null);
 
   useEffect(() => {

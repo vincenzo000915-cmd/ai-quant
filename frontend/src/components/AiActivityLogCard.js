@@ -6,7 +6,8 @@ import {
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import HistoryIcon from '@mui/icons-material/History';
-import { api } from '../services/api';
+
+const API = process.env.REACT_APP_API_URL || '';
 
 const EVENT_COLOR = {
   ai_change_reverted: 'warning',
@@ -53,8 +54,11 @@ export default function AiActivityLogCard() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api.get('/me/ai-activity-log?limit=30');
-      setItems(r.data?.items || []);
+      const r = await fetch(`${API}/api/me/ai-activity-log?limit=30`, { credentials: 'include' });
+      if (r.ok) {
+        const d = await r.json();
+        setItems(d?.items || []);
+      }
     } catch (e) {
       // silent
     }
