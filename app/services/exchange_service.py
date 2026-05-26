@@ -154,35 +154,45 @@ def fetch_ohlcv(symbol='BTC/USDT', timeframe='4h', limit=500):
         return []
 
     # OKX 返回 [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-    candles = []
+    # Phase 14k-39: query-then-insert race condition 致 UniqueViolation 撞 uix_candle
+    # 改用 PostgreSQL atomic upsert (INSERT ... ON CONFLICT DO UPDATE)
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    rows_data = []
     for r in all_rows:
-        ts = int(r[0]) // 1000  # ms → s
-        candle = Candle.query.filter_by(
-            symbol=symbol, timeframe=timeframe, timestamp=ts
-        ).first()
+        ts = int(r[0]) // 1000
+        rows_data.append({
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'timestamp': ts,
+            'open': float(r[1]),
+            'high': float(r[2]),
+            'low': float(r[3]),
+            'close': float(r[4]),
+            'volume': float(r[5]),
+        })
 
-        if not candle:
-            candle = Candle(
-                symbol=symbol,
-                timeframe=timeframe,
-                timestamp=ts,
-                open=float(r[1]),
-                high=float(r[2]),
-                low=float(r[3]),
-                close=float(r[4]),
-                volume=float(r[5]),
-            )
-            db.session.add(candle)
-        else:
-            candle.open = float(r[1])
-            candle.high = float(r[2])
-            candle.low = float(r[3])
-            candle.close = float(r[4])
-            candle.volume = float(r[5])
+    if rows_data:
+        stmt = pg_insert(Candle.__table__).values(rows_data)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['symbol', 'timeframe', 'timestamp'],
+            set_={
+                'open': stmt.excluded.open,
+                'high': stmt.excluded.high,
+                'low': stmt.excluded.low,
+                'close': stmt.excluded.close,
+                'volume': stmt.excluded.volume,
+            },
+        )
+        db.session.execute(stmt)
+        db.session.commit()
 
-        candles.append(candle)
-
-    db.session.commit()
+    # 拉回最新写入的 candle 给 caller
+    ts_list = [r['timestamp'] for r in rows_data]
+    candles = Candle.query.filter(
+        Candle.symbol == symbol,
+        Candle.timeframe == timeframe,
+        Candle.timestamp.in_(ts_list),
+    ).order_by(Candle.timestamp).all() if ts_list else []
 
     # 清理舊數據，保留最近 limit 筆
     total = Candle.query.filter_by(symbol=symbol, timeframe=timeframe).count()
