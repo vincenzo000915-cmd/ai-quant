@@ -128,7 +128,7 @@ def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
     direction = hypothesis.get('expected_direction', 'long')
     expected_return = float(hypothesis.get('expected_return_pct', 0.5))
 
-    # 算 indicator series
+    # 算 indicator series (14k-64.1 扩到 12 种, 加 PSAR / Donchian / Stoch / CCI / EMA_cross)
     try:
         if indicator == 'RSI':
             series = ta.momentum.RSIIndicator(df['close'], window=period).rsi()
@@ -150,6 +150,24 @@ def verify_hypothesis(candles: list, hypothesis: dict) -> dict:
         elif indicator == 'volume_ratio':
             vol_ma = df['volume'].rolling(period).mean()
             series = df['volume'] / vol_ma
+        # 14k-64.1: PSAR flip — close 跟 PSAR 距离 (>0 价格在 PSAR 上方/趋势上)
+        elif indicator == 'PSAR_distance':
+            psar = ta.trend.PSARIndicator(df['high'], df['low'], df['close'])
+            series = (df['close'] - psar.psar()) / df['close'] * 100   # % 距离
+        # Donchian — 价格跟 N 日新高/新低关系
+        elif indicator == 'Donchian_high_touch':
+            high_n = df['high'].rolling(period).max()
+            series = df['close'] / high_n
+        elif indicator == 'Donchian_low_touch':
+            low_n = df['low'].rolling(period).min()
+            series = df['close'] / low_n
+        # Stochastic
+        elif indicator == 'Stoch_K':
+            stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'], window=period)
+            series = stoch.stoch()
+        # CCI
+        elif indicator == 'CCI':
+            series = ta.trend.CCIIndicator(df['high'], df['low'], df['close'], window=period).cci()
         else:
             return {'ok': False, 'reason': f'未知 indicator: {indicator}'}
     except Exception as e:
@@ -221,7 +239,7 @@ STEP1_SYSTEM = """你是量化研究员. 我给你一段真实 K 线 + 已成功
   "hypothesis_name": "RSI 超卖反弹 / BB 下轨触底 等",
   "rationale": "为什么这个假设成立 (1-2 句)",
   "entry_condition": {
-    "indicator": "RSI | BB_lower_touch | BB_upper_touch | MACD_hist | EMA_ratio | ATR_pct | volume_ratio",
+    "indicator": "RSI | BB_lower_touch | BB_upper_touch | MACD_hist | EMA_ratio | ATR_pct | volume_ratio | PSAR_distance | Donchian_high_touch | Donchian_low_touch | Stoch_K | CCI",
     "params": {"period": 14},
     "op": "< | > | cross_up | cross_down | touch",
     "threshold": 30
@@ -232,7 +250,11 @@ STEP1_SYSTEM = """你是量化研究员. 我给你一段真实 K 线 + 已成功
 }
 
 约束:
-- indicator 只能用上面 7 种之一 (Python 能算的)
+- indicator 只能用上面 12 种之一 (Python 能算的)
+- PSAR_distance 是价格距 PSAR 的 % (>0 = 上方/上涨趋势; cross_up = 翻多)
+- Donchian_high/low_touch 是 close/rolling_max(min) 比例 (touch = 1.0)
+- Stoch_K 0-100 (<20 超卖 / >80 超买)
+- CCI -∞~+∞ (典型 ±100 极值)
 - op 必须严格匹配
 - threshold 是数字
 - exit_horizon_bars 1-30 (短线 3-5, 长线 10-20)
