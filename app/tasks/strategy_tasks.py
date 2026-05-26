@@ -935,13 +935,9 @@ def auto_crawl_github(max_files_per_repo: int = 10):
 
 @celery_app.task
 def auto_translate_pending(max_count: int = 5):
-    """容器內走 Anthropic SDK 翻譯 pending 候選 — 需要 ANTHROPIC_API_KEY。
-    沒 key 就跳過、log 一行（user 應改用 host 端 translate_cli.py 跑 host cron）。
+    """翻譯 pending 候選. 14k-73: 撤掉 ANTHROPIC_API_KEY 守门 — admin 走 claude_cli (订阅) 不需 key.
+    translate_and_verify 内部走 translate_via_provider, 按 user_id 找 provider (admin=claude_cli).
     """
-    import os
-    if not os.environ.get('ANTHROPIC_API_KEY'):
-        return 'auto-translate skipped: no ANTHROPIC_API_KEY in env. 改用 host 端 translate_cli.py + crontab'
-
     from app.models import StrategyCandidate
     from app.services.candidate_pipeline import translate_and_verify
 
@@ -950,16 +946,23 @@ def auto_translate_pending(max_count: int = 5):
         return 'auto-translate: 無 pending 候選'
 
     ok = err = 0
+    err_msgs = []
     for c in pending:
         try:
-            r = translate_and_verify(c.id)
+            # 14k-73: 传 user_id 让走 per-user provider (admin claude_cli 免费)
+            r = translate_and_verify(c.id, user_id=1)
             if r.get('ok'):
                 ok += 1
             else:
                 err += 1
-        except Exception:
+                err_msgs.append(f'#{c.id}: {(r.get("error") or "?")[:80]}')
+        except Exception as e:
             err += 1
-    return f'auto-translate: {ok} 成功 / {err} 失敗 (共 {len(pending)} 個)'
+            err_msgs.append(f'#{c.id}: {type(e).__name__}: {str(e)[:80]}')
+    summary = f'auto-translate: {ok} 成功 / {err} 失敗 (共 {len(pending)} 個)'
+    if err_msgs:
+        summary += ' | err: ' + '; '.join(err_msgs[:3])
+    return summary
 
 
 # ===== Phase 10.2: parameter walk-forward grid search =====
