@@ -2473,15 +2473,85 @@ def cleanup_stale_candidates():
         c.error_log = (c.error_log or '') + ' | [14k-51 archived] stale_qualified 7d+ 仍无 promote'
         moved_to_archived += 1
 
-    from app.extensions import db
+    # 14k-52 步骤 4: translated 老的 (created > 3d ago) 没过 qualified → dismissed
+    # 用 created_at 不用 updated_at (因为 retest 会刷 updated_at 让看起来新, 实际策略老)
+    # 包含 2 种: (a) 从没 backtest 过 (b) 多次 retest 仍 "not qualified"
+    cutoff_3d = now - _dt.timedelta(days=3)
+    stuck_translated = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'translated',
+        StrategyCandidate.created_at < cutoff_3d,
+    ).all()
+    stuck_translated_dismissed = 0
+    for c in stuck_translated:
+        c.status = 'dismissed'
+        reason = ('多次 retest 仍 not qualified' if c.error_log and 'not qualified' in c.error_log
+                  else 'auto_backtest 没消化')
+        c.error_log = f'[14k-52 auto-dismiss] translated > 3d ({reason})'
+        stuck_translated_dismissed += 1
+
+    # 14k-52 步骤 5: backtesting > 12h 卡死 → error (14k-35.2 阈值 24h, 收紧到 12h)
+    cutoff_12h = now - _dt.timedelta(hours=12)
+    stuck_backtesting = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'backtesting',
+        StrategyCandidate.updated_at < cutoff_12h,
+    ).all()
+    stuck_backtesting_error = 0
+    for c in stuck_backtesting:
+        c.status = 'error'
+        c.error_log = f'[14k-52 auto-error] backtesting > 12h 卡死 (worker 可能挂或回测无限循环)'
+        stuck_backtesting_error += 1
+
+    # 14k-52 步骤 6: promoted > 30d 历史记录 → archived (保留 backtest 数据作 few-shot)
+    cutoff_30d = now - _dt.timedelta(days=30)
+    old_promoted = StrategyCandidate.query.filter(
+        StrategyCandidate.status == 'promoted',
+        StrategyCandidate.updated_at < cutoff_30d,
+    ).all()
+    old_promoted_archived = 0
+    for c in old_promoted:
+        c.status = 'archived'
+        c.error_log = (c.error_log or '') + ' | [14k-52 archived] promoted > 30d 旧历史'
+        old_promoted_archived += 1
+
+    # 14k-52 步骤 7: strategy stopped + 0 trades 30d + age > 7d → retired
+    # (释放 advisor dedup slot — 让 AI 能 propose 新版本同 type+symbol)
+    from app.models import Strategy, Trade
+    from sqlalchemy import func
+    cutoff_7d_stop = now - _dt.timedelta(days=7)
+    cutoff_30d_trade = now - _dt.timedelta(days=30)
+    old_stopped = Strategy.query.filter(
+        Strategy.status == 'stopped',
+        Strategy.created_at < cutoff_7d_stop,
+    ).all()
+    stopped_to_retired = 0
+    for s in old_stopped:
+        # 看 30d 内是否真有 trades (有的话保留, 没有的话归档)
+        recent_trades = Trade.query.filter(
+            Trade.strategy_id == s.id,
+            Trade.exit_time > cutoff_30d_trade,
+        ).count()
+        if recent_trades == 0:
+            s.status = 'retired'
+            s.retired_at = now
+            s.retire_reason = (s.retire_reason or '') + ' | [14k-52 auto-retire] stopped > 7d + 30d 0 trades (释放 dedup slot)'
+            stopped_to_retired += 1
+
     db.session.commit()
 
-    summary = (f'cleanup: archived_no_hope={archived_no_hope} '
-               f'stale={moved_to_stale} stale→archived={moved_to_archived}')
+    summary = (f'cleanup: candidates archived_no_hope={archived_no_hope} '
+               f'stale={moved_to_stale} stale→archived={moved_to_archived} '
+               f'translated_dismissed={stuck_translated_dismissed} '
+               f'backtesting_error={stuck_backtesting_error} '
+               f'old_promoted_archived={old_promoted_archived} '
+               f'strategies stopped→retired={stopped_to_retired}')
     audit('candidates_cleanup', actor='system',
           archived_no_hope=archived_no_hope,
           stale=moved_to_stale,
-          stale_archived=moved_to_archived)
+          stale_archived=moved_to_archived,
+          translated_dismissed=stuck_translated_dismissed,
+          backtesting_error=stuck_backtesting_error,
+          old_promoted_archived=old_promoted_archived,
+          stopped_to_retired=stopped_to_retired)
     return summary
 
 

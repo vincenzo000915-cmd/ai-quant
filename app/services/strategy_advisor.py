@@ -370,9 +370,14 @@ def build_recommendations(user_id: int = 1) -> dict:
         .filter(StrategyCandidate.promoted_strategy_id.is_(None))
         .all()
     )
-    # dedup: 已有同 candidate_type + symbol running 策略 → 跳過（避免重複上線）
+    # dedup: 已有同 candidate_type + symbol 策略 → 跳過（避免重複上線）
+    # 14k-52: stopped > 7d 释放 dedup slot — 老 stopped 不该挡 AI 新提议
+    # (cleanup_stale_candidates 会把 stopped+0trades+>7d 自动 retire, 这里 fallback 防 race)
+    import datetime as _dt_dedup
+    cutoff_dedup = _dt_dedup.datetime.utcnow() - _dt_dedup.timedelta(days=7)
     existing_types = {(s.type, s.symbol) for s in Strategy.query.filter(
-        Strategy.status.in_(['running', 'stopped'])
+        (Strategy.status == 'running') |
+        ((Strategy.status == 'stopped') & (Strategy.created_at > cutoff_dedup))
     ).all()}
 
     for c in qualified_cands:

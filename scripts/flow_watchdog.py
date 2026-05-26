@@ -278,15 +278,31 @@ def check_reconcile_recent() -> dict:
 
 
 def check_running_strategies() -> dict:
-    """9. running 策略数 > 0"""
+    """9. running 策略数 > 0 + 14k-52 stopped 池健康 (老 stopped 没堆积)"""
     t = t0()
-    rc, out = psql("SELECT COUNT(*) FROM strategies WHERE status='running'")
+    rc, out = psql("""
+        SELECT
+          (SELECT COUNT(*) FROM strategies WHERE status='running'),
+          (SELECT COUNT(*) FROM strategies WHERE status='stopped'),
+          (SELECT COUNT(*) FROM strategies WHERE status='stopped' AND created_at < NOW() - INTERVAL '7 days'),
+          (SELECT COUNT(*) FROM strategies WHERE status='retired')
+    """)
     if rc != 0: return {'status': WARN, 'detail': 'pg fail', 'latency_ms': ms(t)}
-    try: count = int(out.strip())
-    except: return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
-    if count == 0:
+    try:
+        running, stopped, stopped_old, retired = [int(x) for x in out.strip().split('|')]
+    except Exception as e:
+        return {'status': WARN, 'detail': f'parse: {e}', 'latency_ms': ms(t)}
+    if running == 0:
         return {'status': WARN, 'detail': '没有运行中的策略（可能被手动停了）', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'{count} 个策略运行中', 'latency_ms': ms(t)}
+    # 14k-52: 老 stopped > 20 → cleanup task 该跑了
+    if stopped_old > 20:
+        return {'status': WARN,
+                'detail': f'{running} 运行 / {stopped} stopped (其中 {stopped_old} > 7d 等 cleanup) / {retired} retired',
+                'latency_ms': ms(t),
+                'autofix_hint': '手动跑 cleanup_stale_candidates 释放 dedup slot'}
+    return {'status': OK,
+            'detail': f'{running} 运行 / {stopped} stopped (老 {stopped_old}) / {retired} retired',
+            'latency_ms': ms(t)}
 
 
 # Phase 14k-45 L1: AI 市场分析活跃
