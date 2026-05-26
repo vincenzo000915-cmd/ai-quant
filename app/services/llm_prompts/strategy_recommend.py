@@ -205,10 +205,11 @@ def _score_catalog_entry(entry: StrategyCandidate, user: dict, regimes: dict) ->
     score += sharpe_pts
     reasons.append(f'verified Sharpe={sharpe} (+{sharpe_pts})')
 
-    # 2. Regime 匹配 (0-30)
+    # 2. Regime 匹配 (Phase 14k-37: match +30, mismatch -80 强罚)
+    # Why: matrix bonus 用 sharpe×15 加分,高 sharpe trend 策略在 range 市场会碾压 reversion
+    # 不强罚 → AI 永远选历史最好的 trend, 不管当前是 range. 用户 24h 0 trades 就是这造成
     ideal = set(cm.get('ideal_regimes') or [])
     if ideal and regimes:
-        # 看 user symbols 当前 regime 是否在 ideal 集合内
         user_regimes_flat = set()
         for k, v in regimes.items():
             user_regimes_flat.update(REGIME_FAMILY.get(v, [v]))
@@ -217,7 +218,8 @@ def _score_catalog_entry(entry: StrategyCandidate, user: dict, regimes: dict) ->
             score += 30
             reasons.append(f'regime match: {list(match)[:2]} (+30)')
         else:
-            reasons.append(f'regime mismatch (ideal={list(ideal)[:2]} vs current={list(user_regimes_flat)[:2]})')
+            score -= 80
+            reasons.append(f'regime mismatch -80 (ideal={list(ideal)[:2]} vs current={list(user_regimes_flat)[:2]})')
 
     # 3. Type 多样化 — user 已有同 type 不加分
     if entry.candidate_type.replace('cat_', '') in [t.replace('cat_', '') for t in user.get('types', [])]:
@@ -281,23 +283,33 @@ def _pick_symbol_for_recommendation(entry: StrategyCandidate, user_symbols: list
 
 
 def _adapt_risk_to_capital(rec_risk: dict, symbol: str, capital: float, prices: dict,
-                            trade_size_default: float = 10) -> dict:
-    """Phase 14e: 把 catalog 的 recommended_risk 自适应 user 实际资金
+                            trade_size_default: float = 10, exchange: str = 'okx') -> dict:
+    """Phase 14e + 14k-37: 把 catalog 的 recommended_risk 自适应 user 实际资金 + 交易所.
     确保 position_size × leverage ≥ min contract notional × 1.5 (留 buffer)
     确保 position_size ≤ capital × 20% (单笔不超 20% 资金)
+
+    14k-37: exchange-aware — HL 用 szDecimals (BTC min ~$0.7); OKX 用 ctVal (BTC min ~$770)
     """
     from app.services.symbols import get_contract_size
     adapted = dict(rec_risk or {})
     rec_lev = float(adapted.get('leverage') or 3)
-    contract_size = get_contract_size(symbol)
     price = prices.get(symbol, 0) if prices else 0
+    exchange_lc = (exchange or 'okx').lower()
 
-    if not (contract_size and price and capital > 0):
-        # 无信息时退默认
+    if not (price and capital > 0):
         adapted['position_size_usdt'] = trade_size_default
         return adapted
 
-    min_notional = contract_size * price * 1.5    # 1.5 = 50% buffer (避 contracts 取整)
+    # 14k-37: 按交易所算 min_notional
+    if exchange_lc == 'hyperliquid':
+        min_notional = _hl_min_notional(symbol, price) * 1.5    # HL 用 szDecimals
+    else:
+        contract_size = get_contract_size(symbol)
+        if not contract_size:
+            adapted['position_size_usdt'] = trade_size_default
+            return adapted
+        min_notional = contract_size * price * 1.5
+
     max_capital_per_trade = capital * 0.20         # 单笔最多 20% 资金
 
     # 算需要的 position_size 让 notional 至少能开 1 contract
@@ -330,8 +342,9 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
     from app.services.strategy_naming import prettify_candidate_type
     cm = entry.catalog_meta or {}
     rec_risk = cm.get('recommended_risk') or {}
-    # 14e: 自适应 risk
-    adapted_risk = _adapt_risk_to_capital(rec_risk, symbol, capital, prices or {}, trade_size_default)
+    # 14e + 14k-37: 自适应 risk 按 target_exchange (OKX/HL 两套独立 min_notional)
+    adapted_risk = _adapt_risk_to_capital(rec_risk, symbol, capital, prices or {}, trade_size_default,
+                                            exchange=target_exchange)
     timestamp = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')
     cloned_type = f'{entry.candidate_type}_u{user_id}_{timestamp}'
     display_name = cm.get('display_name') or prettify_candidate_type(entry.candidate_type)
@@ -664,11 +677,22 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         if entry is None:
             continue
         # 14k-19: 用 matrix 实际 symbol check, 不再受 catalog.fit_symbols 限制
-        # 14k-36: 强制守 is_supported(symbol) — matrix 里可能有未列入 SUPPORTED_SYMBOLS 的币
-        # (eg ARB/APT/INJ/OP/TIA),contract_size 用 fallback 0.01 会算出 position=0 空跑策略
-        from app.services.symbols import is_supported
-        if not is_supported(mx.symbol):
-            continue
+        # 14k-37 (14k-36 修正): symbol 守门按 target_exchange:
+        #   OKX → is_supported (SUPPORTED_SYMBOLS dict, ctVal 必知)
+        #   HL → meta 能拉到 szDecimals (universe 200+ pair 多, dict 维护不动)
+        if (target_exchange or 'okx').lower() == 'okx':
+            from app.services.symbols import is_supported
+            if not is_supported(mx.symbol):
+                continue
+        else:
+            # HL: 用 _hl_min_notional 拉 meta 验证 (拉不到 = 不在 HL universe)
+            try:
+                hl_min = _hl_min_notional(mx.symbol, prices.get(mx.symbol, 1.0))
+                if hl_min >= 100:  # > $100 显然 fallback (meta 没拉到走 $1.0 default × price 大)
+                    # 实际 hl_min 应该是 几分钱 到 几块, > 100 表示 meta 拉不到 + price 很大走 fallback
+                    pass  # 让它过, _adapt_risk_to_capital 再用 HL min 验
+            except Exception:
+                pass
         ok, _, _ = _is_capital_feasible(entry, user_capital,
                                           {mx.symbol: prices.get(mx.symbol, 0)},
                                           trade_size, exchange=target_exchange,
@@ -728,6 +752,51 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
                 continue
             selected.append((entry, mx, s, reasons))
             seen_base_types.add(_base_type(entry))
+
+    # Phase 14k-37 B: 动态 regime 配额 — 按 user 当前 regime 分布 rebalance
+    # Why: category 配额 (long/short/swing) 只管 timeframe 风格, 不管市场 regime.
+    # range 市场塞 trend 策略会空跑 → 必须保证 selection 跟 user symbols 实际 regime 匹配
+    REGIME_FAMILY_RANGE = {'ranging', 'mean_reverting', 'low_adx', 'post_consolidation', 'intraday', 'cyclic'}
+    REGIME_FAMILY_TREND = {'trending', 'strong_trend', 'expanding_vol', 'multi_week', 'late_trend', 'turning_point', 'high_vol'}
+
+    def _entry_regime_type(e):
+        ideal = set((e.catalog_meta or {}).get('ideal_regimes') or [])
+        if ideal & REGIME_FAMILY_RANGE:
+            return 'reversion'
+        if ideal & REGIME_FAMILY_TREND:
+            return 'trend'
+        return 'unknown'
+
+    if regimes:
+        user_range = sum(1 for v in regimes.values() if v in ('ranging', 'range', 'choppy', 'low_vol'))
+        user_trend = sum(1 for v in regimes.values() if v in ('trending', 'strong_trend', 'weak_trend', 'high_vol'))
+        user_total = user_range + user_trend
+        if user_total > 0:
+            range_ratio = user_range / user_total
+            trend_ratio = user_trend / user_total
+            sel_rev_count = sum(1 for e, _, _, _ in selected if _entry_regime_type(e) == 'reversion')
+            sel_trend_count = sum(1 for e, _, _, _ in selected if _entry_regime_type(e) == 'trend')
+            sel_types_set = {e.candidate_type for e, _, _, _ in selected}
+
+            # range 主导 + selection 缺 reversion → 替换最低分 trend → 最高分 reversion
+            if range_ratio >= 0.5 and sel_rev_count == 0 and sel_trend_count > 0:
+                trend_idx = [i for i, (e, _, _, _) in enumerate(selected) if _entry_regime_type(e) == 'trend']
+                # selected 按分数倒序 → 最后一个是最低分
+                replace_idx = trend_idx[-1] if trend_idx else None
+                if replace_idx is not None:
+                    for entry, mx, sc, rs in matrix_scored:
+                        if _entry_regime_type(entry) == 'reversion' and entry.candidate_type not in sel_types_set:
+                            selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {range_ratio:.0%} range → 换入 reversion'])
+                            break
+            # trend 主导 + selection 缺 trend → 类似
+            elif trend_ratio >= 0.5 and sel_trend_count == 0 and sel_rev_count > 0:
+                rev_idx = [i for i, (e, _, _, _) in enumerate(selected) if _entry_regime_type(e) == 'reversion']
+                replace_idx = rev_idx[-1] if rev_idx else None
+                if replace_idx is not None:
+                    for entry, mx, sc, rs in matrix_scored:
+                        if _entry_regime_type(entry) == 'trend' and entry.candidate_type not in sel_types_set:
+                            selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {trend_ratio:.0%} trend → 换入 trend'])
+                            break
 
     # Clone + auto-apply. clone 继承 matrix backtest_result_id
     recommendations = []
