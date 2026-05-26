@@ -35,12 +35,17 @@ INFO_ONLY = {'mtf_caution'}
 def _today_count() -> int:
     """今日（UTC）已 auto-apply 過幾次。"""
     today = datetime.datetime.utcnow().date()
-    return (
+    # 14k-43: 只算真改 strategy 的 action, "排回测/排闪测/排 invent" 这种 async dispatch 不占 cap
+    # (之前 propose 跟 apply 算同 cap, 1 轮 advisor 6 items 就占满)
+    MUTATING_ACTIONS = {'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate',
+                         'adjust_global_sizing', 'adjust_strategy_risk'}
+    rows = (
         AuditLog.query
         .filter(AuditLog.event_type == 'advisor_auto_apply')
         .filter(AuditLog.created_at >= datetime.datetime.combine(today, datetime.time.min))
-        .count()
+        .all()
     )
+    return sum(1 for r in rows if (r.context or {}).get('action') in MUTATING_ACTIONS)
 
 
 def _telegram_safe(text: str):
