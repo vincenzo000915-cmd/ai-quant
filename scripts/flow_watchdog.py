@@ -50,6 +50,19 @@ OK = 'OK'
 WARN = 'WARN'
 FAIL = 'FAIL'
 
+# Phase 14k-33: 给每个内部 check_name 一个人看得懂的中文显示名
+CHECK_LABELS = {
+    'celery_beat_heartbeat': 'Celery 调度器心跳',
+    'signal_cycle_health':   '回测信号循环',
+    'ai_improve_recent':     '每日 AI 策略改进任务',
+    'translate_pipeline':    '策略翻译队列',
+    'llm_errors_1h':         '近 1 小时 LLM 错误',
+    'pg_connection_pool':    '数据库连接数',
+    'okx_connectivity':      'OKX API 连通',
+    'reconcile_recent':      '持仓对账',
+    'running_strategies':    '运行中策略数',
+}
+
 
 def t0(): return time.time()
 def ms(t): return int((time.time() - t) * 1000)
@@ -84,9 +97,8 @@ def check_celery_beat_heartbeat() -> dict:
         timeout=15,
     )
     if rc != 0 or 'pong' not in (out + err).lower():
-        return {'status': FAIL, 'detail': f'worker ping no pong: {(err or out)[:120]}', 'latency_ms': ms(t)}
-    # Celery worker 响应了说明它在跑 — beat 派的 task 也会被消费
-    return {'status': OK, 'detail': 'worker pong', 'latency_ms': ms(t)}
+        return {'status': FAIL, 'detail': f'Celery worker 无响应（可能挂了）: {(err or out)[:120]}', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': 'worker 在线', 'latency_ms': ms(t)}
 
 
 def check_signal_cycle_15m() -> dict:
@@ -105,8 +117,8 @@ def check_signal_cycle_15m() -> dict:
     except Exception as e:
         return {'status': WARN, 'detail': f'parse error: {e}', 'latency_ms': ms(t)}
     if count == 0:
-        return {'status': WARN, 'detail': f'2h 无新 backtest_results (auto_backtest :30 cron 可能挂或无 candidates)', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'2h: {count} backtests, last={last[:19]}', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': '近 2 小时无新回测（自动回测定时任务可能挂或候选池为空）', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'近 2 小时完成 {count} 次回测，最近 {last[:19]}', 'latency_ms': ms(t)}
 
 
 def check_ai_improve_recent() -> dict:
@@ -128,11 +140,12 @@ def check_ai_improve_recent() -> dict:
     except:
         return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
     total = done + skipped + errored
+    last_human = '从未运行过' if last == 'never' else f'上次 {last[:19]}'
     if total == 0:
-        return {'status': FAIL, 'detail': f'25h 无 AI improve event (daily cron 挂?) last={last}', 'latency_ms': ms(t)}
+        return {'status': FAIL, 'detail': f'已 25 小时没有运行（每日定时任务可能挂了，{last_human}）', 'latency_ms': ms(t)}
     if errored > 0 or (skipped > 0 and done == 0):
-        return {'status': WARN, 'detail': f'25h: done={done} skipped={skipped} errored={errored} (没产出)', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'25h: done={done} skipped={skipped} errored={errored}', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': f'近 25 小时：完成 {done} 次 / 跳过 {skipped} 次 / 失败 {errored} 次（没产出新候选）', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'近 25 小时：完成 {done} 次 / 跳过 {skipped} 次 / 失败 {errored} 次', 'latency_ms': ms(t)}
 
 
 def check_translate_pipeline() -> dict:
@@ -151,9 +164,9 @@ def check_translate_pipeline() -> dict:
     except:
         return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
     if pending > 10:
-        return {'status': FAIL, 'detail': f'pending={pending} 堆积 (translate cron 可能挂)', 'latency_ms': ms(t),
-                'autofix_hint': 'translate_cli.py 跑一次清池子'}
-    return {'status': OK, 'detail': f'pending={pending} recent_translated_6h={recent_translated} errored={errored}', 'latency_ms': ms(t)}
+        return {'status': FAIL, 'detail': f'翻译队列堆积 {pending} 个候选（翻译定时任务可能挂了）', 'latency_ms': ms(t),
+                'autofix_hint': '跑 translate_cli.py 清池子'}
+    return {'status': OK, 'detail': f'待翻译 {pending} 个 / 近 6 小时新增 {recent_translated} 个 / 失败 {errored} 个', 'latency_ms': ms(t)}
 
 
 def check_llm_errors_recent() -> dict:
@@ -168,11 +181,11 @@ def check_llm_errors_recent() -> dict:
     timeouts = out.count('TimeoutExpired')
     parse_fails = out.count('LLM 输出无法解析')
     if timeouts >= 3:
-        return {'status': FAIL, 'detail': f'1h LLM timeouts={timeouts} parse_fails={parse_fails}', 'latency_ms': ms(t),
-                'autofix_hint': '考虑 bump CLAUDE_CLI_TIMEOUT'}
+        return {'status': FAIL, 'detail': f'近 1 小时 LLM 超时 {timeouts} 次 / 解析失败 {parse_fails} 次（超时偏多）', 'latency_ms': ms(t),
+                'autofix_hint': '考虑调大 CLAUDE_CLI_TIMEOUT'}
     if timeouts > 0 or parse_fails > 0:
-        return {'status': WARN, 'detail': f'1h LLM timeouts={timeouts} parse_fails={parse_fails}', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': '1h 无 LLM call error', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': f'近 1 小时 LLM 超时 {timeouts} 次 / 解析失败 {parse_fails} 次', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': '近 1 小时无 LLM 错误', 'latency_ms': ms(t)}
 
 
 def check_pg_pool() -> dict:
@@ -184,11 +197,11 @@ def check_pg_pool() -> dict:
     try: count = int(out.strip())
     except: return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
     if count > 80:
-        return {'status': FAIL, 'detail': f'pg conn={count} > 80 (max 100，坑 18 复发?)', 'latency_ms': ms(t),
-                'autofix_hint': '考虑重启 celery-worker 释放 idle'}
+        return {'status': FAIL, 'detail': f'数据库连接数 {count}（已超 80，逼近 100 上限）', 'latency_ms': ms(t),
+                'autofix_hint': '重启 celery-worker 释放空闲连接'}
     if count > 50:
-        return {'status': WARN, 'detail': f'pg conn={count} > 50', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'pg conn={count}', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': f'数据库连接数 {count}（超过 50）', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'数据库连接数 {count}', 'latency_ms': ms(t)}
 
 
 def check_okx_connectivity() -> dict:
@@ -200,11 +213,11 @@ def check_okx_connectivity() -> dict:
         with urllib.request.urlopen(req, timeout=15) as r:
             data = json.loads(r.read())
     except Exception as e:
-        return {'status': FAIL, 'detail': f'/api/account fail: {type(e).__name__}', 'latency_ms': ms(t)}
+        return {'status': FAIL, 'detail': f'OKX 账户接口失败（{type(e).__name__}）', 'latency_ms': ms(t)}
     bal = (data.get('balances') or {}).get('USDT')
     if bal is None:
-        return {'status': WARN, 'detail': 'API ok 但 USDT 缺', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'OKX USDT={float(bal):.2f}', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': 'OKX 接口通了但拿不到 USDT 余额', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'OKX USDT 余额 = {float(bal):.2f}', 'latency_ms': ms(t)}
 
 
 def check_reconcile_recent() -> dict:
@@ -221,7 +234,8 @@ def check_reconcile_recent() -> dict:
         count = int(count)
     except Exception as e:
         return {'status': WARN, 'detail': f'parse: {e}', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'{count} open positions, last_opened={last[:19] if last != "none" else "none"}', 'latency_ms': ms(t)}
+    last_human = '无' if last == 'none' else last[:19]
+    return {'status': OK, 'detail': f'{count} 个持仓中，最近开仓 {last_human}', 'latency_ms': ms(t)}
 
 
 def check_running_strategies() -> dict:
@@ -232,8 +246,8 @@ def check_running_strategies() -> dict:
     try: count = int(out.strip())
     except: return {'status': WARN, 'detail': f'parse: {out}', 'latency_ms': ms(t)}
     if count == 0:
-        return {'status': WARN, 'detail': '0 running 策略 (user 可能 stop 了)', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': f'{count} running', 'latency_ms': ms(t)}
+        return {'status': WARN, 'detail': '没有运行中的策略（可能被手动停了）', 'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'{count} 个策略运行中', 'latency_ms': ms(t)}
 
 
 CHECKS = [
@@ -310,7 +324,7 @@ def should_alert(name: str) -> bool:
 def send_telegram(text: str) -> bool:
     try:
         data = urllib.parse.urlencode({
-            'chat_id': TG_CHAT, 'parse_mode': 'Markdown',
+            'chat_id': TG_CHAT, 'parse_mode': 'HTML',
             'text': text[:4096],
         }).encode()
         req = urllib.request.Request(
@@ -383,13 +397,14 @@ def main() -> int:
             for n in new_fails:
                 r = report['results'][n]
                 af = report['autofixes'].get(n)
-                line = f'• `{n}`: {r["detail"]}'
+                label = CHECK_LABELS.get(n, n)
+                line = f'• <b>{label}</b>: {r["detail"]}'
                 if af:
-                    line += f'\n  🔧 autofix: {"✅" if af["ok"] else "❌"} {af["msg"]}'
+                    line += f'\n  🔧 自动修复: {"✅ 成功" if af["ok"] else "❌ 失败"}（{af["msg"]}）'
                 elif r.get('autofix_hint'):
-                    line += f'\n  💡 hint: {r["autofix_hint"]}'
+                    line += f'\n  💡 处理建议: {r["autofix_hint"]}'
                 lines.append(line)
-            text = '*🚨 flow_watchdog FAIL*\n\n' + '\n'.join(lines)
+            text = '🚨 <b>系统监控异常</b>\n\n' + '\n\n'.join(lines)
             send_telegram(text)
 
     # stdout
