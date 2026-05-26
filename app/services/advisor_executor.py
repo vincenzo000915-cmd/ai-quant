@@ -226,9 +226,11 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         existing = {s.symbol for s in Strategy.query.filter(Strategy.template_group == group).all()}
         base_name = re.sub(r'\s*\([A-Z]{2,6}\)\s*$', '', strategy.name).strip()
         created_objs = []
+        # 14k-46.1: fan_out 走 source strategy 的 exchange (HL user 不应被 OKX universe 限制)
+        src_exchange = (strategy.exchange or 'okx').lower()
         for sym in FAN_OUT_DEFAULTS:
-            # 14k-46: is_supported 动态查 okx_meta, 不再 hardcode SUPPORTED_SYMBOLS
-            if not is_supported(sym) or sym == strategy.symbol or sym in existing:
+            # 14k-46: is_supported 动态查 OKX/HL universe (按 exchange 分流, 14k-46.1)
+            if not is_supported(sym, exchange=src_exchange) or sym == strategy.symbol or sym in existing:
                 continue
             clone = Strategy(
                 name=f'{base_name} ({sym.split("/")[0]})',

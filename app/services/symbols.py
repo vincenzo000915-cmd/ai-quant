@@ -31,18 +31,31 @@ RECOMMENDED_SYMBOLS = {
 SUPPORTED_SYMBOLS = RECOMMENDED_SYMBOLS
 
 
-def is_supported(symbol: str) -> bool:
-    """OKX 上是否有这个 USDT-SWAP. 走 okx_meta 动态后端 (14k-46).
-    okx_meta 拉不到 (网络挂) 时 fallback 推荐种子 dict, 保守不空白.
+def is_supported(symbol: str, exchange: str | None = 'okx') -> bool:
+    """这个 symbol 在指定 exchange 的 universe 里吗.
+
+    14k-46.1: 加 exchange 参数. HL user 跟 OKX user 守门走不同 universe —
+    HL universe ~200, OKX USDT-SWAP ~329, 交集大但不完全, HL 独有币不该被 OKX 拒.
     """
+    ex = (exchange or 'okx').lower()
+
+    if ex == 'hyperliquid':
+        try:
+            from app.services.hl_meta import is_hl_supported, _load_hl_universe
+            if _load_hl_universe():  # cache 有数据
+                return is_hl_supported(symbol)
+        except Exception:
+            pass
+        # HL meta 完全没 cache → fallback 种子 (HL 主流币几乎都在)
+        return symbol in RECOMMENDED_SYMBOLS
+
+    # OKX (default)
     try:
         from app.services.okx_meta import is_okx_supported, _load_okx_instruments
-        cache = _load_okx_instruments()
-        if cache:  # 缓存有数据 = okx_meta 工作中, 信它
+        if _load_okx_instruments():
             return is_okx_supported(symbol)
     except Exception:
         pass
-    # okx_meta 完全没 cache (首次 + 拉失败) → fallback 种子
     return symbol in RECOMMENDED_SYMBOLS
 
 

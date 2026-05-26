@@ -242,8 +242,9 @@ def fan_out_strategy(id):
     if not isinstance(raw_symbols, list) or not raw_symbols:
         return jsonify({'error': '需要 symbols 陣列'}), 400
 
-    # 驗證 symbol — 14k-46: is_supported 动态查 OKX universe (不再 hardcode 8 个)
-    invalid = [s for s in raw_symbols if not is_supported(s)]
+    # 驗證 symbol — 14k-46.1: 按 source strategy 的 exchange 动态查 (HL/OKX 不同 universe)
+    src_exchange = (source.exchange or 'okx').lower()
+    invalid = [s for s in raw_symbols if not is_supported(s, exchange=src_exchange)]
     if invalid:
         return jsonify({'error': f'不支援的幣種：{invalid}'}), 400
 

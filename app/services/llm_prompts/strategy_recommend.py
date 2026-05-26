@@ -698,7 +698,7 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         #   HL → meta 能拉到 szDecimals (universe 200+ pair 多, dict 维护不动)
         if (target_exchange or 'okx').lower() == 'okx':
             from app.services.symbols import is_supported
-            if not is_supported(mx.symbol):
+            if not is_supported(mx.symbol, exchange='okx'):    # 14k-46.1: 显式 exchange
                 continue
         else:
             # HL: 用 _hl_min_notional 拉 meta 验证 (拉不到 = 不在 HL universe)
