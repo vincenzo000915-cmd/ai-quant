@@ -433,14 +433,21 @@ def run_auto_apply() -> dict:
     already_today = _today_count()
     promote_today = _today_count_action('promote_candidate')
     remaining = max(0, daily_cap - already_today)
-    if remaining == 0:
-        return {'skipped': True, 'reason': f'已達每日上限 {daily_cap}', 'today_count': already_today}
+    # 14k-71: cap 满时不再早 return — 让 invent / propose_grid 等 async dispatch 仍可跑
+    # daily cap 只限 mutating actions (改 strategy 本身), invent 是创新策略不该被卡
+    # 14k-43 _today_count 已只算 mutating, 但 run_auto_apply 顶层 cap 检查太粗暴
+    cap_full = (remaining == 0)
 
     recs = build_recommendations()
     items = recs.get('items', [])
 
+    # 14k-43: MUTATING_ACTIONS 算 daily cap, 其它 (invent/propose_grid/optimize_risk_full) 不算
+    MUTATING_ACTIONS = {'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate',
+                         'adjust_global_sizing', 'adjust_strategy_risk'}
+
     applied: list[dict] = []
     skipped: list[dict] = []
+    mutating_applied = 0   # 14k-71: 只数 mutating action 计 cap
 
     for item in items:
         action = item['action']
@@ -449,8 +456,9 @@ def run_auto_apply() -> dict:
         if action not in allowed:
             skipped.append({'item': item, 'why': f'{action} not in allowed actions'})
             continue
-        if len(applied) >= remaining:
-            skipped.append({'item': item, 'why': '本輪達到剩餘日限'})
+        # 14k-71: 只对 mutating actions 检 cap, 非 mutating (invent 等) 跳过此 check
+        if action in MUTATING_ACTIONS and (mutating_applied >= remaining):
+            skipped.append({'item': item, 'why': f'mutating cap {daily_cap}/day 已達 (invent 等不受限)'})
             continue
         # promote_candidate 額外有自己的日限
         if action == 'promote_candidate':
@@ -469,6 +477,8 @@ def run_auto_apply() -> dict:
         }
         if ok:
             applied.append(rec)
+            if action in MUTATING_ACTIONS:
+                mutating_applied += 1   # 14k-71: 只数 mutating 算 cap
             audit('advisor_auto_apply', actor='system',
                   action=action, strategy_id=item['strategy_id'],
                   reason=item['reason'][:300], message=msg)
