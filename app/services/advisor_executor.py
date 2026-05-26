@@ -220,6 +220,29 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             symbol = (cand.source_meta or {}).get('symbol')
         if not symbol:
             symbol = cfg.get('default_backtest_symbol', 'BTC/USDT')
+
+        # 14k-58: capital utilization gate — 防资金分散到一堆策略
+        try:
+            from app.models import Strategy
+            from app.services.llm_prompts.strategy_recommend import _get_user_capital
+            from app.services.exchange_binding import primary_exchange as _pex
+            uid = item.get('meta', {}).get('user_id') or 1
+            user_capital = _get_user_capital(uid, exchange=_pex(uid))
+            if user_capital > 0:
+                running_strats = Strategy.query.filter_by(status='running').all()
+                total_reserved = sum(
+                    float((rs.params or {}).get('risk_params', {}).get('position_size_usdt') or 0)
+                    for rs in running_strats
+                )
+                new_size = float((cand.source_meta or {}).get('risk_params', {}).get('position_size_usdt') or 7) if cand else 7
+                projected_util = (total_reserved + new_size) / user_capital * 100
+                if projected_util > 70:
+                    return False, (f'资金已用 ${total_reserved:.0f}/${user_capital:.0f}, '
+                                   f'加新策略到 {projected_util:.0f}% > 70% → 拒 promote (防资金分散)')
+        except Exception as e:
+            # capital check 挂掉不挡 promote (避免 false negative)
+            print(f'[14k-58] capital gate exception (skipped): {type(e).__name__}: {e}')
+
         result = do_promote(cid, symbol=symbol)
         if not result.get('ok'):
             return False, f'promote 失败: {result.get("error")}'

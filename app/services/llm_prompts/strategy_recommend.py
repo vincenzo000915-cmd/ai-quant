@@ -416,10 +416,33 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
                 'reason': f'已 running 同 (symbol={sym}, TF={clone.timeframe}, cat={clone.category}) 策略 #{overlap.id}，避免过度集中'}
 
     # Guardrails
+    # 14k-58: capital-aware — 算总资金占用 / 总 capital, > 70% 拒绝 promote (防资金分散)
     n_running = scoped_query(Strategy).filter_by(status='running').count()
     max_running = int(cfg.get('auto_apply_max_running', 8))
     if n_running >= max_running:
         return {'skipped': True, 'reason': f'running {n_running} >= max {max_running}'}
+
+    # 14k-58: capital utilization 检查
+    try:
+        from app.services.exchange_binding import primary_exchange as _pex
+        user_exchange = _pex(user_id)
+    except Exception:
+        user_exchange = 'okx'
+    user_capital = _get_user_capital(user_id, exchange=user_exchange)
+    if user_capital > 0:
+        running_strategies = scoped_query(Strategy).filter_by(status='running').all()
+        total_reserved = 0.0
+        for rs in running_strategies:
+            rp = (rs.params or {}).get('risk_params') or {}
+            total_reserved += float(rp.get('position_size_usdt') or 0)
+        util_pct = total_reserved / user_capital * 100
+        # 新 strategy 也算上估算
+        new_size = float((clone.source_meta or {}).get('risk_params', {}).get('position_size_usdt') or 7)
+        projected_util = (total_reserved + new_size) / user_capital * 100
+        if projected_util > 70:
+            return {'skipped': True,
+                    'reason': f'资金已用 {util_pct:.0f}% (${total_reserved:.0f}/${user_capital:.0f}), '
+                              f'加新策略到 {projected_util:.0f}% > 70% 上限 → 拒绝 promote (避免资金分散)'}
 
     if cfg.get('halted'):
         return {'skipped': True, 'reason': 'system halted'}
