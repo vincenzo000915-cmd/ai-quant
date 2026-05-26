@@ -1,11 +1,15 @@
-"""Phase 14k-45 L3: 动态策略合成 — AI 实时合成 buy/sell signal_fn 代码.
+"""Phase 14k-45 L3 + 14k-57: 动态策略合成 — AI 实时合成 buy/sell signal_fn 代码.
 
 工作流:
-  1. 输入: market_brief + balance + target_pct + days_remaining
+  1. 输入: market_brief + balance + target_pct + days_remaining (+ 14k-57: few-shot + retry)
   2. LLM 输出 Python signal_fn 代码 + risk_params
   3. 写进 strategy_candidates (status='translated')
   4. candidate_sandbox.validate → walk-forward → 过门槛 promote
   5. AI 自己生成"为这个具体市场 + 目标 量身定制"的策略, 不是从 catalog 选
+
+14k-57: 修 zero-shot 烂的问题
+  - 加 few-shot examples (catalog 5 个 verified sharpe>2 signal_fn 作模板)
+  - retry feedback: 第一次 backtest 不过 → 拿 metrics 给 LLM 重写第二版
 """
 from __future__ import annotations
 
@@ -13,6 +17,39 @@ import hashlib
 import json
 
 from app.services.llm_provider import call_llm
+
+
+def _get_few_shot_examples(target_timeframe: str | None = None, max_n: int = 3) -> list[dict]:
+    """14k-57: 拉 catalog 池子 verified_oos_sharpe >= 2 的 signal_fn 代码作 few-shot.
+    优先匹配 target_timeframe 的 catalog. 返回 [{candidate_type, signal_code, verified_oos_sharpe, rationale}, ...]
+    """
+    try:
+        from app.models import StrategyCandidate
+        q = StrategyCandidate.query.filter_by(source='catalog', status='qualified')
+        cands = q.all()
+        # Python 端按 verified_oos_sharpe 排序 (避免 JSON path SQL 兼容问题)
+        scored = []
+        for c in cands:
+            cm = c.catalog_meta or {}
+            v = cm.get('verified_oos_sharpe')
+            if v is None or float(v) < 1.5:
+                continue
+            if not c.parsed_signal:
+                continue
+            tf_match = (target_timeframe and c.timeframe == target_timeframe)
+            scored.append({
+                'candidate_type': c.candidate_type,
+                'signal_code': c.parsed_signal,
+                'verified_oos_sharpe': float(v),
+                'description': cm.get('description', ''),
+                'timeframe': c.timeframe,
+                'tf_match': tf_match,
+            })
+        # 优先 TF 匹配的, 然后 sharpe 高的
+        scored.sort(key=lambda x: (not x['tf_match'], -x['verified_oos_sharpe']))
+        return scored[:max_n]
+    except Exception:
+        return []
 
 SYSTEM_PROMPT = """你是顶级量化交易员 + Python 工程师. 看市场 brief + 用户目标, 写出**实时最匹配**的 signal_fn 代码 + risk_params.
 
@@ -49,13 +86,14 @@ category 选择:
 def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
                         target_pct: float, days_remaining: int,
                         user_id: int = 1, hint: str | None = None,
-                        target_timeframe: str | None = None) -> dict:
+                        target_timeframe: str | None = None,
+                        prev_attempt_feedback: dict | None = None) -> dict:
     """LLM 根据当前市场 + user 目标合成 signal_fn.
 
-    14k-49: 加 hint + target_timeframe 让 invent meta-trigger 给 LLM 强方向:
-      hint='dry_spell' → 找高频策略
-      hint='tf_gap'    → 强制 target_timeframe (15m/30m)
-      hint='regime_mismatch' → 让 LLM 切 brief 反向 archetype
+    14k-49: hint + target_timeframe 让 invent meta-trigger 给 LLM 强方向
+    14k-57: 加 few-shot examples + prev_attempt_feedback (retry 用)
+      prev_attempt_feedback={'sharpe', 'trades', 'sample_trades', 'reason'}
+      → 第一次 backtest 烂时透传给 LLM 重写
 
     Returns: {'ok', 'signal_fn_name', 'signal_code', 'default_params', 'risk_params',
               'category', 'timeframe', 'rationale_zh', 'rationale_en'} or {'ok': False, 'error'}
@@ -68,6 +106,40 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
     archetype = market_brief.get('recommended_archetype')
     if archetype == 'wait' and hint != 'dry_spell':
         return {'ok': False, 'error': 'AI brief 判 wait, 不合成新策略'}
+
+    # 14k-57: few-shot examples 让 LLM 看 catalog 优秀 signal_fn 风格
+    few_shot_block = ''
+    examples = _get_few_shot_examples(target_timeframe=target_timeframe, max_n=3)
+    if examples:
+        ex_lines = []
+        for i, ex in enumerate(examples, 1):
+            ex_lines.append(f"### 例 {i}: {ex['candidate_type']} ({ex['timeframe']}, "
+                           f"verified OOS Sharpe {ex['verified_oos_sharpe']:.2f})")
+            if ex.get('description'):
+                ex_lines.append(f"思路: {ex['description'][:120]}")
+            ex_lines.append('```python')
+            # 截断过长 signal_code (LLM context 节省)
+            code = ex['signal_code'][:1200]
+            ex_lines.append(code)
+            ex_lines.append('```\n')
+        few_shot_block = ('\n## 优秀 signal_fn 参考 (catalog 验证 sharpe ≥ 1.5 的)\n'
+                          '**学这些风格的简洁度 + 信号严谨度, 不要发散瞎写**\n\n'
+                          + '\n'.join(ex_lines))
+
+    # 14k-57: retry 反馈 — 第一次 backtest 烂时把 metrics 给 LLM 重写
+    retry_block = ''
+    if prev_attempt_feedback:
+        f = prev_attempt_feedback
+        retry_block = (
+            f"\n## ⚠️ 你上一次写的策略回测不达标 (这是第 2 次尝试)\n"
+            f"- IS Sharpe: {f.get('is_sharpe', '?')}\n"
+            f"- OOS Sharpe: {f.get('oos_sharpe', '?')}\n"
+            f"- 总 trades: {f.get('total_trades', '?')}\n"
+            f"- 失败原因: {f.get('reason', '?')[:200]}\n"
+            f"**改进方向**: 看上面 few-shot 例子的简洁度, "
+            f"避免过拟合, 信号阈值要保守, 不要堆太多 indicator. "
+            f"重写一个完全不同思路的 signal_fn (不要小调上次代码).\n"
+        )
 
     hint_block = ''
     if hint:
@@ -97,13 +169,15 @@ def synthesize_strategy(market_brief: dict, symbol: str, balance: float,
 - 余额 / Balance: ${balance:.2f}
 - 目标 / Target: +{target_pct}% / {days_remaining} 天剩
 - 月化等价: {((1 + target_pct/100) ** (30.0/max(1, days_remaining)) - 1) * 100:.1f}%
-{hint_block}{tf_constraint}
+{hint_block}{tf_constraint}{retry_block}{few_shot_block}
+
 请合成一个**针对当前市场 + 用户目标的实时 signal_fn**, 输出 JSON.
 """
 
+    retry_marker = bool(prev_attempt_feedback)
     sig_key = hashlib.sha256(
         json.dumps([symbol, target_pct, days_remaining, archetype,
-                    market_brief.get('regime'), hint, target_timeframe],
+                    market_brief.get('regime'), hint, target_timeframe, retry_marker],
                    sort_keys=True).encode()
     ).hexdigest()[:20]
 
