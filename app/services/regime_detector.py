@@ -47,6 +47,37 @@ STRATEGY_AFFINITY = {
     'atr_breakout': 'breakout',
     'keltner_channel': 'breakout',
     'weekly_pivot': 'breakout',
+    # Phase 14k-44: catalog clone base types (剥 _uX_<ts> 后缀后的)
+    'cand_cat_adx_di_trend': 'trend_follower',
+    'cand_cat_ema_ribbon_gmma': 'trend_follower',
+    'cand_cat_macd_ema200': 'trend_follower',
+    'cand_cat_psar_flip': 'trend_follower',
+    'cand_cat_supertrend_atr': 'trend_follower',
+    'cand_cat_ichimoku_cloud_break': 'trend_follower',
+    'cand_cat_aroon_cross': 'trend_follower',
+    'cand_cat_roc_trend': 'trend_follower',
+    'cand_cat_rsi_momentum_trend': 'trend_follower',
+    'cand_cat_obv_trend_confirm': 'trend_follower',
+    'cand_cat_volume_spike_trend': 'trend_follower',
+    'cand_cat_heikin_ashi_ema': 'trend_follower',
+    'cand_cat_triple_screen_elder': 'trend_follower',
+    'cand_cat_donchian_turtle': 'trend_follower',
+    'cand_cat_atr_chandelier': 'trend_follower',
+    'cand_cat_cci_extremes': 'mean_reverter',
+    'cand_cat_rsi_bb_mean_rev': 'mean_reverter',
+    'cand_cat_stoch_rsi_extremes': 'mean_reverter',
+    'cand_cat_williams_r_reversal': 'mean_reverter',
+    'cand_cat_zscore_returns': 'mean_reverter',
+    'cand_cat_vwap_pullback': 'mean_reverter',
+    'cand_cat_macd_rsi_divergence': 'mean_reverter',
+    'cand_cat_pivot_classic_break': 'breakout',
+    'cand_cat_orb_opening_range': 'breakout',
+    'cand_cat_consolidation_vol_break': 'breakout',
+    'cand_cat_bb_squeeze_breakout': 'breakout',
+    'cand_cat_keltner_breakout': 'breakout',
+    'cand_cat_ttm_squeeze': 'breakout',
+    'cand_cat_bb_width_percentile': 'breakout',
+    'cand_cat_atr_vol_expansion': 'breakout',
 }
 
 # affinity x regime -> 'good' | 'ok' | 'bad'
@@ -143,7 +174,14 @@ def detect_regime(symbol: str = 'BTC/USDT', timeframe: str = '4h', limit: int = 
 
 
 def affinity_for(strategy_type: str) -> str | None:
-    return STRATEGY_AFFINITY.get(strategy_type)
+    """exact 优先, 否则剥 catalog clone 后缀 _uX_<timestamp> 再 lookup."""
+    aff = STRATEGY_AFFINITY.get(strategy_type)
+    if aff:
+        return aff
+    # Phase 14k-44: catalog clone type 剥后缀 (cand_cat_xxx_u1_20260526xxxxxx → cand_cat_xxx)
+    import re
+    base = re.sub(r'_u\d+_\d{12,16}$', '', strategy_type or '')
+    return STRATEGY_AFFINITY.get(base)
 
 
 def fit_label(strategy_type: str, regime: str) -> str:
