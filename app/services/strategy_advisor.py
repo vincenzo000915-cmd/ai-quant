@@ -882,16 +882,21 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
     }
 
 
-def _promote_eligible_count() -> int:
-    """14k-50/51: qualified 池里真能 promote 的数. 两条路径:
+def _promote_eligible_count(user_id: int | None = None) -> int:
+    """14k-50/51/54: qualified 池里真能 promote 的数. 两条路径:
     A. catalog / catalog_clone: 看 catalog_meta.verified_oos_sharpe (走 _maybe_auto_apply)
     B. synth / research / improve / github: 看 backtest_result_id walkforward_json out_sample
 
-    旧 14k-50 只看 B, 错认为 30 个 catalog clone 是死池.
-    实际 catalog clone 全有 verified_oos_sharpe, 真能 promote.
+    14k-54: 加 user_id scope — None=全局 (catalog 全局共享); user_id=N → catalog NULL + user N 私池
     """
     from app.models import StrategyCandidate, BacktestResult
-    qualified = StrategyCandidate.query.filter_by(status='qualified').all()
+    q = StrategyCandidate.query.filter_by(status='qualified')
+    if user_id is not None:
+        # catalog 全局 (user_id IS NULL) ∪ 该 user 自己的 individual
+        from sqlalchemy import or_
+        q = q.filter(or_(StrategyCandidate.user_id.is_(None),
+                         StrategyCandidate.user_id == user_id))
+    qualified = q.all()
     eligible = 0
     for c in qualified:
         # A. catalog 路径 — verified_oos_sharpe
@@ -938,16 +943,20 @@ def _system_dry_spell(user_id: int) -> tuple[bool, dict]:
                        'running_strategies': len(running_ids)}
 
 
-def _tf_coverage_gap() -> tuple[bool, dict, str | None]:
+def _tf_coverage_gap(user_id: int | None = None) -> tuple[bool, dict, str | None]:
     """14k-49 Trigger T3: TF 偏科 — 15m/30m qualified=0 但 4h qualified>5.
+    14k-54: 加 user_id scope (catalog NULL ∪ user 私池).
     返回 (triggered, info_dict, missing_tf).
     """
     from app.models import StrategyCandidate
+    from sqlalchemy import or_
     q_by_tf = {}
     for tf in ('15m', '30m', '1h', '4h', '1d'):
-        q_by_tf[tf] = StrategyCandidate.query.filter_by(
-            status='qualified', timeframe=tf
-        ).count()
+        q = StrategyCandidate.query.filter_by(status='qualified', timeframe=tf)
+        if user_id is not None:
+            q = q.filter(or_(StrategyCandidate.user_id.is_(None),
+                             StrategyCandidate.user_id == user_id))
+        q_by_tf[tf] = q.count()
     # 高频 TF 候选稀薄 + swing TF 充裕 → gap
     # (短 TF total < 3 算稀薄, 因为 scalp/reversion 风格多样, 1-2 个候选不够 AI 选)
     short_tf_total = q_by_tf['15m'] + q_by_tf['30m']
@@ -1022,9 +1031,8 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     if recent:
         return None
 
-    # 14k-50 fix: 看 promote-eligible (OOS≥1.5) 而非 qualified count
-    # 旧 bug: qualified 池 30 个但 promote-eligible 可能 0, AI 看 30 觉得满 → 不触发
-    eligible_pool = _promote_eligible_count()
+    # 14k-50/54: 看 promote-eligible (OOS≥1.5) 而非 qualified count + per-user scope
+    eligible_pool = _promote_eligible_count(user_id)
 
     # T1 (旧): lag + 真正可上线池薄 → catalog-first invent
     if target_ctx.get('lag_mode') and eligible_pool < INVENT_CANDIDATE_POOL_THRESHOLD:
@@ -1062,7 +1070,7 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
         }
 
     # T3 tf_gap — 高频 TF 候选空 + swing TF 充裕 → synth 指定 TF
-    tf_triggered, tf_info, missing_tf = _tf_coverage_gap()
+    tf_triggered, tf_info, missing_tf = _tf_coverage_gap(user_id)
     if tf_triggered:
         return {
             'action': 'invent_new_strategy',

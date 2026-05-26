@@ -854,10 +854,15 @@ class StrategyCandidate(db.Model):
     llm_notes = db.Column(db.Text)                           # LLM 對策略邏輯的說明
     llm_model = db.Column(db.String(50))                     # 用哪個 model 翻的
 
-    # Pipeline 狀態
+    # Pipeline 狀態 (14k-51 加 stale_qualified / archived; 14k-52 dismissed/error 老定义)
     status = db.Column(db.String(20), default='pending', index=True)
-    # pending / translating / translated / backtesting / qualified / rejected / promoted / error
+    # pending / translating / translated / backtesting / qualified / stale_qualified
+    # / archived / dismissed / promoted / error
     error_log = db.Column(db.Text)
+
+    # 14k-54: user_id — multi-user SaaS scope. catalog 模板 user_id=NULL (全局共享)
+    # 其它 (synth/research/improve/catalog_clone/manual/github) 必有 user_id
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
 
     # Phase 14: Vetted catalog metadata (when source='catalog')
     catalog_meta = db.Column(db.JSON, default={})

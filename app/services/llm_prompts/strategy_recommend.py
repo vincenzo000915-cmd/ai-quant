@@ -365,6 +365,7 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
     cloned_type = f'{entry.candidate_type}_u{user_id}_{timestamp}'
     display_name = cm.get('display_name') or prettify_candidate_type(entry.candidate_type)
     clone = StrategyCandidate(
+        user_id=user_id,    # 14k-54: per-user scope (catalog 主模板 user_id=NULL 全局)
         source='catalog_clone',
         source_url=entry.source_url,
         source_name=f'AI 推荐 · {display_name}',

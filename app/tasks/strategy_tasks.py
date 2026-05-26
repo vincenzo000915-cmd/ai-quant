@@ -2235,6 +2235,7 @@ def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None,
 
     # 写 candidate (走现有 backtest 链路)
     cand = StrategyCandidate(
+        user_id=user_id,    # 14k-54: per-user scope
         source='synth',
         source_url=None,
         source_name=f"AI 合成 · {r.get('rationale_zh', '')[:50]}",
@@ -2410,7 +2411,9 @@ def advisor_invent_strategy(user_id: int = 1):
 
 @celery_app.task(name='app.tasks.strategy_tasks.cleanup_stale_candidates')
 def cleanup_stale_candidates():
-    """14k-51: 阶梯归档无用 individual qualified candidates, 防止累积拖后 AI 判断.
+    """14k-51/53/54: 阶梯归档无用 individual qualified candidates, 防止累积拖后 AI 判断.
+
+    14k-54: per-user scope — catalog 模板 (user_id=NULL) 全局共享不清; 其它按 user 维度归档.
 
     Scope: source IN ('synth', 'research', 'improve', 'github') — individual backtest 出来的
     NOT 包括: catalog / catalog_clone (它们走 _maybe_auto_apply 用 verified_oos_sharpe, 不死池)
