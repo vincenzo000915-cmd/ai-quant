@@ -122,7 +122,12 @@ def check_signal_cycle_15m() -> dict:
 
 
 def check_ai_improve_recent() -> dict:
-    """3. Daily AI improve cron 25h 内有 done 或 skipped event"""
+    """3. Daily AI improve cron 25h 内有 done 或 skipped event.
+
+    Phase 14k-35 修: actor 从 'auto:%ai_improve%' 放宽 — Phase 14 后 task actor 改成
+    'auto:daily_recommend' 没含 ai_improve 子串, 导致一直 false positive.
+    改用 event_type IN (那些 event 本身就是 ai_improve namespace).
+    """
     t = t0()
     rc, out = psql("""
         SELECT COALESCE(MAX(created_at)::text, 'never'),
@@ -130,7 +135,8 @@ def check_ai_improve_recent() -> dict:
                COUNT(*) FILTER (WHERE event_type='auto_ai_improve_skipped'),
                COUNT(*) FILTER (WHERE event_type='auto_ai_improve_error')
         FROM audit_log
-        WHERE actor LIKE 'auto:%ai_improve%' AND created_at > NOW() - INTERVAL '25 hours'
+        WHERE event_type IN ('auto_ai_improve_done', 'auto_ai_improve_skipped', 'auto_ai_improve_error')
+          AND created_at > NOW() - INTERVAL '25 hours'
     """)
     if rc != 0:
         return {'status': WARN, 'detail': 'pg query fail', 'latency_ms': ms(t)}
