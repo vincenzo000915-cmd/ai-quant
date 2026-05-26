@@ -17,6 +17,8 @@ DEFAULTS = {
     'capital_usdt': 100.0,
     'leverage': 15.0,
     'trade_size_usdt': 10.0,
+    # 14k-47 deprecated 全局 SL/TP — 实际走 backtest_engine.TF_DEFAULT_SL_TP (15m:1%, 4h:5%, ...)
+    # 这俩字段保留作 paranoid fallback (TF-aware 失败时), 不应直接消费. 见 feedback_problem_triage.
     'stop_loss_pct': 5.0,
     'take_profit_pct': 8.0,
     'max_daily_loss_usdt': 10.0,

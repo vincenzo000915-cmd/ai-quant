@@ -17,14 +17,20 @@ from app.services.user_scope import apply_user_filter, scoped_query
 SYSTEM_PROMPT = """你是专业量化风控顾问。User 给你账户状况，请输出**严格 JSON**
 （不要 markdown 包围，直接 JSON 物件）— 不要解释，只 JSON。
 
+⚠️ 14k-47 规则更新：SL/TP **per-strategy 自动按 timeframe 决定**:
+  15m: SL 1.0%/TP 2.0%  ·  30m: SL 1.5%/TP 3.0%  ·  1h: SL 2.5%/TP 5.0%
+  4h:  SL 5.0%/TP 8.0%   ·  1d: SL 10%/TP 18%
+你出的 stop_loss_pct/take_profit_pct **只作账户级最后 fallback**（罕用），
+不是 per-strategy 推荐 — 实际策略 SL/TP 走 backtest_engine.resolve_default_sl_tp。
+
 输出 schema（所有字段必填）：
 {
   "trade_size_usdt": 数字，每笔下单本金。原则：账户余额 < $100 用 4，$100-$500 用 8-15，$500+ 用 20-40
   "leverage": 数字 1-20。原则：余额小 / 策略多 / 最近虧 → 降；余额大 / 策略少 / 最近赚 → 升
-  "stop_loss_pct": 数字 1-15。原则：杠杆越大 SL 越紧（lev 15 → SL 3-5%），杠杆 5x 可以 7-10
-  "take_profit_pct": 数字 2-30。原则：SL 的 1.5-3 倍
+  "stop_loss_pct": 数字 1-15。**账户级 fallback 而已**, 保守值 5 (4h 默认)
+  "take_profit_pct": 数字 2-30。**账户级 fallback 而已**, 保守值 8 (4h 默认)
   "max_daily_loss_usdt": 数字。原则：余额的 5-10%。$75 余额 → $5-7
-  "rationale": 一段中文（100 字内）说明这套参数的逻辑
+  "rationale": 一段中文（100 字内）说明这套参数的逻辑（重点 lev/size/daily_loss, 不是 SL/TP）
 }
 
 约束：
@@ -88,11 +94,17 @@ def recommend_sizing(user_id: int, account_info: dict) -> dict:
         if not spec:
             return {'ok': False, 'error': 'LLM 输出无法解析为 JSON', 'raw': r['text'][:300]}
 
-        # 验证字段
-        required = {'trade_size_usdt', 'leverage', 'stop_loss_pct', 'take_profit_pct', 'max_daily_loss_usdt', 'rationale'}
+        # 验证字段 — 14k-47: stop_loss_pct/take_profit_pct 改成可选 (per-strategy TF-aware 主导)
+        required = {'trade_size_usdt', 'leverage', 'max_daily_loss_usdt', 'rationale'}
         missing = required - set(spec.keys())
         if missing:
             return {'ok': False, 'error': f'LLM 输出缺字段: {sorted(missing)}', 'spec': spec}
+
+        # 14k-47: SL/TP 没出 → 用 4h 业界保守值作 fallback (反正只在 strategy.params 和 TF-aware 都没的情况下用)
+        if 'stop_loss_pct' not in spec:
+            spec['stop_loss_pct'] = 5.0
+        if 'take_profit_pct' not in spec:
+            spec['take_profit_pct'] = 8.0
 
         # 数字 sanity check
         for k in ['trade_size_usdt', 'leverage', 'stop_loss_pct', 'take_profit_pct', 'max_daily_loss_usdt']:

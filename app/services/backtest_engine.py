@@ -13,6 +13,23 @@ import numpy as np
 from app.services.strategy_engine import get_signal, get_candle_df
 
 
+# Phase 14k-47: timeframe-aware 默认 SL/TP (业界标准)
+# 旧版 hardcode 5%/8% 不分 TF 导致 15m/30m scalp 被 SL 5% 吃光 → Sharpe -10 全 not qualified
+# → AI 永远不 promote 高频策略 → user 入场频率被卡死. Root cause of "两天没入场".
+TF_DEFAULT_SL_TP = {
+    '15m': (1.0, 2.0),
+    '30m': (1.5, 3.0),
+    '1h':  (2.5, 5.0),
+    '4h':  (5.0, 8.0),    # 旧默认, 4h swing 合理
+    '1d':  (10.0, 18.0),
+}
+
+
+def resolve_default_sl_tp(timeframe: str) -> tuple[float, float]:
+    """按 timeframe 返回业界标准 SL/TP. 未知 TF fallback 5%/8% (4h 老默认)."""
+    return TF_DEFAULT_SL_TP.get(timeframe or '4h', (5.0, 8.0))
+
+
 def _calc_drawdown(equity_series):
     """計算最大回撤（金額 + 百分比）"""
     if not equity_series:
@@ -153,8 +170,8 @@ def run_backtest(
     timeframe: str = '4h',
     leverage: float = 15.0,
     position_size_usdt: float = 10.0,
-    stop_loss_pct: float = 5.0,
-    take_profit_pct: float = 8.0,
+    stop_loss_pct: float | None = None,    # 14k-47: None → TF-aware default
+    take_profit_pct: float | None = None,  # 14k-47: None → TF-aware default
     initial_capital: float = 100.0,
     fee_pct: float = 0.05,         # taker per side; OKX=0.05% / HL=0.035% (Phase 14k-10)
     slippage_pct: float = 0.05,    # 市價單估算滑點 per fill (Phase 9.5)
@@ -170,6 +187,14 @@ def run_backtest(
     回傳: 詳細統計 + equity curve + trades 列表
     """
     t_start = time.time()
+
+    # Phase 14k-47: TF-aware 默认 SL/TP (root cause of 15m/30m candidates 全 not qualified)
+    if stop_loss_pct is None or take_profit_pct is None:
+        _sl, _tp = resolve_default_sl_tp(timeframe)
+        if stop_loss_pct is None:
+            stop_loss_pct = _sl
+        if take_profit_pct is None:
+            take_profit_pct = _tp
 
     # Phase 14k-10: 按 exchange 调整 fee (caller 未显式传时)
     # HL taker 0.035% vs OKX 0.05%; HL maker 0.01% vs OKX 0.02%

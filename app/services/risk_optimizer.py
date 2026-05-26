@@ -5,13 +5,26 @@
 
 跑一次 walk-forward 找 OOS Sharpe + DD 最优组合, 过门槛就 apply.
 评分: Sharpe - DD/20 (DD 30% → -1.5; DD 10% → -0.5; 鼓励高 Sharpe + 低 DD).
+
+14k-47: grid 按 TF 分级 — 15m scalp grid 3-10% 太宽永远 not qualified
+(scalp 该 SL 0.5-2%). 跟 backtest_engine.TF_DEFAULT_SL_TP 对齐.
 """
 from __future__ import annotations
 
-DEFAULT_RISK_GRID = {
-    'sl_pct': [3, 5, 7, 10],
-    'tp_pct': [6, 10, 15, 20],
+# 14k-47: TF-aware risk grid (业界标准 scalp ↔ swing ↔ position 不同范围)
+TF_RISK_GRIDS = {
+    '15m': {'sl_pct': [0.5, 1.0, 1.5, 2.5], 'tp_pct': [1.0, 2.0, 3.0, 5.0]},
+    '30m': {'sl_pct': [0.8, 1.5, 2.5, 4.0], 'tp_pct': [1.5, 3.0, 5.0, 8.0]},
+    '1h':  {'sl_pct': [1.5, 2.5, 4.0, 6.0], 'tp_pct': [3.0, 5.0, 8.0, 12.0]},
+    '4h':  {'sl_pct': [3, 5, 7, 10],        'tp_pct': [6, 10, 15, 20]},   # 旧默认
+    '1d':  {'sl_pct': [5, 10, 15, 20],      'tp_pct': [10, 18, 28, 40]},
 }
+DEFAULT_RISK_GRID = TF_RISK_GRIDS['4h']    # 向后兼容: 默认仍是 4h
+
+
+def grid_for_tf(timeframe: str) -> dict:
+    """按 timeframe 返回 risk grid. 未知 TF fallback 4h."""
+    return TF_RISK_GRIDS.get(timeframe or '4h', TF_RISK_GRIDS['4h'])
 MIN_TP_OVER_SL = 1.2     # TP 至少是 SL 的 1.2 倍 (R:R 守门)
 LIFT_THRESHOLD = 0.3     # best score 比 baseline 提升 ≥ 0.3 才 apply
 MIN_OOS_SHARPE = 0.5     # apply 后的 OOS Sharpe 至少要 ≥ 0.5
@@ -19,11 +32,14 @@ MIN_TRADES = 5           # 候选组合 OOS trades < 5 直接 -999 (不可信)
 
 
 def optimize_risk_params(strategy, grid: dict | None = None) -> dict:
-    """跑 SL/TP grid walk-forward, 返回 baseline + best 候选 + 全部 scored 候选."""
+    """跑 SL/TP grid walk-forward, 返回 baseline + best 候选 + 全部 scored 候选.
+
+    14k-47: grid 自动按 strategy.timeframe (15m 用 0.5-2.5%, 4h 用 3-10%).
+    """
     from app.services.backtest_engine import run_walkforward_backtest
     from app.services.exchange_service import fetch_ohlcv_history
 
-    grid = grid or DEFAULT_RISK_GRID
+    grid = grid or grid_for_tf(strategy.timeframe)
 
     candles = fetch_ohlcv_history(strategy.symbol, strategy.timeframe, total_limit=2000)
     if not candles or len(candles) < 200:

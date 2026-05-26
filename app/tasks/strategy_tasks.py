@@ -258,15 +258,19 @@ def _run_signals(strategy_id=None, category_filter=None):
     mode = cfg.get('trading_mode', 'paper')
 
     def _resolve_risk(s):
-        """Phase 12.42 v8 + 13 + 14d + 14e: per-strategy risk_params override
+        """Phase 12.42 v8 + 13 + 14d + 14e + 14k-47: per-strategy risk_params override
         14e: 同时接受 sl_pct/tp_pct (catalog 简写) 和 stop_loss_pct/take_profit_pct (v8) — alias 修
+        14k-47: SL/TP fallback 三级 — strategy.params > TF-aware > cfg 全局
+        (旧版只到 cfg 5%/8%, 15m scalp 错配 SL 5% 一震荡就爆)
         """
+        from app.services.backtest_engine import resolve_default_sl_tp
+        tf_sl, tf_tp = resolve_default_sl_tp(s.timeframe)
         rp = (s.params or {}).get('risk_params') or {}
         return (
             rp.get('position_size_usdt') or trade_size_default,
             rp.get('leverage') or lev_default,
-            rp.get('stop_loss_pct') or rp.get('sl_pct') or sl_pct_default,
-            rp.get('take_profit_pct') or rp.get('tp_pct') or tp_pct_default,
+            rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or sl_pct_default,
+            rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or tp_pct_default,
             rp.get('order_type') or 'market',
         )
 
@@ -551,14 +555,17 @@ def check_stop_loss():
             ticker = get_ticker(pos.symbol)
             current = ticker['price']
             # 拉对应 strategy 的 leverage/SL/TP override
+            # 14k-47: SL/TP fallback 三级 — strategy.params > TF-aware > cfg
             lev, sl_pct, tp_pct = cfg_lev, cfg_sl_pct, cfg_tp_pct
             if pos.strategy_id:
                 strat = Strategy.query.get(pos.strategy_id)
                 if strat:
+                    from app.services.backtest_engine import resolve_default_sl_tp
+                    tf_sl, tf_tp = resolve_default_sl_tp(strat.timeframe)
                     rp = (strat.params or {}).get('risk_params') or {}
                     lev = rp.get('leverage') or cfg_lev
-                    sl_pct = rp.get('stop_loss_pct') or rp.get('sl_pct') or cfg_sl_pct
-                    tp_pct = rp.get('take_profit_pct') or rp.get('tp_pct') or cfg_tp_pct
+                    sl_pct = rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or cfg_sl_pct
+                    tp_pct = rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or cfg_tp_pct
             pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
             close_side = 'buy' if pos.side == 'short' else 'sell'
 

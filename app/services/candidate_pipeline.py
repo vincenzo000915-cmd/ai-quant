@@ -202,6 +202,9 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
 
     # 寫 BacktestResult — strategy_id=NULL 表示候選回測（未 promote），
     # 由 strategy_candidates.backtest_result_id 反向關聯。
+    # 14k-47: TF-aware 默认 SL/TP — 15m scalp 用 1%/2% 不再被 5%/8% 错杀
+    from app.services.backtest_engine import resolve_default_sl_tp
+    _bt_sl, _bt_tp = resolve_default_sl_tp(timeframe)
     bt = BacktestResult(
         strategy_id=None,
         strategy_type=c.candidate_type or 'candidate',
@@ -210,8 +213,8 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         timeframe=timeframe,
         leverage=15.0,
         position_size_usdt=10.0,
-        stop_loss_pct=5.0,
-        take_profit_pct=8.0,
+        stop_loss_pct=_bt_sl,
+        take_profit_pct=_bt_tp,
         initial_capital=100.0,
         period_start=result['period_start'],
         period_end=result['period_end'],
