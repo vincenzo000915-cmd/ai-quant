@@ -277,8 +277,20 @@ def place_order_live(
         cloid=None,      # SDK 内部生成
     )
 
+    # Phase 14k-85: 真校验订单成交, 不只看 outer status
+    # HL response: outer status='ok' = 请求合法, 实际 fill/reject 在 statuses[0]
+    #   {filled: {oid, totalSz, avgPx}} = 成交 (我们要的)
+    #   {error: "Insufficient margin / Min size / ..."} = REJECTED (但 outer 仍 'ok')
+    #   {resting: {oid}} = limit order pending (market 单不该出)
+    # 之前 bug: 只看 outer ok=True → 本地写 Position → HL 上没仓 → reconcile 误关
+    outer_ok = res.get('status') == 'ok'
+    statuses = (res.get('response') or {}).get('data', {}).get('statuses') or []
+    first_status = statuses[0] if statuses else {}
+    filled_ok = 'filled' in first_status
+    reject_error = first_status.get('error') if isinstance(first_status, dict) else None
+
     return {
-        'ok': res.get('status') == 'ok',
+        'ok': bool(outer_ok and filled_ok),
         'raw': res,
         'symbol': symbol, 'base': base,
         'side': 'long' if is_buy else 'short',
@@ -286,6 +298,10 @@ def place_order_live(
         'notional_usdt': round(notional, 2),
         'leverage': leverage,
         'exchange': 'hyperliquid',
+        'reject_reason': reject_error,    # 14k-85: caller 可看具体被拒原因
+        'status_kind': ('filled' if filled_ok else
+                        ('rejected' if reject_error else
+                         ('resting' if 'resting' in first_status else 'unknown'))),
     }
 
 

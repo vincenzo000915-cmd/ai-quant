@@ -113,9 +113,16 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                     print(f'[HL] order_type={order_type} 暂不支持, 降级 market')
                 hl_res = hl_place(symbol, side, amount_usdt, leverage=leverage, creds=user_creds)
                 if not hl_res.get('ok'):
+                    # Phase 14k-85: 真校验 ok = outer status + statuses[0].filled 都通过
+                    # reject_reason 来自 HL inner statuses[0].error (Insufficient margin / Min size 等)
                     from app.services.telegram_service import send
-                    send(f'🔴 <b>HL order FAILED</b>\n{symbol} {side} ${amount_usdt}\n{hl_res.get("raw")}',
-                         event_key='hl_order_error')
+                    kind = hl_res.get('status_kind', 'unknown')
+                    reject = hl_res.get('reject_reason') or '未知错误'
+                    print(f'[HL place_order] {symbol} {side} ${amount_usdt}: kind={kind} reject={reject}')
+                    send(f'🔴 <b>HL 下单失败 · Order Failed</b>\n'
+                         f'{symbol} {side} ${amount_usdt}\n'
+                         f'原因 / Reason: {reject[:200]}',
+                         event_key=f'hl_order_error_{symbol}_{kind}')
                     return None
                 raw = hl_res.get('raw') or {}
                 response_data = (raw.get('response', {}).get('data', {}).get('statuses') or [{}])[0]
