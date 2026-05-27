@@ -48,6 +48,42 @@ GRACE_DAYS_BY_TF = {
 }
 DEFAULT_GRACE_DAYS = 7
 
+# Phase 14k-97: EV gate 阈值 (跟 candidate_pipeline QUALIFIED_TF_GATES 同步)
+# advisor propose 层之前只看 Sharpe, 违反 [[feedback-backtest-is-truth]] 用户哲学
+# "追盈利率不追胜率" — Sharpe 高但每 trade EV 负 = trading 小利大损 = 实际亏
+MIN_EV_PCT_BY_TF = {
+    '15m': 0.2, '30m': 0.3, '1h': 0.4, '2h': 0.5,
+    '4h': 0.6, '6h': 0.8, '8h': 0.9, '12h': 0.9,
+    '1d': 1.0, '3d': 1.5, '1w': 2.0,
+}
+
+
+def _min_ev_for_tf(timeframe: str | None) -> float:
+    return MIN_EV_PCT_BY_TF.get(timeframe or '4h', 0.5)
+
+
+def _compute_ev_pct(bt) -> float | None:
+    """从 BacktestResult 算 EV/trade %, None if 样本不够"""
+    if not bt or not bt.total_trades or bt.total_trades < 3:
+        return None
+    capital = bt.initial_capital or 100.0
+    if capital <= 0:
+        return None
+    return float(bt.total_pnl or 0) / float(bt.total_trades) / float(capital) * 100
+
+
+def _compute_oos_ev_pct(wf_json: dict) -> float | None:
+    """从 walkforward_json 算 OOS EV/trade %, None if 样本不够"""
+    oos = (wf_json or {}).get('out_sample') or {}
+    trades = oos.get('total_trades') or 0
+    if trades < 3:
+        return None
+    capital = oos.get('initial_capital') or 100.0
+    if capital <= 0:
+        return None
+    return float(oos.get('total_pnl') or 0) / float(trades) / float(capital) * 100
+
+
 def _grace_days(timeframe: str | None) -> int:
     return GRACE_DAYS_BY_TF.get(timeframe or '4h', DEFAULT_GRACE_DAYS)
 
@@ -308,21 +344,32 @@ def build_recommendations(user_id: int = 1) -> dict:
         # 幂等：當前 strategy.params 已經是 best 就不再建議
         current_params = dict(s.params or {})
         if best >= 1.0 and beats_baseline and opt.best_params != current_params:
+            # Phase 14k-97: 加 EV 双轨 — Sharpe lift 高但 EV/trade 负也不推 (追盈利率不追胜率)
+            # 用当前 bt EV 作 baseline proxy (新 params 真 EV 在 executor 二次确认)
+            current_bt = _latest_backtest(s.id)
+            cur_ev_pct = _compute_ev_pct(current_bt) if current_bt else None
+            tf_min_ev = _min_ev_for_tf(s.timeframe)
+            # 14k-97 双轨: Sharpe 路 (现状) AND best > 1.0; OR 当前 EV 健康 (≥ TF gate)
+            sharpe_path_ok = best >= 1.5   # 提高门槛 (单 sharpe 路要更高)
+            ev_path_ok = cur_ev_pct is not None and cur_ev_pct >= tf_min_ev
+            if not (sharpe_path_ok or ev_path_ok):
+                continue   # 14k-97: Sharpe 不够高 AND 当前 EV 不健康 → 不推 apply_params
             lift_str = f'+{(best - baseline):.2f}' if baseline is not None else f'從無 Sharpe → {best:.2f}'
+            ev_note = f' · 当前 EV {cur_ev_pct:+.2f}%/trade' if cur_ev_pct is not None else ''
             items.append({
                 'action': 'apply_params',
                 'strategy_id': s.id,
                 'strategy_name': s.name,
                 'severity': 'info',
                 'reason': (
-                    f'最近一次參數網格搜尋發現更佳組合：{opt.best_params} → OOS Sharpe = {best:.2f} '
-                    f'({lift_str})。基線是 {baseline if baseline is not None else "無"}。'
+                    f'參數網格搜尋發現更佳組合：OOS Sharpe = {best:.2f} ({lift_str}){ev_note}'
                 ),
                 'meta': {
                     'optimization_id': opt.id,
                     'best_params': opt.best_params,
                     'best_oos_sharpe': best,
                     'baseline_oos_sharpe': baseline,
+                    'current_ev_pct': cur_ev_pct,
                 },
             })
 
@@ -361,6 +408,15 @@ def build_recommendations(user_id: int = 1) -> dict:
         # check: backtest 太老 → 數據過時不該基於此推 fan_out
         if bt.created_at and bt.created_at < fanout_age_cutoff:
             continue
+        # Phase 14k-97: 加 EV 双轨 — Sharpe 好但 EV 负 = 频繁亏小利 = 不该 fan_out 多市
+        ev_pct = _compute_ev_pct(bt)
+        tf_min_ev = _min_ev_for_tf(s.timeframe)
+        # fan_out 是扩张行为, 比 apply_params 更要求严
+        sharpe_path_ok = bt.sharpe_ratio >= fan_out_min   # 原门槛
+        ev_path_ok = ev_pct is not None and ev_pct >= tf_min_ev
+        if not (sharpe_path_ok and (ev_path_ok or ev_pct is None)):
+            # sharpe 过 BUT EV 计算有了但负 → 不推 (扩张 EV 负策略 = 扩大亏损)
+            continue
         # 無 template_group 或 group 只有自己
         if s.template_group is None or s.template_group == s.id:
             siblings = Strategy.query.filter(
@@ -368,14 +424,15 @@ def build_recommendations(user_id: int = 1) -> dict:
                 Strategy.id != s.id,
             ).count()
             if siblings == 0:
+                ev_note = f' · EV {ev_pct:+.2f}%/trade' if ev_pct is not None else ''
                 items.append({
                     'action': 'fan_out',
                     'strategy_id': s.id,
                     'strategy_name': s.name,
                     'severity': 'info',
                     'reason': (
-                        f'Sharpe {bt.sharpe_ratio:.2f} 表現良好但只跑 {s.symbol}。考慮一鍵 fan-out 到 ETH/SOL/AVAX '
-                        f'等其他幣種分散單一資產風險。'
+                        f'Sharpe {bt.sharpe_ratio:.2f}{ev_note} 表現良好但只跑 {s.symbol}。'
+                        f'考慮一鍵 fan-out 到 ETH/SOL/AVAX 等其他幣種分散單一資產風險。'
                     ),
                     'meta': {'current_symbol': s.symbol, 'sharpe': bt.sharpe_ratio},
                 })
@@ -406,7 +463,16 @@ def build_recommendations(user_id: int = 1) -> dict:
         if oos is None:
             continue
         # check: OOS Sharpe 必須過 promote 門檻（跟 executor / auto_promote_min_oos_sharpe 同步）
-        if oos < PROMOTE_MIN_OOS_SHARPE:
+        # Phase 14k-97: 加 EV 双轨制 — 14k-67 用户哲学 "追盈利率不追胜率"
+        # 之前: 只 Sharpe ≥ 1.5 就推 → 但 EV 可能负 → 上线就亏
+        # 现在: (Sharpe ≥ 1.5) OR (EV ≥ TF-specific gate) 双轨任一过
+        # 双轨都不过 → 不推 (跟 backtest_candidate qualified gate 一致)
+        # 注: 此处 wf 已是 walkforward_json['out_sample'], 直接 compute
+        oos_ev = _compute_oos_ev_pct({'out_sample': wf}) if isinstance(wf, dict) else None
+        tf_min_ev = _min_ev_for_tf(c.timeframe)
+        sharpe_ok = oos >= PROMOTE_MIN_OOS_SHARPE
+        ev_ok = oos_ev is not None and oos_ev >= tf_min_ev
+        if not (sharpe_ok or ev_ok):
             continue
         # Phase 14k-18: target_symbol 优先从 candidate.source_meta.symbol 拿
         # (catalog clone 自带), 没的话用候选自己回测的 symbol, 兜底 BTC/USDT
