@@ -307,22 +307,44 @@ def check_running_strategies() -> dict:
 
 # Phase 14k-45 L1: AI 市场分析活跃
 def check_market_brief_recent() -> dict:
-    """近 30min 内有 market_brief_prewarmed audit (确保 prewarm task 在跑)."""
+    """检查 AI 市场分析 brief 是否在生成.
+
+    Phase 14k-83: 不再依赖 prewarm_market_brief task event_type
+    - 14k-79 临时禁了 prewarm beat schedule (claude CLI 调用太慢, 防 CPU 雪崩)
+    - advisor lazy 调用 analyze_market 时 cache 命中或写 Redis cache
+    - 改看 Redis cache:market_brief:* keys (任何 brief 生成都会写)
+    """
     t = t0()
+    # 1) 先尝试 Redis cache (新口径)
+    rc, out, err = run_cmd(
+        ['docker', 'exec', 'quant-redis-1', 'redis-cli', '-n', '2',
+         '--scan', '--pattern', 'cache:market_brief:*'],
+        timeout=8,
+    )
+    if rc == 0:
+        keys = [k for k in out.strip().split('\n') if k]
+        if keys:
+            return {'status': OK,
+                    'detail': f'cache 中有 {len(keys)} 个 market_brief 条目 (advisor lazy 触发)',
+                    'latency_ms': ms(t)}
+    # 2) Redis fail 或无 key → 退而看 audit_log 24h (放宽 30min → 24h, 反映 prewarm 已禁)
     rc, out = psql("""
         SELECT COUNT(*), COALESCE(MAX(created_at)::text, 'none')
-        FROM audit_log WHERE event_type='market_brief_prewarmed' AND created_at > NOW() - INTERVAL '30 minutes'
+        FROM audit_log WHERE event_type='market_brief_prewarmed' AND created_at > NOW() - INTERVAL '24 hours'
     """)
-    if rc != 0: return {'status': WARN, 'detail': '数据库查询失败', 'latency_ms': ms(t)}
+    if rc != 0:
+        return {'status': WARN, 'detail': 'Redis + DB 都查不到 brief 状态', 'latency_ms': ms(t)}
     try:
         count, last = out.strip().split('|', 1)
         count = int(count)
     except Exception as e:
         return {'status': WARN, 'detail': f'解析失败: {e}', 'latency_ms': ms(t)}
     if count == 0:
-        return {'status': FAIL, 'detail': '近 30 分钟没有 AI 市场分析活动（prewarm task 可能挂了）',
-                'latency_ms': ms(t), 'autofix_hint': '重启 celery-worker/beat'}
-    return {'status': OK, 'detail': f'近 30 分钟 prewarm 跑了 {count} 次, 最近 {last[:19]}', 'latency_ms': ms(t)}
+        # advisor 1h 跑一次, 24h 完全没动才算真挂
+        return {'status': WARN, 'detail': '近 24 小时无 AI brief 活动 (advisor 可能没跑)',
+                'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'近 24h advisor 触发 brief {count} 次, 最近 {last[:19]}',
+            'latency_ms': ms(t)}
 
 
 # Phase 14k-45 L2: 信号 watcher 健康
