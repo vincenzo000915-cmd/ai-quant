@@ -531,7 +531,7 @@ def run_auto_apply() -> dict:
                 lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")
             if async_dispatched:
                 lines.append(f'\n另派 {len(async_dispatched)} 项重测任务, 跑完通过门槛才会上线 (no_lift 时静默不打扰)')
-            if already_today + len(applied) >= daily_cap:
+            if already_today + mutating_applied >= daily_cap:
                 lines.append(f'今日已达上限 {daily_cap} 项, 剩下时间不会再自动操作.')
             _telegram_safe('\n'.join(lines))
         # else: 全是 async dispatch, 不发 TG (等任务跑完独立通知)
@@ -542,6 +542,6 @@ def run_auto_apply() -> dict:
         'applied': applied,
         'skipped_items': skipped,
         'today_count_before': already_today,
-        'today_count_after': already_today + len(applied),
+        'today_count_after': already_today + mutating_applied,
         'daily_cap': daily_cap,
     }
