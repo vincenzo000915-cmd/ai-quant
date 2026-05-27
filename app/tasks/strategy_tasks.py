@@ -2187,6 +2187,12 @@ def optimize_risk_and_apply(self, strategy_id: int):
     if s.status != 'running':
         return f'strategy {strategy_id} status={s.status}, skip'
 
+    # Phase 14k-92: 长跑前显式 commit 释放 implicit transaction
+    # optimize_risk_params 跑 walk-forward 多 split, 5-15 min CPU 重
+    # 之前 audit('risk_opt_no_lift') failed: server closed connection
+    # 同 14k-84 模式: SELECT strategy 后 idle in transaction → PG 5min autokill
+    db.session.commit()
+
     try:
         r = optimize_risk_params(s)
     except Exception as e:
