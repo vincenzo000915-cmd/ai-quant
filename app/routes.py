@@ -466,9 +466,18 @@ def get_regime():
 @api_bp.route('/regime/running', methods=['GET'])
 @cached_response('regime_running', ttl=120)
 def regime_for_running():
-    """Phase 10.3: regime per distinct (symbol,timeframe) used by running strategies,
-    plus per-strategy affinity fit."""
+    """Phase 10.3 + 14k-98: regime per (symbol,tf) + per-strategy affinity fit + EV.
+
+    Phase 14k-98: 加 ev_pct + ev_health 双维度
+      之前: fit='bad' 红色 "不匹配" 完全按教科书 affinity, 不看真实盈利
+      问题: 真在赚钱的 mean_reverter 在 strong_trend 仍被标 "不匹配"
+            违反 [[feedback-backtest-is-truth]] + 14k-67 追盈利率哲学
+      现在: 同步返 real EV, frontend 可显双状态:
+            fit=bad + EV 健康 → 蓝色 "数据胜过理论"
+            fit=good + EV 负 → 黄色 "理论好但实际亏"
+    """
     from app.services.regime_detector import detect_regime, affinity_for, fit_label
+    from app.services.strategy_advisor import _compute_ev_pct, _min_ev_for_tf, _latest_backtest
 
     running = scoped_query(Strategy).filter(Strategy.status == 'running').all()
 
@@ -482,6 +491,19 @@ def regime_for_running():
     per_strategy = []
     for s in running:
         r = regimes.get(f'{s.symbol}@{s.timeframe}', {})
+        # 14k-98: 真实 EV 从 latest backtest 算
+        bt = _latest_backtest(s.id)
+        ev_pct = _compute_ev_pct(bt) if bt else None
+        tf_min_ev = _min_ev_for_tf(s.timeframe)
+        # ev_health: healthy / weak / negative / unknown
+        if ev_pct is None:
+            ev_health = 'unknown'
+        elif ev_pct >= tf_min_ev:
+            ev_health = 'healthy'
+        elif ev_pct >= 0:
+            ev_health = 'weak'
+        else:
+            ev_health = 'negative'
         per_strategy.append({
             'strategy_id': s.id,
             'name': s.name,
@@ -491,6 +513,10 @@ def regime_for_running():
             'affinity': affinity_for(s.type),
             'regime': r.get('regime'),
             'fit': fit_label(s.type, r.get('regime', 'unknown')),
+            # 14k-98 新字段
+            'ev_pct': round(ev_pct, 3) if ev_pct is not None else None,
+            'ev_health': ev_health,
+            'ev_threshold_pct': tf_min_ev,
         })
 
     return jsonify({

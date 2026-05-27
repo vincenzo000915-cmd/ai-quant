@@ -22,6 +22,32 @@ const FIT_META = {
   unknown: { label: '—',     color: '#64748b' },
 };
 
+// Phase 14k-98: 双维度 (理论 fit × 实际 EV) 综合判断
+// data 胜过理论: fit=bad 但 EV 健康 → 蓝色 (不该报警让 user pause 真在赚的策略)
+function combinedFitMeta(fit, evHealth) {
+  if (fit === 'bad' && evHealth === 'healthy') {
+    return { label: '数据胜理论', color: '#3b82f6', tip: '教科书说市场不匹配, 但实际 EV 健康 — 数据胜过理论, 让它跑' };
+  }
+  if (fit === 'good' && evHealth === 'negative') {
+    return { label: '理论好/实亏', color: '#f59e0b', tip: '理论上匹配但实际 EV 负, 回测可能过时或样本不足' };
+  }
+  if (fit === 'bad' && evHealth === 'negative') {
+    return { label: '都差', color: '#ef4444', tip: '理论 + 实际都差, 建议 pause 或先回测验证' };
+  }
+  if ((fit === 'good' || fit === 'ok') && (evHealth === 'healthy' || evHealth === 'weak')) {
+    return { label: '匹配 + 盈利', color: '#00d4aa', tip: '理论匹配 + EV 健康' };
+  }
+  // fallback: 旧 fit label
+  return FIT_META[fit] || FIT_META.unknown;
+}
+
+const EV_HEALTH_META = {
+  healthy:  { label: '盈利健康',  color: '#00d4aa' },
+  weak:     { label: '微利',      color: '#84cc16' },
+  negative: { label: '负 EV',     color: '#ef4444' },
+  unknown:  { label: '数据少',    color: '#64748b' },
+};
+
 const AFFINITY_LABEL = {
   trend_follower: '趨勢跟蹤',
   mean_reverter:  '均值回歸',
@@ -72,7 +98,13 @@ function RegimePanelInner() {
 
   const regimes = Object.entries(data?.regimes || {});
   const perStrategy = data?.per_strategy || [];
+  // Phase 14k-98: 双维度统计 — 真"都差"才算需 pause
+  // 旧: mismatchCount = fit==bad (按教科书, 真在赚的也算)
+  // 新: realProblemCount = fit==bad AND ev_health == negative (理论+实际都差)
+  //     dataBeatsTheoryCount = fit==bad AND ev_health == healthy (蓝色, 别动)
   const mismatchCount = perStrategy.filter(p => p.fit === 'bad').length;
+  const realProblemCount = perStrategy.filter(p => p.fit === 'bad' && p.ev_health === 'negative').length;
+  const dataBeatsTheoryCount = perStrategy.filter(p => p.fit === 'bad' && p.ev_health === 'healthy').length;
 
   return (
     <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -175,24 +207,35 @@ function RegimePanelInner() {
               })}
             </Grid>
 
-            {mismatchCount > 0 && (
-              <Alert severity="warning" sx={{ mb: 2, py: 0.5 }}>
-                有 <strong>{mismatchCount}</strong> 個策略類型與當前市場狀態不匹配 — 紅色「不匹配」標籤代表
-                在這種環境下歷史表現通常較差，可考慮暫停或先做回測驗證。
+            {/* Phase 14k-98: 双维度 warning — 区分"真问题"vs"理论冲突但盈利" */}
+            {realProblemCount > 0 && (
+              <Alert severity="warning" sx={{ mb: 1, py: 0.5 }}>
+                有 <strong>{realProblemCount}</strong> 个策略 <strong>理论 + 实际都差</strong>（市场不匹配 AND EV 负）—
+                这种才该考虑 pause 或先做回测验证。
+              </Alert>
+            )}
+            {dataBeatsTheoryCount > 0 && (
+              <Alert severity="info" sx={{ mb: 1, py: 0.5 }}>
+                有 <strong>{dataBeatsTheoryCount}</strong> 个策略 <strong>「数据胜过理论」</strong>—
+                教科书说市场不匹配, 但实际 EV 健康 (蓝色标签)。<strong>让它继续跑</strong>, 别被教科书理论误导。
               </Alert>
             )}
 
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-              策略 × 當前市場匹配度：
+              策略 × 當前市場匹配度 + 實際 EV (14k-98 雙維度)：
             </Typography>
             <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
               {perStrategy.map(p => {
-                const fit = FIT_META[p.fit] || FIT_META.unknown;
+                // Phase 14k-98: 用 combinedFitMeta 综合 fit + ev_health
+                const fit = combinedFitMeta(p.fit, p.ev_health);
                 const aff = AFFINITY_LABEL[p.affinity] || '—';
+                const evNote = p.ev_pct != null
+                  ? ` · 真實 EV ${p.ev_pct >= 0 ? '+' : ''}${p.ev_pct.toFixed(2)}%/單 (門檻 ${p.ev_threshold_pct}%)`
+                  : ' · EV 數據不足';
                 return (
                   <Tooltip
                     key={p.strategy_id}
-                    title={`${p.name} — 類型：${aff} / 當前 ${p.symbol} ${p.timeframe} = ${REGIME_META[p.regime]?.label || '未知'}`}
+                    title={`${p.name} — 類型：${aff} / 當前 ${p.symbol} ${p.timeframe} = ${REGIME_META[p.regime]?.label || '未知'}${evNote}\n${fit.tip || ''}`}
                   >
                     <Box sx={{
                       display: 'flex',
