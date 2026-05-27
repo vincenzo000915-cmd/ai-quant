@@ -188,6 +188,15 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         db.session.commit()
         return {'ok': False, 'error': c.error_log, 'candidate': c.to_dict()}
 
+    # 14k-84: 长 backtest 前显式 commit 释放 implicit transaction
+    # 防 14k-76 idle_in_transaction_session_timeout=5min 杀连接
+    # fetch_ohlcv_history 内部 SELECT candles 触发 implicit transaction
+    # walk-forward 复杂策略跑 5-10min (实测 AVAX 4h × 1940 candles = 415s)
+    # 期间 transaction idle → PG 5min 后 autokill → 后面 INSERT 失败
+    # commit 后 transaction 关闭 (connection 回 'idle' 不是 'idle in transaction')
+    # PG 只 kill 'idle in transaction', plain 'idle' 不动
+    db.session.commit()
+
     # Phase 5.4: walk-forward 取代單段回測
     try:
         # Phase 9.5: 帶上 cfg 的 slippage/fee

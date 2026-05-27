@@ -92,17 +92,35 @@ def psql(sql: str) -> tuple[int, str]:
 # === DETECTION ===
 
 def check_celery_beat_heartbeat() -> dict:
-    """1. Celery worker 响应 ping (替代 task-meta 计数 - 有 TTL 过期 false positive 问题)
-    inspect ping 直接验 worker process alive + 接受任务"""
+    """1. Celery worker alive 检查.
+
+    Phase 14k-84: 原来 'celery inspect ping -t 5' 在 LLM 高峰期 timeout 报 FAIL,
+    但 worker 实际没死, 只是 main process 在 dispatch 多任务忙不过来响应 IPC.
+    改两段策略:
+      a) celery inspect ping -t 20 (放宽 worker busy 容忍)
+      b) ping 失败 → docker ps + ps -ef 检查 worker 进程是否还活
+         进程在 → WARN (busy but alive); 进程死 → FAIL (真挂了)
+    """
     t = t0()
     rc, out, err = run_cmd(
         ['docker', 'exec', 'quant-celery-worker-1', 'celery',
-         '-A', 'app.tasks.strategy_tasks', 'inspect', 'ping', '-t', '5'],
-        timeout=15,
+         '-A', 'app.tasks.strategy_tasks', 'inspect', 'ping', '-t', '20'],
+        timeout=25,
     )
-    if rc != 0 or 'pong' not in (out + err).lower():
-        return {'status': FAIL, 'detail': f'Celery worker 无响应（可能挂了）: {(err or out)[:120]}', 'latency_ms': ms(t)}
-    return {'status': OK, 'detail': 'worker 在线', 'latency_ms': ms(t)}
+    if rc == 0 and 'pong' in (out + err).lower():
+        return {'status': OK, 'detail': 'worker 在线', 'latency_ms': ms(t)}
+    # ping 失败 → 进一步验进程
+    rc2, out2, _ = run_cmd(
+        ['docker', 'inspect', '-f', '{{.State.Running}}', 'quant-celery-worker-1'],
+        timeout=5,
+    )
+    if rc2 == 0 and 'true' in out2.lower():
+        return {'status': WARN,
+                'detail': 'worker 进程活但 ping 超时 (可能 LLM 高峰繁忙, 非死亡)',
+                'latency_ms': ms(t)}
+    return {'status': FAIL,
+            'detail': f'Celery worker container 不在 Running 状态: {(err or out)[:120]}',
+            'latency_ms': ms(t)}
 
 
 def check_signal_cycle_15m() -> dict:
