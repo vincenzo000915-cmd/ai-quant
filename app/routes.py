@@ -15,6 +15,17 @@ api_bp = Blueprint('api', __name__)
 
 # ===== Phase 11.1.3: User-scope internal helpers =====
 
+# Phase 14k-100: reconcile orphan trades 不算真损益, 应该排除在 dashboard / daily_loss 之外
+# 之前 user 看 dashboard "今日 PnL -$0.02" 但实际 HL 上 0 真交易 (HL 拒单, 14k-85 修后已防)
+# 仪表板/halt 检查/胜率都应过滤这类"虚拟 trade"
+EXCLUDED_TRADE_REASONS = ('reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan')
+
+
+def _real_trades_filter(query):
+    """加 filter 排除 reconcile orphan 的虚拟 trades (用于 PnL/胜率/halt 统计)"""
+    return query.filter(~Trade.reason.in_(EXCLUDED_TRADE_REASONS))
+
+
 def _owned_strategy(id):
     """User-scoped 取 strategy。admin 看全部；user 只能看自己。無權限 → 404"""
     s = get_owned(Strategy, id)
@@ -843,6 +854,7 @@ def pnl_history():
         func.count(Trade.id).label('trade_count'),
     ).filter(Trade.exit_time >= since)
     q = apply_user_filter(q, Trade)
+    q = _real_trades_filter(q)   # 14k-100: 排除 orphan 虚拟 trades
 
     if strategy_id:
         q = q.filter(Trade.strategy_id == int(strategy_id))
@@ -879,10 +891,14 @@ def pnl_summary():
     def _q(*cols, model=Trade):
         return apply_user_filter(db.session.query(*cols), model)
 
-    total_pnl = _q(func.coalesce(func.sum(Trade.pnl), 0)).scalar() or 0
-    total_trades = _q(func.count(Trade.id)).scalar() or 0
-    winning = _q(func.count(Trade.id)).filter(Trade.pnl > 0).scalar() or 0
-    losing = _q(func.count(Trade.id)).filter(Trade.pnl < 0).scalar() or 0
+    # Phase 14k-100: Trade.pnl 聚合时排除 reconcile orphan (虚拟 trades, 不是真损益)
+    def _qt(*cols):
+        return _real_trades_filter(_q(*cols))
+
+    total_pnl = _qt(func.coalesce(func.sum(Trade.pnl), 0)).scalar() or 0
+    total_trades = _qt(func.count(Trade.id)).scalar() or 0
+    winning = _qt(func.count(Trade.id)).filter(Trade.pnl > 0).scalar() or 0
+    losing = _qt(func.count(Trade.id)).filter(Trade.pnl < 0).scalar() or 0
     open_positions = _q(func.count(Position.id), model=Position).filter(Position.status == 'open').scalar() or 0
     running_strategies = _q(func.count(Strategy.id), model=Strategy).filter(Strategy.status == 'running').scalar() or 0
     unrealized = _q(func.coalesce(func.sum(Position.unrealized_pnl), 0), model=Position).filter(Position.status == 'open').scalar() or 0
@@ -893,7 +909,7 @@ def pnl_summary():
     from datetime import datetime, timedelta
     from sqlalchemy import cast, Date
     since = datetime.utcnow() - timedelta(days=90)
-    rows = _q(
+    rows = _qt(
         cast(Trade.exit_time, Date).label('date'),
         func.sum(Trade.pnl).label('daily_pnl'),
     ).filter(Trade.exit_time >= since).group_by('date').order_by('date').all()
@@ -912,10 +928,11 @@ def pnl_summary():
     # 今日（UTC）統計
     from datetime import datetime as _dt, timezone as _tz
     today_start = _dt.now(_tz.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
-    today_pnl = _q(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0
-    today_trades = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start).scalar() or 0
-    today_wins = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl > 0).scalar() or 0
-    today_losses = _q(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl < 0).scalar() or 0
+    # 14k-100: today_pnl 也排除 orphan
+    today_pnl = _qt(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_trades = _qt(func.count(Trade.id)).filter(Trade.exit_time >= today_start).scalar() or 0
+    today_wins = _qt(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl > 0).scalar() or 0
+    today_losses = _qt(func.count(Trade.id)).filter(Trade.exit_time >= today_start, Trade.pnl < 0).scalar() or 0
 
     return jsonify({
         'total_pnl': round(total_pnl, 2),

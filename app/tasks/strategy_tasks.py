@@ -953,7 +953,14 @@ def monitor_daily_loss():
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
 
     # realized = 今日 trades 的 pnl 加總
-    realized = db.session.query(db.func.coalesce(db.func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= today_start).scalar() or 0.0
+    # Phase 14k-100: 排除 reconcile_orphan_* (虚拟 trades, HL 拒单后 reconcile 自补的, 不是真损益)
+    # 避免假亏触发 halt
+    realized = (
+        db.session.query(db.func.coalesce(db.func.sum(Trade.pnl), 0))
+        .filter(Trade.exit_time >= today_start)
+        .filter(~Trade.reason.in_(['reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan']))
+        .scalar() or 0.0
+    )
     # unrealized = 當前 open positions 的浮動 pnl 加總
     unrealized = db.session.query(db.func.coalesce(db.func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0.0
     total = float(realized) + float(unrealized)
@@ -1230,8 +1237,16 @@ def daily_advisor_summary():
         .all()
     )
 
-    today_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).filter(Trade.exit_time >= start).scalar() or 0
-    today_trades = db.session.query(func.count(Trade.id)).filter(Trade.exit_time >= start).scalar() or 0
+    # 14k-100: 排除 orphan 虚拟 trades
+    _excl_reasons = ['reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan']
+    today_pnl = db.session.query(func.coalesce(func.sum(Trade.pnl), 0)).filter(
+        Trade.exit_time >= start,
+        ~Trade.reason.in_(_excl_reasons),
+    ).scalar() or 0
+    today_trades = db.session.query(func.count(Trade.id)).filter(
+        Trade.exit_time >= start,
+        ~Trade.reason.in_(_excl_reasons),
+    ).scalar() or 0
     open_pos = db.session.query(func.count(Position.id)).filter(Position.status == 'open').scalar() or 0
     unrealized = db.session.query(func.coalesce(func.sum(Position.unrealized_pnl), 0)).filter(Position.status == 'open').scalar() or 0
     running = db.session.query(func.count(Strategy.id)).filter(Strategy.status == 'running').scalar() or 0
