@@ -1,5 +1,14 @@
 from celery.schedules import crontab
 
+# ===== Phase 14k-80: 防过时任务堆积 =====
+# User 洞察: 交易市场即时性强, 过时 task 堆积重跑没意义
+# 1. worker_prefetch_multiplier=1 — worker 不本地缓存 task, 不跑就还在 broker, 真过期自然丢
+# 2. task_acks_late=False — worker 拿到 task 立即 ack (crash 不重派)
+# 3. beat 每个 task 加 'options': {'expires': N} — broker 自动丢过期 task
+worker_prefetch_multiplier = 1
+task_acks_late = False
+task_reject_on_worker_lost = False  # worker 死掉不重派给别人
+
 # ===== Celery Beat Schedule（定時任務） =====
 # 15m 極短策略：每 15 分鐘執行一次信號檢查
 # 1h 短線策略：每小時執行一次信號檢查
@@ -11,18 +20,21 @@ beat_schedule = {
     'run-short-term-strategies': {
         'task': 'app.tasks.strategy_tasks.run_strategy_signals_ultra',
         'schedule': crontab(minute='*/15'),
+        'options': {'expires': 600},   # 14k-80: 10min 内没跑就丢, 下次 15min 周期会再派
     },
 
     # === 短線策略（1h）===
     'run-swing-strategies': {
         'task': 'app.tasks.strategy_tasks.run_strategy_signals_short',
         'schedule': crontab(minute='5'),
+        'options': {'expires': 1800},   # 14k-80: 30min, 下次 1h 再派
     },
 
     # === 波段/長線策略（4h）===
     'run-long-strategies': {
         'task': 'app.tasks.strategy_tasks.run_strategy_signals',
         'schedule': crontab(minute='15'),
+        'options': {'expires': 1800},   # 14k-80: 30min, 4h 周期容忍
     },
 
     # === 市場數據獲取 ===
@@ -35,12 +47,14 @@ beat_schedule = {
     'update-positions': {
         'task': 'app.tasks.strategy_tasks.update_positions',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80: 3min 没跑就丢, 价格已过时
     },
 
     # === 止損止盈檢查（每5分鐘）===
     'check-stop-loss': {
         'task': 'app.tasks.strategy_tasks.check_stop_loss',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80: 3min 没跑就丢, 价格过时止损失效
     },
 
     # === Phase 5.3: 策略健康監控（每天 03:00 UTC，自動退役 Sharpe 衰退者）===
@@ -71,18 +85,21 @@ beat_schedule = {
     'monitor-daily-loss': {
         'task': 'app.tasks.strategy_tasks.monitor_daily_loss',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 6.4: 異常檢測（flash crash / 持倉密度）每 5 分鐘 ===
     'monitor-anomalies': {
         'task': 'app.tasks.strategy_tasks.monitor_anomalies',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 8.2: 對賬本地 vs OKX 持倉，每 5 分鐘 ===
     'reconcile-positions': {
         'task': 'app.tasks.strategy_tasks.reconcile_okx_positions',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 10.8 + 14k-42: 智能托管 — 每 1 小时（之前 4h 太慢, force_optimize 链路要等 4-8h 才完整）
@@ -110,6 +127,7 @@ beat_schedule = {
     'check-signal-watchers': {
         'task': 'app.tasks.strategy_tasks.check_signal_watchers',
         'schedule': crontab(minute='*/5'),
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 10.9: 每週日 04:00 UTC 給所有 running 策略跑參數網格 ===
@@ -134,6 +152,7 @@ beat_schedule = {
     'prewarm-dashboard-cache': {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',
         'schedule': 90.0,
+        'options': {'expires': 60},   # 14k-80: 60s 没跑就丢, 下一轮重派
     },
 
     # === Phase 12.14: 每週日 06:00 UTC 清 candidates 表 rejected/error + candidate-stage backtest ===
@@ -155,11 +174,13 @@ beat_schedule = {
         'schedule': crontab(hour='7', minute='0'),
     },
 
-    # === Phase 12.24.2: USDT 链上付款监听（每 60s）===
-    # 4 链轮询 (TRC/ERC/BEP/SOL) 自动 confirm pending invoices + 开通订阅
+    # === Phase 12.24.2: USDT 链上付款监听 ===
+    # 14k-80: 60s → 5min (公链 RPC 经常 429, 单次跑 8-12s, 60s 一定堆积)
+    # 用户付款后等 5min 入账可接受, 不该烧 worker 资源
     'check-onchain-payments': {
         'task': 'app.tasks.strategy_tasks.check_onchain_payments',
-        'schedule': 60.0,   # 每 60s
+        'schedule': 300.0,   # 14k-80: 60s → 5min
+        'options': {'expires': 240},   # 4min 没跑就丢
     },
 
     # === Phase 12.34: Daily 早报 (08:00 UTC = 北京 16:00)
@@ -173,6 +194,7 @@ beat_schedule = {
     'internal-health-monitor': {
         'task': 'app.tasks.strategy_tasks.internal_health_monitor',
         'schedule': 300.0,   # 每 300s = 5 min
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 14k-6: HL agent 180 天过期检查 (每天 09:00 UTC = 北京 17:00)
@@ -187,6 +209,7 @@ beat_schedule = {
     'retry-stuck-ai-recommendations': {
         'task': 'app.tasks.strategy_tasks.retry_stuck_ai_recommendations',
         'schedule': 300.0,   # 每 300s = 5 min
+        'options': {'expires': 180},   # 14k-80
     },
 
     # === Phase 14k-22: AI 量化经理核心 — 每小时跟踪目标进度 + DD 保护 + 资金扩展
