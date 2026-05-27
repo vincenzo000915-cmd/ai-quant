@@ -287,8 +287,15 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
         )
     finally:
         _release_claude_cli_slot(slot)
+    # Phase 14k-107: claude CLI exit !=0 时 log stdout (silent fail 看不到原因诊断难)
+    # 实测 17:46+ 大量 exit 1 with empty stderr, 可能 rate limit / subscription / OAuth 错
     if proc.returncode != 0:
-        raise RuntimeError(f'claude CLI exited {proc.returncode}: {(proc.stderr or "").strip()[:300]}')
+        stderr_short = (proc.stderr or '').strip()[:300]
+        stdout_short = (proc.stdout or '').strip()[:300]
+        raise RuntimeError(
+            f'claude CLI exited {proc.returncode} '
+            f'stderr=[{stderr_short}] stdout=[{stdout_short}]'
+        )
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:
