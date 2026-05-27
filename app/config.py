@@ -23,13 +23,19 @@ class Config:
     DB_PASS = os.getenv('DB_PASS', 'quant_pass')
     SQLALCHEMY_DATABASE_URI = f'postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # Phase 12.36: 连接池调优 — 防 worker idle 累积爆 Postgres max_connections=100
+    # Phase 12.36 + 14k-75: 连接池调优 — 14k-74 worker concurrency 4→8 后需更大 pool
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_size': 5,           # 默认 5 常驻连接
-        'max_overflow': 5,        # 高峰 +5 (总 10)
-        'pool_recycle': 1800,     # 30min recycle 防长 idle 被 pg 切
-        'pool_pre_ping': True,    # 拿连接前 ping 确认活
-        'pool_timeout': 20,       # 等不到连接 20s 超时
+        'pool_size': 10,           # 14k-75: 8 worker × 1.2 ≈ 10 常驻 (从 5 提升)
+        'max_overflow': 10,        # 高峰 +10 (总 20)
+        'pool_recycle': 1800,
+        'pool_pre_ping': True,
+        'pool_timeout': 20,
+        # 14k-75: Postgres 服务端自动 kill idle in transaction > 5min
+        # (LLM call 平均 30s-3min, 5min 是安全阈值, 太长就是 bug)
+        'connect_args': {
+            'options': '-c idle_in_transaction_session_timeout=300000',   # 5 分钟 (毫秒)
+            'connect_timeout': 10,
+        },
     }
 
     # Redis

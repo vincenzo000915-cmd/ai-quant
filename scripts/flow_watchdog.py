@@ -58,7 +58,7 @@ CHECK_LABELS = {
     'translate_pipeline':    '策略翻译队列 / Translate Queue',
     'llm_errors_1h':         '近 1 小时 LLM 错误 / LLM Errors (1h)',
     'pg_connection_pool':    '数据库连接数 / DB Connections',
-    'okx_connectivity':      '交易所余额 / Exchange Balance',
+    'exchange_connectivity':      '交易所余额 / Exchange Balance',
     'reconcile_health':      '当前持仓状态 / Position Status',
     'running_strategies':    '运行中策略数 / Running Strategies',
     # Phase 14k-45 L1/L2/L3 新增
@@ -233,7 +233,7 @@ def check_pg_pool() -> dict:
     return {'status': OK, 'detail': f'数据库连接数 {count}', 'latency_ms': ms(t)}
 
 
-def check_okx_connectivity() -> dict:
+def check_exchange_connectivity() -> dict:
     """7. 交易所 /api/account 通 + 总余额 > 0.
 
     Phase 14k-35: schema 变了 (14k-11 多交易所重构后), balances 是 {exchange_name: total}
@@ -370,7 +370,7 @@ CHECKS = [
     ('translate_pipeline',    check_translate_pipeline),
     ('llm_errors_1h',         check_llm_errors_recent),
     ('pg_connection_pool',    check_pg_pool),
-    ('okx_connectivity',      check_okx_connectivity),
+    ('exchange_connectivity',      check_exchange_connectivity),
     ('reconcile_health',      check_reconcile_recent),
     ('running_strategies',    check_running_strategies),
     # Phase 14k-45 新增 3 个 check
