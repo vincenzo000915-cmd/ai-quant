@@ -1810,11 +1810,14 @@ def profit_progress_monitor():
         # B) DD 检查 — 触发 halt
         dd = t.dd_pct()
         if dd >= t.max_dd_pct:
+            # Phase 14k-106: 之前 update_config typo (函数名是 update 不是 update_config)
+            # → ImportError 被 except 吞 → halt 没真生效, 但 audit 还在写 → 假警报
+            # 改用 set_halted 是公开 API, 也不会 typo
             try:
-                from app.services.config_service import update_config
-                update_config({'halted': True, 'halt_reason': f'profit_target DD {dd:.1f}% >= {t.max_dd_pct}%'})
-            except Exception:
-                pass
+                from app.services.config_service import set_halted
+                set_halted(f'profit_target DD {dd:.1f}% >= {t.max_dd_pct}%')
+            except Exception as e:
+                print(f'[profit_monitor] set_halted failed: {type(e).__name__}: {e}')
             tg_send(
                 f'🚨 <b>紧急: 触发回撤保护</b>\n'
                 f'用户 {user.email}\n'
