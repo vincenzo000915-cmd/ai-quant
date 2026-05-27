@@ -398,51 +398,78 @@ def _clone_catalog_to_candidate(entry: StrategyCandidate, user_id: int, symbol: 
     return clone
 
 
+def _check_promote_gates(symbol: str, timeframe: str, category: str,
+                          user_id: int, target_exchange: str, cfg: dict) -> tuple[bool, str | None]:
+    """Phase 14k-91: 统一 promote 守门 — AI propose 前先跑, _maybe_auto_apply 同步跑
+
+    返回 (ok, skip_reason):
+      ok=True: 这个 (symbol, TF, category) 组合此刻可上线 → AI 才提议
+      ok=False: 守门拒 → AI 看到原因, 不重复 propose 同类
+
+    Why 提到 propose 前:
+      之前 AI 推 → _maybe_auto_apply 拒 → candidate 卡 panel "等手动"
+      但 AI 不知道被拒, 下轮还推同类 → 死循环烧 token
+      把守门往前移, AI 看到的候选都是"能上线的"
+    """
+    # Guard 1: concentration — 同 (sym, TF, cat) 已 running
+    overlap = scoped_query(Strategy).filter_by(
+        status='running', symbol=symbol, timeframe=timeframe, category=category,
+    ).first()
+    if overlap:
+        return False, f'已 running 同 (sym={symbol}, TF={timeframe}, cat={category}) 策略 #{overlap.id}'
+
+    # Guard 2: running >= max
+    n_running = scoped_query(Strategy).filter_by(status='running').count()
+    max_running = int(cfg.get('auto_apply_max_running', 8))
+    if n_running >= max_running:
+        return False, f'running {n_running} >= max {max_running}'
+
+    # Guard 3: capital_util > 70% projection
+    try:
+        user_capital = _get_user_capital(user_id, exchange=target_exchange)
+    except Exception:
+        user_capital = 0
+    if user_capital > 0:
+        running = scoped_query(Strategy).filter_by(status='running').all()
+        reserved = sum(
+            float((s.params or {}).get('risk_params', {}).get('position_size_usdt') or 0)
+            for s in running
+        )
+        new_size = float(cfg.get('trade_size_usdt') or 7)   # 估算新 candidate size
+        projected = (reserved + new_size) / user_capital * 100
+        if projected > 70:
+            return False, (
+                f'资金已用 {reserved/user_capital*100:.0f}% (${reserved:.0f}/${user_capital:.0f}), '
+                f'加新 → {projected:.0f}% > 70% (防分散)'
+            )
+
+    return True, None
+
+
 def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: dict) -> dict | None:
-    """根据 mode 决定是否自动 promote+start，含 guardrails"""
+    """根据 mode 决定是否自动 promote+start，含 guardrails.
+
+    Phase 14k-91: 守门 1-3 (concentration / max_running / capital_util) 抽到 _check_promote_gates
+    新 propose 路径 (recommend_strategies) 已在 propose 前先 check, 这里是兜底
+    """
     if mode == 'manual':
         return None
     cm = clone.catalog_meta or {}
     sharpe = float(cm.get('verified_oos_sharpe') or 1.5)
     sym = (clone.source_meta or {}).get('symbol') or 'AVAX/USDT'
 
-    # Phase 14e: Concentration guard — 同 (symbol, TF, category) 已 running 则 skip
-    overlap = scoped_query(Strategy).filter_by(
-        status='running', symbol=sym, timeframe=clone.timeframe,
-        category=clone.category,
-    ).first()
-    if overlap:
-        return {'skipped': True,
-                'reason': f'已 running 同 (symbol={sym}, TF={clone.timeframe}, cat={clone.category}) 策略 #{overlap.id}，避免过度集中'}
-
-    # Guardrails
-    # 14k-58: capital-aware — 算总资金占用 / 总 capital, > 70% 拒绝 promote (防资金分散)
-    n_running = scoped_query(Strategy).filter_by(status='running').count()
-    max_running = int(cfg.get('auto_apply_max_running', 8))
-    if n_running >= max_running:
-        return {'skipped': True, 'reason': f'running {n_running} >= max {max_running}'}
-
-    # 14k-58: capital utilization 检查
+    # 14k-91: 复用统一守门 (concentration + max_running + capital_util 70%)
     try:
         from app.services.exchange_binding import primary_exchange as _pex
         user_exchange = _pex(user_id)
     except Exception:
         user_exchange = 'okx'
-    user_capital = _get_user_capital(user_id, exchange=user_exchange)
-    if user_capital > 0:
-        running_strategies = scoped_query(Strategy).filter_by(status='running').all()
-        total_reserved = 0.0
-        for rs in running_strategies:
-            rp = (rs.params or {}).get('risk_params') or {}
-            total_reserved += float(rp.get('position_size_usdt') or 0)
-        util_pct = total_reserved / user_capital * 100
-        # 新 strategy 也算上估算
-        new_size = float((clone.source_meta or {}).get('risk_params', {}).get('position_size_usdt') or 7)
-        projected_util = (total_reserved + new_size) / user_capital * 100
-        if projected_util > 70:
-            return {'skipped': True,
-                    'reason': f'资金已用 {util_pct:.0f}% (${total_reserved:.0f}/${user_capital:.0f}), '
-                              f'加新策略到 {projected_util:.0f}% > 70% 上限 → 拒绝 promote (避免资金分散)'}
+    gate_ok, gate_reason = _check_promote_gates(
+        symbol=sym, timeframe=clone.timeframe, category=clone.category,
+        user_id=user_id, target_exchange=user_exchange, cfg=cfg,
+    )
+    if not gate_ok:
+        return {'skipped': True, 'reason': gate_reason}
 
     if cfg.get('halted'):
         return {'skipped': True, 'reason': 'system halted'}
@@ -856,6 +883,26 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
                         entry, mx, sc, rs = found
                         selected[replace_idx] = (entry, mx, sc, rs + [f'regime rebalance: user {trend_ratio:.0%} trend → 换入 trend'])
 
+    # Phase 14k-91: AI propose 前先跑统一守门 — 被拒的 (entry, sym) 不创建 candidate
+    # 之前 AI 推 → _maybe_auto_apply 拒 → candidate 卡 panel
+    # 现在 AI 看到守门拒原因, 不再 propose 同类 (跳到下一个 selected 也跳过, log 拒因)
+    gate_skipped = []
+    gated_selected = []
+    for entry, mx, score, reasons in selected:
+        sym = mx.symbol
+        gate_ok, gate_reason = _check_promote_gates(
+            symbol=sym, timeframe=entry.timeframe, category=entry.category,
+            user_id=user_id, target_exchange=target_exchange, cfg=cfg,
+        )
+        if not gate_ok:
+            gate_skipped.append({
+                'catalog_id': entry.id, 'type': entry.candidate_type,
+                'symbol': sym, 'reason': gate_reason,
+            })
+            continue
+        gated_selected.append((entry, mx, score, reasons))
+    selected = gated_selected   # 后续 clone 只用 gated
+
     # Clone + auto-apply. clone 继承 matrix backtest_result_id
     recommendations = []
     for entry, mx, score, reasons in selected:
@@ -959,6 +1006,7 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         'user_capital_usdt': user_capital,
         'recommendations': recommendations,
         'invent_result': invent_result,
+        'gate_skipped': gate_skipped,   # 14k-91: AI 看到守门拒因, 不再 propose 同类
     }
 
 
