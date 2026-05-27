@@ -256,25 +256,57 @@ def check_exchange_connectivity() -> dict:
 
     Phase 14k-35: schema 变了 (14k-11 多交易所重构后), balances 是 {exchange_name: total}
     不再是 {coin: detail}. 用 top-level data.balance 总余额判定.
+
+    Phase 14k-88: timeout 15→30s + 失败时退而 docker exec 直接查 HL/OKX
+      防 web 高峰 (gunicorn 2 worker × sync) 短时无响应触发 false FAIL → TG 循环
     """
     t = t0()
-    try:
-        req = urllib.request.Request('http://localhost:5005/api/account',
-                                      headers={'Authorization': f'Bearer {API_TOKEN}'})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-    except Exception as e:
-        return {'status': FAIL, 'detail': f'账户接口请求失败（{type(e).__name__}）', 'latency_ms': ms(t)}
-    accounts = data.get('accounts') or []
-    total = float(data.get('balance') or 0)
-    if not accounts:
-        return {'status': WARN, 'detail': '接口通了但未绑定任何交易所', 'latency_ms': ms(t)}
-    if total <= 0:
-        # bound 但没钱 — WARN (可能用户没充值)
-        names = ', '.join(a.get('label', '?') for a in accounts)
-        return {'status': WARN, 'detail': f'已绑 {names} 但总余额为 0（请检查交易所是否有资金）', 'latency_ms': ms(t)}
-    names = ' + '.join(f'{a.get("label", "?")} ${float(a.get("equity") or 0):.2f}' for a in accounts)
-    return {'status': OK, 'detail': f'总余额 ${total:.2f}（{names}）', 'latency_ms': ms(t)}
+    last_err = None
+    # 1) 主路径: /api/account (timeout 30s, retry 1 次)
+    for attempt in (1, 2):
+        try:
+            req = urllib.request.Request('http://localhost:5005/api/account',
+                                          headers={'Authorization': f'Bearer {API_TOKEN}'})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.loads(r.read())
+            accounts = data.get('accounts') or []
+            total = float(data.get('balance') or 0)
+            if not accounts:
+                return {'status': WARN, 'detail': '接口通了但未绑定任何交易所', 'latency_ms': ms(t)}
+            if total <= 0:
+                names = ', '.join(a.get('label', '?') for a in accounts)
+                return {'status': WARN, 'detail': f'已绑 {names} 但总余额为 0（请检查交易所是否有资金）', 'latency_ms': ms(t)}
+            names = ' + '.join(f'{a.get("label", "?")} ${float(a.get("equity") or 0):.2f}' for a in accounts)
+            return {'status': OK, 'detail': f'总余额 ${total:.2f}（{names}）', 'latency_ms': ms(t)}
+        except Exception as e:
+            last_err = f'{type(e).__name__}'
+    # 2) Fallback: docker exec worker container 直接查交易所 (绕过 web)
+    fallback_cmd = ['docker', 'exec', 'quant-celery-worker-1', 'python', '-c',
+        'from app import create_app; '
+        'app=create_app(); '
+        'with app.app_context():\n'
+        '  try:\n'
+        '    from app.services.hyperliquid_creds import get_decrypted_for_user\n'
+        '    from app.services.hyperliquid_service import fetch_balance\n'
+        '    c=get_decrypted_for_user(1)\n'
+        '    b=fetch_balance(c) if c else None\n'
+        '    print(\"HL\", b.get(\"USDT\",{}).get(\"total\",0) if b else 0)\n'
+        '  except Exception as e:\n'
+        '    print(\"ERR\", type(e).__name__, str(e)[:80])']
+    rc, out, err = run_cmd(fallback_cmd, timeout=20)
+    if rc == 0 and out.startswith('HL '):
+        try:
+            val = float(out.split(' ', 1)[1])
+            if val > 0:
+                return {'status': OK,
+                        'detail': f'/api/account 超时但 HL 直查 OK: ${val:.2f}',
+                        'latency_ms': ms(t)}
+        except Exception:
+            pass
+    # 3) 双失败才 FAIL
+    return {'status': FAIL,
+            'detail': f'账户接口 + 直查均失败（{last_err}）',
+            'latency_ms': ms(t)}
 
 
 def check_reconcile_recent() -> dict:
