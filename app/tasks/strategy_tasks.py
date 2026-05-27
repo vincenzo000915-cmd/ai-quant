@@ -1994,6 +1994,28 @@ def retry_stuck_ai_recommendations():
     if mode == 'manual':
         return 'mode=manual, no retry'
 
+    # 14k-82: 顺手清卡死的 ParamOptimization (status='running' > 1h)
+    # worker SIGKILL 中断 opt 后 status 不重置, 永远卡 'running'
+    try:
+        from app.models import ParamOptimization
+        opt_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=1)
+        stuck_opts = ParamOptimization.query.filter(
+            ParamOptimization.status == 'running',
+            ParamOptimization.started_at < opt_cutoff,
+        ).all()
+        for opt in stuck_opts:
+            opt.status = 'error'
+            opt.error_message = (
+                f'[14k-82 auto-error] running > 1h ({opt.combos_done}/{opt.combos_total} combos) — '
+                f'worker 可能被 kill 中断 / claude CLI semaphore 阻塞'
+            )
+            opt.completed_at = _dt.datetime.utcnow()
+        if stuck_opts:
+            _db.session.commit()
+            print(f'[retry_stuck] 14k-82: reset {len(stuck_opts)} stuck param_optimizations to error')
+    except Exception as e:
+        print(f'[retry_stuck] 14k-82 opt cleanup failed: {type(e).__name__}: {e}')
+
     stuck = StrategyCandidate.query.filter(
         StrategyCandidate.source == 'catalog_clone',
         StrategyCandidate.status == 'qualified',

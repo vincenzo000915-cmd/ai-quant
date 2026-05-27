@@ -429,11 +429,34 @@ def promote_candidate(candidate_id: int, *, name: str | None = None, symbol: str
 
 
 def backtest_all_translated(max_count: int | None = None) -> dict:
-    """批次跑所有 status='translated' 的候選回測。"""
-    q = StrategyCandidate.query.filter_by(status='translated')
+    """批次跑所有 status='translated' 的候選回測.
+
+    Phase 14k-82: 也捡 status='backtesting' but updated_at > 15min ago 的候选
+    (worker 被 kill / restart 中断 backtest, candidate 永远卡 backtesting)
+    重置为 translated 触发重跑 (15min buffer 防误捡正在跑的)
+    """
+    import datetime as _dt
+    from sqlalchemy import or_, and_
+    stuck_cutoff = _dt.datetime.utcnow() - _dt.timedelta(minutes=15)
+    q = StrategyCandidate.query.filter(
+        or_(
+            StrategyCandidate.status == 'translated',
+            and_(
+                StrategyCandidate.status == 'backtesting',
+                StrategyCandidate.updated_at < stuck_cutoff,
+            ),
+        )
+    )
     if max_count:
         q = q.limit(max_count)
     items = q.all()
+    # 14k-82: 卡死的 backtesting 重置 status, backtest_candidate 内部会重新 set 'backtesting'
+    for c in items:
+        if c.status == 'backtesting':
+            c.status = 'translated'
+            c.error_log = '[14k-82 auto-recover] backtesting > 15min 卡死, 重置触发重跑'
+    if any(c.status == 'translated' and c.error_log and '14k-82' in (c.error_log or '') for c in items):
+        db.session.commit()
     results = []
     for c in items:
         try:
