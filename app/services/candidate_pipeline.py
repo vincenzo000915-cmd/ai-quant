@@ -477,6 +477,19 @@ def backtest_all_translated(max_count: int | None = None) -> dict:
                 'error': r.get('error') if not r.get('ok') else None,
             })
         except Exception as e:
+            # Phase 14k-89: session rollback 让下一 candidate 能跑
+            # 之前: 任意 candidate 抛 PendingRollbackError → session 卡 rollback 状态
+            #       → 后续 candidates 都 raise 同 error → 整 batch 烂死
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
             results.append({'id': c.id, 'name': c.source_name, 'ok': False, 'error': f'{type(e).__name__}: {e}'})
+        # 14k-89: 每个 candidate 完后强制 commit/close 释放 session 状态
+        # 防 candidate #1 留下 idle in transaction 让 #2 用到 stale connection
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     qualified = sum(1 for r in results if r.get('qualified'))
     return {'count': len(results), 'qualified': qualified, 'results': results}
