@@ -943,6 +943,28 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
         ).first()
         if recent_opt:
             return None
+    else:
+        # Phase 14k-104: force_optimize 也要尊重最近 propose 历史 (同 14k-93 风格)
+        # 之前 force_optimize 路径完全 bypass cooldown → 每小时 advisor cycle 重派同策略
+        # 实测 13:10/14:10 给 #19 派了 2 次 signal_grid, 烧 LLM 跟 walkforward CPU
+        # 修: 即使 force, 6h 内已派过同策略 → skip
+        proposed_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=6)
+        recent_proposed = AuditLog.query.filter(
+            AuditLog.event_type == 'signal_grid_proposed',
+            AuditLog.created_at > proposed_cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_proposed):
+            return None
+        # 14k-104: 同时尊重 ParamOptimization 'completed/error' 24h 历史
+        # 跑过的 (无论成败) 24h 内不重跑, 让 apply_params 自己消化结果
+        result_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=24)
+        recent_result = ParamOptimization.query.filter(
+            ParamOptimization.strategy_id == strategy.id,
+            ParamOptimization.completed_at > result_cutoff,
+            ParamOptimization.status.in_(['completed', 'error']),
+        ).first()
+        if recent_result:
+            return None
 
     # 触发条件: target lag mode 或 现有 sharpe 偏弱 或 0 trades 空跑
     needs_optim = bool(target_ctx.get('lag_mode')) or force_optimize
@@ -1145,6 +1167,35 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     ).first()
     if recent:
         return None
+
+    # Phase 14k-104: invent 前看 promote gates 状态 — 全堵就别浪费 LLM
+    # max_running 满 / capital_util > 70% → 新 invent 出来也无法 promote
+    # advisor 当前 14k-91 在 catalog_clone 路径已检查, 但 invent 是独立路径漏了
+    # 修: invent 前 check 同一组 gates, 全堵 skip
+    try:
+        from app.services.config_service import get_config
+        from app.services.llm_prompts.strategy_recommend import _get_user_capital
+        from app.services.exchange_binding import primary_exchange as _pex
+        cfg = get_config()
+        n_running = scoped_query(Strategy).filter_by(status='running').count()
+        max_running = int(cfg.get('auto_apply_max_running', 8))
+        if n_running >= max_running:
+            print(f'[invent] skip: running {n_running} >= max {max_running} (gates 堵, invent 也无法 promote)')
+            return None
+        # capital_util projected check
+        user_exchange = _pex(user_id) or 'okx'
+        user_capital = _get_user_capital(user_id, exchange=user_exchange)
+        if user_capital > 0:
+            running_strats = scoped_query(Strategy).filter_by(status='running').all()
+            reserved = sum(float((s.params or {}).get('risk_params', {}).get('position_size_usdt') or 0)
+                           for s in running_strats)
+            new_size = float(cfg.get('trade_size_usdt') or 7)
+            projected = (reserved + new_size) / user_capital * 100
+            if projected > 70:
+                print(f'[invent] skip: capital projected {projected:.0f}% > 70% (无法 promote 新策略)')
+                return None
+    except Exception as e:
+        print(f'[invent] gate check failed: {type(e).__name__}: {e}')
 
     # 14k-50/54: 看 promote-eligible (OOS≥1.5) 而非 qualified count + per-user scope
     eligible_pool = _promote_eligible_count(user_id)
