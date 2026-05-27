@@ -23,21 +23,32 @@ const FIT_META = {
 };
 
 // Phase 14k-98: 双维度 (理论 fit × 实际 EV) 综合判断
-// data 胜过理论: fit=bad 但 EV 健康 → 蓝色 (不该报警让 user pause 真在赚的策略)
+// 4 类典型 case + 边界 (weak/unknown) 全覆盖
 function combinedFitMeta(fit, evHealth) {
+  // === fit = bad ===
   if (fit === 'bad' && evHealth === 'healthy') {
     return { label: '数据胜理论', color: '#3b82f6', tip: '教科书说市场不匹配, 但实际 EV 健康 — 数据胜过理论, 让它跑' };
   }
-  if (fit === 'good' && evHealth === 'negative') {
-    return { label: '理论好/实亏', color: '#f59e0b', tip: '理论上匹配但实际 EV 负, 回测可能过时或样本不足' };
+  if (fit === 'bad' && evHealth === 'weak') {
+    return { label: '理论差实微利', color: '#a855f7', tip: '理论不匹配但实际微利 — 观察就好, 别急着 pause' };
   }
   if (fit === 'bad' && evHealth === 'negative') {
     return { label: '都差', color: '#ef4444', tip: '理论 + 实际都差, 建议 pause 或先回测验证' };
   }
-  if ((fit === 'good' || fit === 'ok') && (evHealth === 'healthy' || evHealth === 'weak')) {
-    return { label: '匹配 + 盈利', color: '#00d4aa', tip: '理论匹配 + EV 健康' };
+  if (fit === 'bad' && evHealth === 'unknown') {
+    return { label: '理论差数据少', color: '#f59e0b', tip: '理论不匹配 + 实盘样本不足 — 先跑回测验证再决定' };
   }
-  // fallback: 旧 fit label
+  // === fit = good/ok ===
+  if (fit === 'good' && evHealth === 'negative') {
+    return { label: '理论好实亏', color: '#f59e0b', tip: '理论上匹配但实际 EV 负, 回测可能过时或样本不足' };
+  }
+  if ((fit === 'good' || fit === 'ok') && evHealth === 'healthy') {
+    return { label: '匹配+盈利', color: '#00d4aa', tip: '理论匹配 + EV 健康' };
+  }
+  if ((fit === 'good' || fit === 'ok') && evHealth === 'weak') {
+    return { label: '匹配+微利', color: '#84cc16', tip: '理论匹配但 EV 微利, 继续观察' };
+  }
+  // fallback: 旧 fit label (ok / unknown 等)
   return FIT_META[fit] || FIT_META.unknown;
 }
 
