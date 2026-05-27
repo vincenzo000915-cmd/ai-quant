@@ -108,8 +108,12 @@ def reconcile_hl_user(user_id: int) -> dict:
         local_by_key[key] = p
 
     # === (a) local 有, HL 无 → 本地补平 ===
+    # 14k-81.1: 新仓 60s 内不 reconcile (HL place_order 有 fill 延迟, 防新开就被关)
+    grace_cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=60)
     for key, lp in local_by_key.items():
         if key not in hl_by_key:
+            if lp.opened_at and lp.opened_at > grace_cutoff:
+                continue   # 新开不到 60s, 给 HL settle 时间
             try:
                 from app.services.hyperliquid_service import get_ticker as hl_get_ticker
                 t = hl_get_ticker(lp.symbol, creds.get('network') or 'mainnet')
@@ -239,8 +243,12 @@ def reconcile() -> dict:
         local_by_key[key] = p
 
     # === (a) local 有，OKX 無 ===
+    # 14k-81.1: 同 HL 加 60s grace (OKX 旧版无, 此前没问题因为 OKX 系统级 creds + 单 admin)
+    okx_grace_cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=60)
     for key, lp in local_by_key.items():
         if key not in okx_by_key:
+            if lp.opened_at and lp.opened_at > okx_grace_cutoff:
+                continue
             try:
                 # 拿當前價當 exit_price，標 reconcile_orphan
                 t = get_ticker(lp.symbol)
