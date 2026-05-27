@@ -405,10 +405,14 @@ def _run_signals(strategy_id=None, category_filter=None):
                 notional = amount_base * price * lev
 
                 # Phase 12.7+12.8+12.9.2: 先算出實際合約持倉，超額就跳過下單
+                # Phase 14k-78: 按 exchange dispatch — OKX 走"张"合约检查; HL 走 base unit 无需检查
+                #   HL min order = $10 notional, lot 精度 base coin (eg 0.0001 BTC = $11)
+                #   旧逻辑用 OKX get_contract_size 检查 HL → BTC HL 报 "$759 张" 误判
                 intended_base = (effective_size * lev) / price
                 intended_notional = intended_base * price
                 real_size = intended_base
-                if mode == 'live':
+                strat_exchange = (s.exchange or 'okx').lower()
+                if mode == 'live' and strat_exchange == 'okx':
                     from app.services.symbols import get_contract_size
                     contract_size = get_contract_size(s.symbol)
                     contracts_target = max(1, round(intended_base / contract_size))
@@ -426,7 +430,23 @@ def _run_signals(strategy_id=None, category_filter=None):
                         _tg(
                             f'⚠️ <b>{s.name} 跳过下单 · Order Skipped</b>\n'
                             f'{s.symbol} 最小合约 / Min contract: ${real_notional:.0f} 远超目标 / >> target ${intended_notional:.0f}\n'
-                            f'建议提高 trade_size 或关掉此 symbol / Raise trade_size or disable this symbol'
+                            f'建议提高 trade_size 或关掉此 symbol / Raise trade_size or disable this symbol',
+                            event_key=f'order_skipped_min_contract:{s.id}'
+                        )
+                        continue
+                elif mode == 'live' and strat_exchange == 'hyperliquid':
+                    # HL: notional = size_usdt × leverage, base 单位下单. min $10 notional.
+                    real_notional = intended_notional
+                    if intended_notional < 10:
+                        results.append(
+                            f'⛔ {s.name}: 跳過 — HL 最小下单 $10 notional, 当前 ${intended_notional:.2f} (size ${effective_size} × lev {lev}x)'
+                        )
+                        from app.services.telegram_service import send as _tg
+                        _tg(
+                            f'⚠️ <b>{s.name} 跳过下单 · Order Skipped</b>\n'
+                            f'{s.symbol} HL 最小 / Min: $10 notional, 当前 / Current: ${intended_notional:.2f}\n'
+                            f'建议提高 trade_size × leverage 到 ≥ $10 / Raise trade_size × leverage ≥ $10',
+                            event_key=f'order_skipped_hl_min:{s.id}'
                         )
                         continue
 
