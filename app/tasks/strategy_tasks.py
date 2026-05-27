@@ -1073,8 +1073,19 @@ def optimize_strategy_params(self, optimization_id: int, max_combos: int = 24):
             opt.combos_done = out['combos_done']
             opt.status = 'completed'
         opt.completed_at = _dt.datetime.utcnow()
+        # Phase 14k-109: 跑完写 BacktestResult + 回填 candidate.backtest_result_id (单一漏斗)
+        # 修长期 phantom: param_optimizations 完成但 AI 看 candidate 表永远以为 "未回测", 反复重派
+        bt_id = None
+        if opt.status == 'completed' and opt.best_params and opt.candidate_results:
+            from app.services.backtest_writer import record_backtest_from_opt_combo
+            winner = next((c for c in opt.candidate_results if c.get('params') == opt.best_params), None)
+            if winner:
+                try:
+                    bt_id = record_backtest_from_opt_combo(strategy, winner, source='param_opt', opt_id=opt.id)
+                except Exception as e:
+                    print(f'[14k-109] record_backtest failed opt={opt.id}: {type(e).__name__}: {e}')
         db.session.commit()
-        return f'optimize strategy={strategy.id} done: {opt.combos_done}/{opt.combos_total}'
+        return f'optimize strategy={strategy.id} done: {opt.combos_done}/{opt.combos_total}' + (f' bt={bt_id}' if bt_id else '')
     except Exception as e:
         db.session.rollback()
         opt.status = 'error'
