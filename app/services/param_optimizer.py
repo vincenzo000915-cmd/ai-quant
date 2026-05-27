@@ -233,6 +233,17 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
     if not candles or len(candles) < 200:
         return {'error': f'K 線不足（{len(candles) if candles else 0}）'}
 
+    # Phase 14k-102: 同 risk_optimizer — fetch K 线后释放 implicit tx
+    # 后续 grid walk-forward CPU 重 5-30min, 不释放 connection 必被 PG idle_in_tx kill
+    from app.extensions import db as _db
+    try:
+        _db.session.commit()
+    except Exception:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+
     cfg = get_config()
     slippage = cfg.get('backtest_slippage_pct', 0.05)
     fee = cfg.get('backtest_fee_pct', 0.05)

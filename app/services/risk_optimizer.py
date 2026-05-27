@@ -45,6 +45,19 @@ def optimize_risk_params(strategy, grid: dict | None = None) -> dict:
     if not candles or len(candles) < 200:
         return {'error': f'K 线不足 ({len(candles) if candles else 0} < 200)'}
 
+    # Phase 14k-102: walk-forward 多 combo CPU 重 (5-30min), 期间 implicit tx idle 必被 PG kill
+    # 14k-92 修了 task 入口 commit, 但 fetch_ohlcv_history SELECT candles 又开 implicit tx
+    # 跑多次 _run_wf (CPU only, 不动 DB) 期间 tx 一直 idle → audit 写 INSERT 必失败
+    # 修: fetch K 线后立刻 commit 释放 tx, 长 CPU 期间 connection 是 idle 不是 idle-in-tx
+    from app.extensions import db as _db
+    try:
+        _db.session.commit()
+    except Exception:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+
     base_params = dict(strategy.params or {})
     base_rp = base_params.get('risk_params') or {}
     base_sl = float(base_rp.get('sl_pct') or base_rp.get('stop_loss_pct') or 5)
