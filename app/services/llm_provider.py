@@ -207,6 +207,47 @@ def _call_gemini(api_key: str, prompt: str, system: str | None,
 
 CLAUDE_CLI_TIMEOUT = int(os.environ.get('CLAUDE_CLI_TIMEOUT', '300'))   # 12.17: 大 prompt 需要 5min
 
+# Phase 14k-79: 全局 claude CLI 并发上限 (Redis semaphore, 跨 worker 进程)
+# 单次 claude --print ~3min CPU 拉满, worker concurrency 8 不加限就 8 个 LLM 并发 → CPU 雪崩
+# 设 2 = 同时最多 2 个 claude CLI 在跑, 其他任务 wait 或 fallback
+CLAUDE_CLI_MAX_CONCURRENT = int(os.environ.get('CLAUDE_CLI_MAX_CONCURRENT', '2'))
+CLAUDE_CLI_WAIT_TIMEOUT = int(os.environ.get('CLAUDE_CLI_WAIT_TIMEOUT', '60'))   # 拿不到 slot 就放弃
+
+
+def _acquire_claude_cli_slot() -> str | None:
+    """拿一个全局 slot, 返回 slot key (用于释放) 或 None (超时)."""
+    try:
+        from app.services.cache import _redis
+        rds = _redis()
+        if rds is None:
+            return None  # redis 不通 → 不限流, 让原逻辑跑
+        import time, uuid
+        slot_id = f'slot:{uuid.uuid4().hex[:12]}'
+        deadline = time.time() + CLAUDE_CLI_WAIT_TIMEOUT
+        while time.time() < deadline:
+            # 数当前持有 slot 数 (key TTL 300s, 跟 timeout 一致, 防遗漏释放)
+            held = rds.scard('claude_cli:active') or 0
+            if held < CLAUDE_CLI_MAX_CONCURRENT:
+                rds.sadd('claude_cli:active', slot_id)
+                rds.expire('claude_cli:active', 600)  # 整 set 兜底 expire
+                return slot_id
+            time.sleep(2)
+        return None
+    except Exception:
+        return None
+
+
+def _release_claude_cli_slot(slot_id: str | None) -> None:
+    if not slot_id:
+        return
+    try:
+        from app.services.cache import _redis
+        rds = _redis()
+        if rds is not None:
+            rds.srem('claude_cli:active', slot_id)
+    except Exception:
+        pass
+
 
 def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
                      max_tokens: int, model: str,
@@ -220,7 +261,14 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
     用 --print 非互動模式 + --output-format json 拿結構化結果（含 model/usage）。
 
     Phase 12.41: allowed_tools 让 LLM 可主动联网（e.g. ['WebSearch', 'WebFetch']）。
+
+    Phase 14k-79: 全局 semaphore 限并发 (CLAUDE_CLI_MAX_CONCURRENT=2)
     """
+    slot = _acquire_claude_cli_slot()
+    if slot is None:
+        # 拿不到 slot (60s wait timeout 或 redis 挂) → 不阻塞调用方, 让上游 fallback
+        raise RuntimeError(f'claude CLI 全局并发已满 ({CLAUDE_CLI_MAX_CONCURRENT}), 等 {CLAUDE_CLI_WAIT_TIMEOUT}s 仍未拿到 slot')
+
     args = ['claude', '--print', '--output-format', 'json', '--permission-mode', 'default']
     if model:
         args.extend(['--model', model])
@@ -229,13 +277,16 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
         args.extend(['--allowedTools', ' '.join(allowed_tools)])
     if system:
         args.extend(['--append-system-prompt', system])
-    proc = subprocess.run(
-        args,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout if timeout is not None else CLAUDE_CLI_TIMEOUT,
-    )
+    try:
+        proc = subprocess.run(
+            args,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout if timeout is not None else CLAUDE_CLI_TIMEOUT,
+        )
+    finally:
+        _release_claude_cli_slot(slot)
     if proc.returncode != 0:
         raise RuntimeError(f'claude CLI exited {proc.returncode}: {(proc.stderr or "").strip()[:300]}')
     try:

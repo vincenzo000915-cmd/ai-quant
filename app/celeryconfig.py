@@ -97,11 +97,14 @@ beat_schedule = {
         'schedule': crontab(minute='20', hour='*/6'),
     },
 
-    # === Phase 14k-45 L1: AI 市场分析 brief prewarm — 每 15min ===
-    'prewarm-market-brief': {
-        'task': 'app.tasks.strategy_tasks.prewarm_market_brief',
-        'schedule': crontab(minute='*/15'),
-    },
+    # === Phase 14k-45 L1: AI 市场分析 brief prewarm ===
+    # Phase 14k-79 临时禁用: claude CLI 单次 ~3min × 7 symbol = 21min, lock TTL 14min 失效, CPU 雪崩
+    # advisor _get_market_brief 调 analyze_market 时按需懒加载即可 (cache 30min TTL 仍生效)
+    # 修完 LLM 调用瓶颈 (e.g. concurrent semaphore / shorter prompt / async batch) 再恢复
+    # 'prewarm-market-brief': {
+    #     'task': 'app.tasks.strategy_tasks.prewarm_market_brief',
+    #     'schedule': crontab(minute='*/15'),
+    # },
 
     # === Phase 14k-45 L2: 信号 watcher 检查 — 每 5min ===
     'check-signal-watchers': {
