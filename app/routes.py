@@ -1551,9 +1551,10 @@ def auth_check():
 
 @api_bp.route('/preflight', methods=['GET'])
 def preflight_check():
-    """Phase 6.6: 切到 LIVE 前的檢查清單。慢（含 OKX/Telegram 實際呼叫），同步。"""
+    """Phase 6.6 + 14k-87: 切到 LIVE 前的檢查清單。慢（含 OKX/HL/Telegram 實際呼叫），同步。
+    Phase 14k-87: 按 current user 已绑交易所自动 dispatch (OKX env / HL per-user)."""
     from app.services.preflight import run_preflight
-    return jsonify(run_preflight())
+    return jsonify(run_preflight(user_id=current_user_id() or 1))
 
 
 @api_bp.route('/config', methods=['PUT'])
@@ -1578,7 +1579,7 @@ def update_system_config():
                 'hint': '先打 GET /api/preflight 確認所有檢查通過，再帶 confirm_live=true',
             }), 400
         from app.services.preflight import run_preflight
-        pf = run_preflight()
+        pf = run_preflight(user_id=current_user_id() or 1)
         if not pf['ok']:
             return jsonify({
                 'error': 'pre-flight failed — 不允許切 LIVE',
