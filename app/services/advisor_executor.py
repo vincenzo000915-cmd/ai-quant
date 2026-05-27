@@ -448,10 +448,10 @@ def run_auto_apply() -> dict:
     applied: list[dict] = []
     skipped: list[dict] = []
     mutating_applied = 0   # 14k-71: 只数 mutating action 计 cap
-    # 14k-72: 每轮 advisor 限 dispatch heavy async tasks (防 worker backlog 阻塞 prewarm/signal)
-    # 一轮跑了 5 个 risk_opt + 5 个 grid → 10 task 同时排队, 4-worker pool 卡 30+ 分钟
-    # heavy task = optimize_risk_and_apply / optimize_strategy_params / synthesize_dynamic_strategy
-    HEAVY_ACTIONS_PER_CYCLE = 3
+    # 14k-72/74: 每轮 advisor 限 heavy task — 14k-74 更狠 3→2 (worker 仍堵)
+    # 单 heavy task 100-700s, 即使限 3/cycle 跨 cycle 仍累积 (5 cycles × 3 = 15)
+    # 14k-74 配合 worker concurrency 4→8 (docker-compose.yml)
+    HEAVY_ACTIONS_PER_CYCLE = 2
     heavy_dispatched = 0
     HEAVY_ACTIONS = {'optimize_strategy_risk_full', 'propose_signal_grid', 'invent_new_strategy'}
 
