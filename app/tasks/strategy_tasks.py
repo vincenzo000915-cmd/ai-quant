@@ -882,15 +882,15 @@ def auto_backtest_translated_candidates(max_count: int = 20):
 
 @celery_app.task
 def reconcile_okx_positions():
-    """Phase 8.2: 每 5 min 對賬本地 vs OKX SWAP 持倉"""
-    from app.services.reconciliation import reconcile
-    r = reconcile()
-    if not r.get('ok'):
-        return f'reconcile error: {r.get("error")}'
+    """Phase 8.2 + 14k-81: 每 5 min 對賬 OKX + Hyperliquid 持仓 (全交易所)"""
+    from app.services.reconciliation import reconcile_all
+    r = reconcile_all()
     actions = r.get('actions', [])
+    err_suffix = f' (errors: {len(r["errors"])})' if r.get('errors') else ''
     if not actions:
-        return f'OK: OKX={r["okx_open_count"]} local={r["local_open_count"]}'
-    return f'reconcile: {len(actions)} action(s) — {[a["type"] for a in actions]}'
+        return (f'OK: OKX={r["okx_open_count"]} HL={r["hl_open_count"]} '
+                f'local={r["local_open_count"]} hl_users={r.get("hl_users_checked", 0)}{err_suffix}')
+    return f'reconcile: {len(actions)} action(s){err_suffix} — {[a["type"] for a in actions]}'
 
 
 @celery_app.task

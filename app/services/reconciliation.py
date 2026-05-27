@@ -28,10 +28,188 @@ def _inst_id_to_symbol(inst_id: str) -> str:
     return base
 
 
+def reconcile_all() -> dict:
+    """Phase 14k-81 全交易所对账入口.
+    - OKX: 走 reconcile() (单 admin / 系统级 OKX creds)
+    - HL: 逐个 HL bound user 走 reconcile_hl_user() (per-user creds)
+    返回 merged actions + ok 标识.
+    """
+    from app.models import HyperliquidCredentials
+    okx_r = reconcile()  # OKX 不变, 原逻辑
+    merged_actions = list(okx_r.get('actions') or [])
+    hl_total_open = 0
+    hl_errors = []
+
+    try:
+        hl_users = HyperliquidCredentials.query.filter_by(is_active=True).all()
+    except Exception as e:
+        hl_users = []
+        hl_errors.append(f'list HL users: {type(e).__name__}: {e}')
+
+    for hl_rec in hl_users:
+        try:
+            r = reconcile_hl_user(hl_rec.user_id)
+            if r.get('ok'):
+                merged_actions.extend(r.get('actions') or [])
+                hl_total_open += r.get('hl_open_count', 0)
+            else:
+                hl_errors.append(f'user_id={hl_rec.user_id}: {r.get("error")}')
+        except Exception as e:
+            hl_errors.append(f'user_id={hl_rec.user_id}: {type(e).__name__}: {e}')
+
+    return {
+        'ok': okx_r.get('ok') and not hl_errors,
+        'okx_open_count': okx_r.get('okx_open_count', 0),
+        'hl_open_count': hl_total_open,
+        'local_open_count': okx_r.get('local_open_count', 0),
+        'actions': merged_actions,
+        'hl_users_checked': len(hl_users),
+        'errors': hl_errors,
+        'is_halted_now': okx_r.get('is_halted_now', False),
+    }
+
+
+def reconcile_hl_user(user_id: int) -> dict:
+    """Phase 14k-81: 单个 HL user 对账. 跟 reconcile() (OKX) 同 3 类 mismatch 逻辑,
+    但 HL 不用 contract_size — pos_contracts 直接是 base unit (eg 0.0001 BTC).
+    """
+    from app.models import Strategy
+    from app.services.hyperliquid_creds import get_decrypted_for_user
+    from app.services.hyperliquid_service import fetch_positions as hl_fetch_positions
+
+    creds = get_decrypted_for_user(user_id)
+    if not creds:
+        return {'ok': False, 'error': f'no HL creds for user_id={user_id}', 'actions': []}
+
+    actions = []
+    try:
+        hl_positions = hl_fetch_positions(creds)
+    except Exception as e:
+        return {'ok': False, 'error': f'fetch_positions: {type(e).__name__}: {e}', 'actions': []}
+
+    # 只比对该 user 的 HL 策略
+    hl_strat_ids = {s.id for s in Strategy.query.filter(
+        Strategy.user_id == user_id,
+        Strategy.exchange == 'hyperliquid',
+    ).all()}
+    local_open = Position.query.filter(
+        Position.status == 'open',
+        Position.strategy_id.in_(hl_strat_ids) if hl_strat_ids else False,
+    ).all() if hl_strat_ids else []
+
+    hl_by_key = {}
+    for p in hl_positions:
+        key = (p['symbol'], p['side'])
+        hl_by_key[key] = p
+
+    local_by_key = {}
+    for p in local_open:
+        key = (p.symbol, p.side or 'long')
+        local_by_key[key] = p
+
+    # === (a) local 有, HL 无 → 本地补平 ===
+    for key, lp in local_by_key.items():
+        if key not in hl_by_key:
+            try:
+                from app.services.hyperliquid_service import get_ticker as hl_get_ticker
+                t = hl_get_ticker(lp.symbol, creds.get('network') or 'mainnet')
+                current = float(t.get('price') or lp.entry_price)
+                # HL 没合约张数概念, 直接用 base size 算 PnL
+                pnl_raw_pct = (current - lp.entry_price) / lp.entry_price * 100
+                if (lp.side or 'long') == 'short':
+                    pnl_raw_pct = -pnl_raw_pct
+                # 用本地杠杆 (Strategy.params.risk_params.leverage), 没的话 fallback 3
+                strat = Strategy.query.get(lp.strategy_id)
+                lev = 3.0
+                try:
+                    lev = float((strat.params or {}).get('risk_params', {}).get('leverage') or 3.0)
+                except Exception:
+                    pass
+                pnl_pct = pnl_raw_pct * lev
+                pnl = pnl_raw_pct * lp.size * lp.entry_price * lev / 100
+                trade = Trade(
+                    position_id=lp.id, strategy_id=lp.strategy_id,
+                    user_id=lp.user_id,
+                    symbol=lp.symbol, side=lp.side or 'long',
+                    entry_price=lp.entry_price, exit_price=current,
+                    quantity=lp.size, pnl=pnl, pnl_percent=pnl_pct,
+                    entry_time=lp.opened_at, exit_time=datetime.datetime.utcnow(),
+                    reason='reconcile_orphan_hl',
+                )
+                lp.status = 'closed'
+                lp.closed_at = datetime.datetime.utcnow()
+                lp.current_price = current
+                lp.realized_pnl = pnl
+                db.session.add(trade)
+                actions.append({
+                    'type': 'hl_local_orphan_closed',
+                    'position_id': lp.id, 'strategy_id': lp.strategy_id,
+                    'symbol': lp.symbol, 'pnl': round(pnl, 4),
+                })
+                _tg(
+                    f'⚠️ <b>HL 对账 · Reconcile: 持仓已自动关闭</b>\n'
+                    f'持仓 #{lp.id} ({lp.symbol} {lp.side}) 显示开仓中, 但 Hyperliquid 已平.\n'
+                    f'Local position #{lp.id} was open, but already closed on Hyperliquid.\n'
+                    f'已同步关闭 · 估算盈亏 ${pnl:.2f}',
+                    event_key=f'hl_orphan_local_{lp.id}',
+                )
+            except Exception as e:
+                actions.append({'type': 'hl_local_orphan_error', 'position_id': lp.id, 'error': str(e)})
+
+    db.session.commit()
+
+    # === (b) HL 有, local 无 — 危险, halt ===
+    hl_orphans = [op for k, op in hl_by_key.items() if k not in local_by_key]
+    if hl_orphans:
+        details = '\n'.join(
+            f'  {p["inst_id"]} {p["side"]} {p["pos_contracts"]:.6f} @ ${p["avg_px"]:.0f}'
+            for p in hl_orphans
+        )
+        set_halted(f'reconcile: HL user {user_id} 有 {len(hl_orphans)} 個本地不存在的持倉')
+        _tg(
+            f'🚨 <b>HL 对账 · 发现异常持仓 (已自动停单)</b>\n'
+            f'Hyperliquid 上有系统不知道的持仓:\n{details}\n\n'
+            f'请到 HL 检查是手动开的还是策略误开, 平仓后到 Dashboard 解除停单.',
+            event_key=f'hl_orphan_user_{user_id}', force=True,
+        )
+        actions.append({'type': 'hl_orphan_halted', 'user_id': user_id,
+                        'count': len(hl_orphans), 'details': hl_orphans})
+
+    # === (c) 两边都有 — drift 检查 (HL 不用 contract_size, 直接比 base) ===
+    drift_alerts = []
+    for key in set(hl_by_key.keys()) & set(local_by_key.keys()):
+        op = hl_by_key[key]
+        lp = local_by_key[key]
+        hl_base_amt = abs(op['pos_contracts'])
+        if abs(hl_base_amt - lp.size) / max(lp.size, 1e-9) > 0.05:
+            drift_alerts.append({
+                'position_id': lp.id, 'symbol': lp.symbol,
+                'local_size': lp.size, 'hl_size_base': hl_base_amt,
+            })
+    if drift_alerts:
+        details = '\n'.join(
+            f'  #{d["position_id"]} {d["symbol"]} 本地 {d["local_size"]:.6f} vs HL {d["hl_size_base"]:.6f}'
+            for d in drift_alerts
+        )
+        _tg(
+            f'⚠️ <b>HL 对账 · 持仓大小不一致</b>\n{details}\n\n'
+            f'不影响运行, 但建议手动检查.',
+            event_key=f'hl_size_drift_user_{user_id}',
+        )
+        actions.append({'type': 'hl_size_drift', 'user_id': user_id, 'items': drift_alerts})
+
+    return {
+        'ok': True,
+        'hl_open_count': len(hl_positions),
+        'local_open_count': len(local_open),
+        'actions': actions,
+    }
+
+
 def reconcile() -> dict:
     """跑一次對賬。回傳統計 + 觸發的動作清單.
 
-    Phase 14k-12: 仅 OKX 策略对账 — HL 策略 PnL/positions 走 HL 自有逻辑 (后续单独加).
+    Phase 14k-12: 仅 OKX 策略对账 — HL 策略走 reconcile_hl_user (14k-81).
     """
     actions = []
     try:
