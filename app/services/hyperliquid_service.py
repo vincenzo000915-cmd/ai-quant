@@ -332,6 +332,19 @@ def place_order_live(
     if size_base <= 0:
         raise ValueError('size 计算 ≤ 0')
 
+    # Phase 14k-101: 按 HL meta 的 szDecimals round size — 否则 "Order has invalid size"
+    # 实测今早 3 笔 AVAX orphan close 根因: AVAX szDecimals=2 但 code round 到 6 decimals
+    # BTC=5 / ETH=4 / SOL=AVAX=2 / ARB=SUI=LINK=1 / DOGE=0 — 必须按 coin 精度截
+    try:
+        from app.services.hl_meta import get_hl_entry
+        entry = get_hl_entry(symbol)
+        sz_dec = int(entry.get('szDecimals')) if entry else 6
+    except Exception:
+        sz_dec = 6   # fallback (保守, 多数 coin 6 位够)
+    size_base_rounded = round(size_base, sz_dec)
+    if size_base_rounded <= 0:
+        raise ValueError(f'size {size_base} 按 szDecimals={sz_dec} round 后 = 0 (size_usdt 太小)')
+
     is_buy = side.lower() in ('buy', 'long')
 
     # 先设杠杆 (cross margin)
@@ -346,7 +359,7 @@ def place_order_live(
     res = exchange.market_open(
         name=base,
         is_buy=is_buy,
-        sz=round(size_base, 6),
+        sz=size_base_rounded,   # 14k-101: 按 szDecimals 精度
         slippage=0.05,   # 5% max slippage
         cloid=None,      # SDK 内部生成
     )
@@ -368,9 +381,10 @@ def place_order_live(
         'raw': res,
         'symbol': symbol, 'base': base,
         'side': 'long' if is_buy else 'short',
-        'size_base': round(size_base, 6),
+        'size_base': size_base_rounded,   # 14k-101: 真发出的 size (已按 szDecimals round)
         'notional_usdt': round(notional, 2),
         'leverage': leverage,
+        'sz_decimals': sz_dec,             # 14k-101: debug 用
         'exchange': 'hyperliquid',
         'reject_reason': reject_error,    # 14k-85: caller 可看具体被拒原因
         'status_kind': ('filled' if filled_ok else
