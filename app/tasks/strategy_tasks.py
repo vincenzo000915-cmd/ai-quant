@@ -509,18 +509,28 @@ def _run_signals(strategy_id=None, category_filter=None):
 
                 order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
 
-                # Phase 12.10 + 14k-12: live 平倉用 OKX 真實 balChg 覆寫 PnL (含手續費)
-                # HL 策略 skip — HL fill 信息在 order_raw 里, PnL 系统自算
-                if mode == 'live' and order and not order.get('simulated') and (s.exchange or 'okx') == 'okx':
+                # Phase 12.10 + 14k-12 + 14k-86: live 平倉用真實 balChg 覆寫 PnL (含手續費)
+                # 按 exchange dispatch — OKX 走 fetch_okx_order_real_pnl, HL 走 fetch_order_real_pnl
+                if mode == 'live' and order and not order.get('simulated'):
+                    strat_ex = (s.exchange or 'okx').lower()
                     try:
-                        from app.services.exchange_service import fetch_okx_order_real_pnl, _okx_symbol, _resolve_creds
                         ord_id = order.get('id') if isinstance(order, dict) else None
-                        real = fetch_okx_order_real_pnl(_okx_symbol(s.symbol).replace('/', '-') + '-SWAP', ord_id,
-                                                          creds=_resolve_creds(s.user_id))
+                        if strat_ex == 'okx':
+                            from app.services.exchange_service import fetch_okx_order_real_pnl, _okx_symbol, _resolve_creds
+                            real = fetch_okx_order_real_pnl(
+                                _okx_symbol(s.symbol).replace('/', '-') + '-SWAP', ord_id,
+                                creds=_resolve_creds(s.user_id),
+                            )
+                        elif strat_ex == 'hyperliquid':
+                            from app.services.hyperliquid_service import fetch_order_real_pnl as hl_fetch_pnl
+                            from app.services.hyperliquid_creds import get_decrypted_for_user
+                            real = hl_fetch_pnl(s.symbol, ord_id, creds=get_decrypted_for_user(s.user_id))
+                        else:
+                            real = {'found': False}
                         if real.get('found'):
                             pnl_leveraged = real['real_pnl']
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f'[{strat_ex}] real_pnl fetch fail (signal close): {type(e).__name__}: {e}')
 
                 trade = Trade(
                     position_id=position.id,
@@ -643,18 +653,24 @@ def check_stop_loss():
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
-                # Phase 12.10 + 14k-12: live 用 OKX 真實 balChg 覆寫 PnL — 仅 OKX 路径
-                _strat_exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
-                if mode == 'live' and order and not order.get('simulated') and _strat_exch == 'okx':
+                # Phase 12.10 + 14k-12 + 14k-86: live 用真實 balChg 覆寫 PnL — 按 exchange dispatch
+                if mode == 'live' and order and not order.get('simulated'):
                     try:
-                        from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
-                        inst = pos.symbol.replace('/', '-') + '-SWAP'
                         ord_id = order.get('id') if isinstance(order, dict) else None
-                        real = fetch_okx_order_real_pnl(inst, ord_id, creds=_resolve_creds(pos.user_id))
+                        if _exch == 'okx':
+                            from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
+                            inst = pos.symbol.replace('/', '-') + '-SWAP'
+                            real = fetch_okx_order_real_pnl(inst, ord_id, creds=_resolve_creds(pos.user_id))
+                        elif _exch == 'hyperliquid':
+                            from app.services.hyperliquid_service import fetch_order_real_pnl as hl_fetch_pnl
+                            from app.services.hyperliquid_creds import get_decrypted_for_user
+                            real = hl_fetch_pnl(pos.symbol, ord_id, creds=get_decrypted_for_user(pos.user_id))
+                        else:
+                            real = {'found': False}
                         if real.get('found'):
                             pnl = real['real_pnl']
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f'[{_exch}] real_pnl fetch fail (stop_loss): {type(e).__name__}: {e}')
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,
@@ -683,17 +699,24 @@ def check_stop_loss():
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
-                # Phase 14k-12: 仅 OKX 走 balChg 覆写
-                if mode == 'live' and order and not order.get('simulated') and _exch == 'okx':
+                # Phase 14k-12 + 14k-86: live balChg 覆写 — 按 exchange dispatch
+                if mode == 'live' and order and not order.get('simulated'):
                     try:
-                        from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
-                        inst = pos.symbol.replace('/', '-') + '-SWAP'
                         ord_id = order.get('id') if isinstance(order, dict) else None
-                        real = fetch_okx_order_real_pnl(inst, ord_id, creds=_resolve_creds(pos.user_id))
+                        if _exch == 'okx':
+                            from app.services.exchange_service import fetch_okx_order_real_pnl, _resolve_creds
+                            inst = pos.symbol.replace('/', '-') + '-SWAP'
+                            real = fetch_okx_order_real_pnl(inst, ord_id, creds=_resolve_creds(pos.user_id))
+                        elif _exch == 'hyperliquid':
+                            from app.services.hyperliquid_service import fetch_order_real_pnl as hl_fetch_pnl
+                            from app.services.hyperliquid_creds import get_decrypted_for_user
+                            real = hl_fetch_pnl(pos.symbol, ord_id, creds=get_decrypted_for_user(pos.user_id))
+                        else:
+                            real = {'found': False}
                         if real.get('found'):
                             pnl = real['real_pnl']
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f'[{_exch}] real_pnl fetch fail (take_profit): {type(e).__name__}: {e}')
                 trade = Trade(
                     position_id=pos.id,
                     strategy_id=pos.strategy_id,

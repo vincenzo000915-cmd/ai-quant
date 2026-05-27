@@ -195,6 +195,80 @@ def fetch_agent_validity(main_address: str, agent_address: str,
     return None
 
 
+def fetch_order_real_pnl(symbol: str, oid: int | str | None = None,
+                          max_wait_sec: float = 5.0,
+                          creds: dict | None = None) -> dict:
+    """Phase 14k-86: 查 HL 真实成交盈亏 + 手续费 (对应 OKX fetch_okx_order_real_pnl)
+
+    HL info.user_fills 返回最近 fills, 每条含:
+      coin / px / sz / side / time / closedPnl / fee / oid / tid / dir / hash
+    closedPnl = 平仓时实现的 PnL (HL 内部已扣 funding)
+    fee = 该笔手续费 (正值, USDC)
+
+    返回 OKX-compat shape:
+      {price_pnl, fee, real_pnl, fill_count, found, error?}
+      price_pnl = closedPnl 合计 (HL 给的 "实现 PnL", 不含 fee)
+      fee = -|fee 合计| (负值表 outflow, 跟 OKX 一致)
+      real_pnl = price_pnl + fee (净影响余额)
+    """
+    import time as _time
+    if not creds or not creds.get('main_address'):
+        return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0,
+                'found': False, 'fill_count': 0, 'error': 'no HL creds'}
+
+    base = hl_base(symbol)
+    main = creds['main_address']
+    network = creds.get('network') or 'mainnet'
+
+    def _scan() -> tuple[list, str | None]:
+        try:
+            info = _info_client(network)
+            fills = info.user_fills(main) or []
+        except Exception as e:
+            return [], str(e)
+        matches = []
+        for f in fills:
+            if f.get('coin') != base:
+                continue
+            # oid 可能是 int 或 str, HL 实际是 int
+            if oid is not None and str(f.get('oid')) != str(oid):
+                continue
+            matches.append(f)
+        return matches, None
+
+    deadline = _time.time() + max_wait_sec
+    last_err = None
+    prev_count = -1
+    matches: list = []
+    while _time.time() < deadline:
+        ms, err = _scan()
+        if err:
+            last_err = err
+        elif ms and len(ms) == prev_count:
+            matches = ms
+            break
+        elif ms:
+            matches = ms
+            prev_count = len(ms)
+        _time.sleep(0.5)
+
+    if not matches:
+        return {'price_pnl': 0.0, 'fee': 0.0, 'real_pnl': 0.0,
+                'found': False, 'fill_count': 0, 'error': last_err}
+
+    price_pnl = sum(float(m.get('closedPnl') or 0) for m in matches)
+    total_fee = sum(float(m.get('fee') or 0) for m in matches)
+    # HL fee 是正值 (代表你付了多少), 转为负值跟 OKX shape 一致
+    fee_signed = -abs(total_fee)
+    return {
+        'price_pnl': round(price_pnl, 6),
+        'fee': round(fee_signed, 6),
+        'real_pnl': round(price_pnl + fee_signed, 6),
+        'found': True,
+        'fill_count': len(matches),
+    }
+
+
 def fetch_positions(creds: dict) -> list[dict]:
     """[{inst_id, pos_contracts, side, avg_px, upl, ...}] — 兼容 OKX shape."""
     if not creds or not creds.get('main_address'):
