@@ -33,6 +33,22 @@ const ACTION_META = {
 // fan_out 預設目標幣種（除 BTC 之外的 3 個流動性最好的）
 const FAN_OUT_DEFAULTS = ['ETH/USDT', 'SOL/USDT', 'AVAX/USDT'];
 
+// Phase 14k-94: cap 状态分类 (frontend-side compute)
+const MUTATING_ACTIONS = new Set([
+  'apply_params', 'pause', 'retire', 'fan_out', 'promote_candidate',
+  'adjust_global_sizing', 'adjust_strategy_risk',
+]);
+const HEAVY_ACTIONS = new Set([
+  'optimize_strategy_risk_full', 'propose_signal_grid', 'invent_new_strategy',
+]);
+
+const MODE_LABELS = {
+  manual:    { label: '手动', color: 'default',  desc: '所有动作需点击' },
+  preview:   { label: '预览', color: 'info',     desc: 'AI 只提议不执行' },
+  semi_auto: { label: '半自动', color: 'warning', desc: 'Sharpe≥2.5 自动 promote' },
+  full_auto: { label: '全自动', color: 'success', desc: 'AI 自动执行白名单 action' },
+};
+
 function AdvisorPanelInner() {
   const [data, setData] = useState(null);
   const [config, setConfig] = useState(null);
@@ -189,8 +205,21 @@ function AdvisorPanelInner() {
     }
   };
 
-  const items = data?.items || [];
+  // Phase 14k-94: 隐藏 promote_candidate items - 已在 "AI 精选策略" panel 显示, 避免双显
+  const rawItems = data?.items || [];
+  const items = rawItems.filter(it => it.action !== 'promote_candidate');
+  const promoteHidden = rawItems.length - items.length;
   const summary = data?.summary || {};
+
+  // Phase 14k-94: cap state 计算 (frontend-side, 用 config + 当前 items 估算)
+  const allowed = new Set(config?.auto_apply_actions || []);
+  const autoOn = !!config?.auto_apply_enabled;
+  const dailyCap = Number(config?.auto_apply_max_per_day ?? 5);
+  const aiMode = config?.ai_decision_mode || 'manual';
+  // 估算今日已用 mutating cap 与剩余 (粗略, 真值在 backend audit_log)
+  // 由 runAutoNow 返回的 today_count_after 更新, 这里给一个保守估计
+  const capRemaining = Math.max(0, dailyCap);   // 先按 cap 全可用估算, runAutoNow 后更新
+  const modeMeta = MODE_LABELS[aiMode] || { label: aiMode, color: 'default', desc: '' };
 
   return (
     <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid rgba(34,211,238,0.20)' }}>
@@ -262,9 +291,47 @@ function AdvisorPanelInner() {
           </Box>
         </Box>
 
+        {/* Phase 14k-94: AI mode banner — user 看清当前模式 */}
+        {config && (
+          <Alert
+            severity={aiMode === 'full_auto' ? 'info' : (aiMode === 'manual' ? 'warning' : 'success')}
+            sx={{ mb: 1, py: 0.3 }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+              <Typography component="span" variant="caption">
+                <strong>AI 决策模式: {modeMeta.label}</strong> · {modeMeta.desc}
+              </Typography>
+              {aiMode === 'full_auto' && autoOn && (
+                <Chip
+                  size="small"
+                  label={`mutating cap ${dailyCap}/天`}
+                  sx={{ height: 18, fontSize: 10, bgcolor: 'rgba(34,211,238,0.2)' }}
+                />
+              )}
+              {data?.thresholds_used && (
+                <Chip
+                  size="small"
+                  label="advisor 1h 重算一次"
+                  variant="outlined"
+                  sx={{ height: 18, fontSize: 10 }}
+                />
+              )}
+            </Box>
+          </Alert>
+        )}
+
+        {/* Phase 14k-94: 隐藏的 promote_candidate items 数 + 跳转提示 */}
+        {promoteHidden > 0 && (
+          <Alert severity="info" sx={{ mb: 1, py: 0.3 }}>
+            <Typography variant="caption">
+              💡 {promoteHidden} 个"上线新候选"建议已移到 <strong>AI 精选策略</strong> 面板（避免重复显示）
+            </Typography>
+          </Alert>
+        )}
+
         {config?.auto_apply_enabled && (config?.auto_apply_actions?.length || 0) > 0 ? (
           <Alert severity="success" icon={<SmartToyIcon />} sx={{ mb: 1.5, py: 0.3 }}>
-            智能托管已啟用：自動執行 <strong>{config.auto_apply_actions.join(' / ')}</strong>，每日上限 {config.auto_apply_max_per_day} 次，每 4 小時掃描一次（+ 5min 偏移）。
+            智能托管已啟用：自動執行 <strong>{config.auto_apply_actions.join(' / ')}</strong>，每日上限 {config.auto_apply_max_per_day} 次，每 1 小時掃描一次（:10）。
             {config.trading_mode === 'live' && (config.auto_apply_actions.includes('retire')) && (
               <Typography component="span" variant="caption" sx={{ display: 'block', mt: 0.5, opacity: 0.85 }}>
                 ⓘ LIVE 模式下 retire 會被內部安全網跳過 — 改用 pause 代替。
@@ -287,10 +354,35 @@ function AdvisorPanelInner() {
 
         <Collapse in={expanded}>
           <Stack spacing={1}>
-            {items.map((item, idx) => {
-              const sev = SEVERITY_META[item.severity] || SEVERITY_META.info;
-              const act = ACTION_META[item.action] || { emoji: '•', label: item.action, tip: '' };
-              return (
+            {(() => {
+              // Phase 14k-94: 计算每 item 自动执行状态 (cap/whitelist/mode)
+              let mutCount = 0, hvyCount = 0;
+              const HEAVY_PER_CYCLE = 2;
+              return items.map((item, idx) => {
+                const sev = SEVERITY_META[item.severity] || SEVERITY_META.info;
+                const act = ACTION_META[item.action] || { emoji: '•', label: item.action, tip: '' };
+                // 14k-94: 自动状态 chip
+                let autoChip = null;
+                if (!autoOn) {
+                  autoChip = { label: '托管已关', color: '#999' };
+                } else if (!allowed.has(item.action)) {
+                  autoChip = { label: '未授权', color: '#999' };
+                } else if (HEAVY_ACTIONS.has(item.action)) {
+                  if (hvyCount >= HEAVY_PER_CYCLE) {
+                    autoChip = { label: '下轮派 (heavy 限 2/cycle)', color: '#f59e0b' };
+                  } else {
+                    autoChip = { label: '本轮自动派', color: '#22c55e' };
+                  }
+                  hvyCount++;
+                } else if (MUTATING_ACTIONS.has(item.action)) {
+                  if (mutCount >= capRemaining) {
+                    autoChip = { label: `cap ${dailyCap} 满, 明日重试`, color: '#f59e0b' };
+                  } else {
+                    autoChip = { label: '本轮自动执行', color: '#22c55e' };
+                  }
+                  mutCount++;
+                }
+                return (
                 <Box
                   key={idx}
                   sx={{
@@ -317,6 +409,21 @@ function AdvisorPanelInner() {
                       <Typography variant="body2" sx={{ fontWeight: 600 }}>
                         #{item.strategy_id} {item.strategy_name}
                       </Typography>
+                      {/* Phase 14k-94: 自动执行状态 chip */}
+                      {autoChip && (
+                        <Chip
+                          label={autoChip.label}
+                          size="small"
+                          sx={{
+                            height: 18,
+                            fontSize: 10,
+                            bgcolor: autoChip.color === '#999' ? 'rgba(255,255,255,0.08)' : `${autoChip.color}22`,
+                            color: autoChip.color === '#999' ? 'text.secondary' : autoChip.color,
+                            border: `1px solid ${autoChip.color}`,
+                            ml: 0.5,
+                          }}
+                        />
+                      )}
                     </Box>
                     <Typography variant="caption" sx={{ display: 'block', color: 'text.primary', lineHeight: 1.5 }}>
                       {item.reason}
@@ -344,7 +451,8 @@ function AdvisorPanelInner() {
                   )}
                 </Box>
               );
-            })}
+              });
+            })()}
           </Stack>
         </Collapse>
 

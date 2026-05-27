@@ -25,6 +25,14 @@ const fmtNum = (v, digits = 2) => {
   return n.toFixed(digits);
 };
 
+// Phase 14k-94: AI 决策模式标签 (跟 AdvisorPanel 同步)
+const MODE_LABELS = {
+  manual:    { label: '手动', desc: '候选需手动点"上线启动"' },
+  preview:   { label: '预览', desc: 'AI 只提议不执行' },
+  semi_auto: { label: '半自动', desc: 'Sharpe≥2.5 候选自动上线' },
+  full_auto: { label: '全自动', desc: '候选进 panel 时已尝试 auto-promote (cap 2/天)' },
+};
+
 export default function AiPickPanel() {
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -35,6 +43,13 @@ export default function AiPickPanel() {
   const [expandedIds, setExpandedIds] = useState({});
   // Phase 14h: per-item LLM 解释 (lazy-fetched after items load)
   const [explanations, setExplanations] = useState({});   // { [id]: { explanation, risk_warning, source, loading?, error? } }
+  // Phase 14k-94: AI 决策模式
+  const [config, setConfig] = useState(null);
+
+  // Phase 14k-94: 拉 config (用于显示 mode banner)
+  useEffect(() => {
+    fetch('/api/config').then(r => r.ok ? r.json() : null).then(c => c && setConfig(c)).catch(() => {});
+  }, []);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -386,6 +401,23 @@ export default function AiPickPanel() {
             </IconButton>
           </Tooltip>
         </Stack>
+
+        {/* Phase 14k-94: AI mode banner */}
+        {config?.ai_decision_mode && (() => {
+          const m = MODE_LABELS[config.ai_decision_mode] || { label: config.ai_decision_mode, desc: '' };
+          const sev = config.ai_decision_mode === 'full_auto' ? 'info' :
+                       config.ai_decision_mode === 'manual' ? 'warning' : 'success';
+          return (
+            <Alert severity={sev} sx={{ mb: 1.5, py: 0.3 }}>
+              <Typography variant="caption">
+                <strong>AI 决策模式: {m.label}</strong> · {m.desc}
+                {config.ai_decision_mode === 'full_auto' && config.auto_promote_max_per_day != null && (
+                  <span> · auto-promote cap {config.auto_promote_max_per_day}/天</span>
+                )}
+              </Typography>
+            </Alert>
+          );
+        })()}
 
         {err && (
           <Alert severity="error" sx={{ mb: 1.5 }} onClose={() => setErr(null)}>
