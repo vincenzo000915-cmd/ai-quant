@@ -106,11 +106,15 @@ _HL_STABLECOINS = ('USDC', 'USDT0', 'USDH', 'USDE')
 
 
 def fetch_balance(creds: dict) -> dict:
-    """Phase 14k-9: HL Unified Account — spot stablecoin + perp accountValue 合算
+    """Phase 14k-9 + 14k-105: HL Unified Account 余额 — 修 double-count
 
-    HL 现在是统一保证金账户: spot 里的 USDC 可直接当 perp collateral, 不需手动 transfer.
-    返回 OKX-compat shape:
-      {USDT: {total, free, used}, _native_currency, _breakdown}
+    14k-9 原逻辑: total = spot + perp_accountValue
+    14k-105 修: HL Unified 下 spot USDC **本身就是** perp collateral
+      perp accountValue 含: 已 reserved 的 spot USDC + unrealizedPnl
+      spot + accountValue 会重复算 collateral 那部分 (实测多算 $5 / margin_used)
+
+    正确: total = spot + unrealized (or 等价 spot + (accountValue - margin_used))
+      实测: spot 70.32 + (4.98 - 5.03) = 70.27 ≈ 真实总值 (含 ETH 浮亏 -$0.05)
     """
     if not creds or not creds.get('main_address'):
         raise RuntimeError('HL creds 缺失 main_address')
@@ -124,6 +128,13 @@ def fetch_balance(creds: dict) -> dict:
     perp_value = float(margin_summary.get('accountValue', 0))
     perp_margin_used = float(margin_summary.get('totalMarginUsed', 0))
     perp_withdrawable = float(state.get('withdrawable', 0))
+    # 14k-105: 算 sum of unrealizedPnl across all positions
+    perp_upl = 0.0
+    for ap in (state.get('assetPositions') or []):
+        try:
+            perp_upl += float((ap.get('position') or {}).get('unrealizedPnl') or 0)
+        except (TypeError, ValueError):
+            pass
 
     # spot 账户 — 加总所有 stablecoin
     spot_total = 0.0
@@ -138,13 +149,12 @@ def fetch_balance(creds: dict) -> dict:
                 if amt > 0:
                     spot_breakdown[coin] = amt
     except Exception as e:
-        # spot 拉失败不影响 perp 数据
         spot_breakdown['_error'] = str(e)[:80]
 
-    # 统一总额: spot stablecoins + perp accountValue
-    total = spot_total + perp_value
-    # free: 总余 - 已用作 perp 保证金
-    free = max(0.0, total - perp_margin_used)
+    # 14k-105: total = spot + unrealized (accountValue 已含 spot 那部分, double-count fix)
+    total = spot_total + perp_upl
+    # free: 可立即取 (spot 总 - 已用作 perp margin)
+    free = max(0.0, spot_total - perp_margin_used)
 
     return {
         'USDT': {
@@ -158,6 +168,7 @@ def fetch_balance(creds: dict) -> dict:
             'spot_per_coin': spot_breakdown,
             'perp_account_value': round(perp_value, 4),
             'perp_margin_used': round(perp_margin_used, 4),
+            'perp_unrealized_pnl': round(perp_upl, 4),
             'perp_withdrawable': round(perp_withdrawable, 4),
         },
     }

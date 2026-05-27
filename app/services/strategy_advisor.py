@@ -1172,12 +1172,14 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
     # max_running 满 / capital_util > 70% → 新 invent 出来也无法 promote
     # advisor 当前 14k-91 在 catalog_clone 路径已检查, 但 invent 是独立路径漏了
     # 修: invent 前 check 同一组 gates, 全堵 skip
+    # 14k-104.1: scoped_query 没在 module 顶 import, 直接用 Strategy.query 全局看 (admin 看全部 OK)
     try:
         from app.services.config_service import get_config
         from app.services.llm_prompts.strategy_recommend import _get_user_capital
         from app.services.exchange_binding import primary_exchange as _pex
         cfg = get_config()
-        n_running = scoped_query(Strategy).filter_by(status='running').count()
+        # 14k-104.1: 用 Strategy.query (admin user_id=1 默认行为, 不用 scoped 也对)
+        n_running = Strategy.query.filter_by(status='running').count()
         max_running = int(cfg.get('auto_apply_max_running', 8))
         if n_running >= max_running:
             print(f'[invent] skip: running {n_running} >= max {max_running} (gates 堵, invent 也无法 promote)')
@@ -1186,7 +1188,7 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
         user_exchange = _pex(user_id) or 'okx'
         user_capital = _get_user_capital(user_id, exchange=user_exchange)
         if user_capital > 0:
-            running_strats = scoped_query(Strategy).filter_by(status='running').all()
+            running_strats = Strategy.query.filter_by(status='running').all()
             reserved = sum(float((s.params or {}).get('risk_params', {}).get('position_size_usdt') or 0)
                            for s in running_strats)
             new_size = float(cfg.get('trade_size_usdt') or 7)
