@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import time
 from typing import Any
 
 from app.services.llm_provider import call_llm
@@ -142,8 +143,12 @@ def analyze_market(symbol: str, timeframes: list[str] | None = None,
         prompt += json.dumps(ind, ensure_ascii=False) + "\n\n"
     prompt += "请输出 brief JSON (按 schema)."
 
+    # Phase 14k-77: cache key 用 15min quantized epoch 替代 last-candle close
+    # 之前 bug: close 每个 tick 变 → 每次 prewarm cache miss → 每次都 fork claude CLI
+    # 现在: 同一 15min window 内任意 caller 拿同 key → 真复用 cache (TTL 1800s)
+    bucket_15m = int(time.time() // 900) * 900
     sig_key = hashlib.sha256(
-        json.dumps([symbol, tfs, {tf: per_tf[tf].get('close') for tf in per_tf}],
+        json.dumps([symbol, tfs, bucket_15m],
                    sort_keys=True, default=str).encode()
     ).hexdigest()[:20]
 

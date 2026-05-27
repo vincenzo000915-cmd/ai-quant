@@ -2370,28 +2370,49 @@ def check_signal_watchers():
 @celery_app.task(name='app.tasks.strategy_tasks.prewarm_market_brief')
 def prewarm_market_brief():
     """每 15min 跑一次, 给所有 running 策略 symbol 暖 brief cache.
-    advisor 下次跑直接取 cache, 无 LLM 等待."""
+    advisor 下次跑直接取 cache, 无 LLM 等待.
+
+    Phase 14k-77: 加 Redis 单实例 lock + 同步 fork claude CLI (concurrency=1)
+    防 beat 派发叠 worker 8 并发 → 8 个 claude CLI 同时烧 CPU."""
     from app.models import Strategy
     from app.services.llm_prompts.market_analyst import analyze_market
     from app.services.audit import log as audit
+    from app.services.cache import _redis
 
-    symbols = set()
-    for s in Strategy.query.filter_by(status='running').all():
-        symbols.add(s.symbol)
-
-    results = {}
-    for sym in symbols:
+    # 14k-77: Redis 全局 lock 防多实例叠 (TTL 14min, 一定释放)
+    rds = _redis()
+    if rds is not None:
         try:
-            r = analyze_market(sym, timeframes=['15m', '1h', '4h'])
-            results[sym] = 'ok' if r.get('ok') else f"err:{r.get('error', 'unknown')[:50]}"
-        except Exception as e:
-            results[sym] = f'exception:{type(e).__name__}'
+            got = rds.set('lock:prewarm_market_brief', '1', nx=True, ex=840)
+            if not got:
+                return 'skipped: another prewarm instance running'
+        except Exception:
+            pass
 
     try:
-        audit('market_brief_prewarmed', symbols=list(symbols), results=results)
-    except Exception:
-        pass
-    return f'prewarmed {len(symbols)} symbols: {results}'
+        symbols = set()
+        for s in Strategy.query.filter_by(status='running').all():
+            symbols.add(s.symbol)
+
+        results = {}
+        for sym in symbols:
+            try:
+                r = analyze_market(sym, timeframes=['15m', '1h', '4h'])
+                results[sym] = 'ok' if r.get('ok') else f"err:{r.get('error', 'unknown')[:50]}"
+            except Exception as e:
+                results[sym] = f'exception:{type(e).__name__}'
+
+        try:
+            audit('market_brief_prewarmed', symbols=list(symbols), results=results)
+        except Exception:
+            pass
+        return f'prewarmed {len(symbols)} symbols: {results}'
+    finally:
+        if rds is not None:
+            try:
+                rds.delete('lock:prewarm_market_brief')
+            except Exception:
+                pass
 
 
 # ===== Phase 14k-29 L6: advisor 主动 invent 新策略 =====
