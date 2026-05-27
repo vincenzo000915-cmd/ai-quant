@@ -269,64 +269,86 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         duration_ms=result['duration_ms'],
         status='completed',
     )
-    db.session.add(bt)
-    db.session.flush()   # 取 id
+    # Phase 14k-95: 整段 INSERT + 最终 status update 包 try/except
+    # 之前 walkforward 5+min 后 connection 可能 stale (14k-76 idle_in_transaction)
+    # INSERT/flush/commit 任一失败都 raise → outer except 只 log 不更新 status
+    # → candidate 永远卡 'backtesting'. batch "20 跑完" 虚假成功.
+    # 修: 失败时 rollback + 重 query + status='error' + commit (新 connection)
+    try:
+        db.session.add(bt)
+        db.session.flush()   # 取 id
+        c.backtest_result_id = bt.id
 
-    c.backtest_result_id = bt.id
+        # Phase 5.4 + 14k-51: qualified 門檻 per-TF
+        is_res = wf.get('in_sample') or {}
+        oos_res = wf.get('out_sample') or {}
+        is_sh = is_res.get('sharpe_ratio')
+        oos_sh = oos_res.get('sharpe_ratio')
+        decay = wf.get('decay_pct')
+        full_res = wf.get('full') or {}
+        sfn_err_count = full_res.get('signal_fn_error_count', 0)
+        sfn_first_err = full_res.get('signal_fn_first_error')
 
-    # Phase 5.4 + 14k-51: qualified 門檻 per-TF (15m noise 大该严, 1d 样本少该宽)
-    # 14k-50: 先检查 signal_fn 异常 (优先于 sharpe), code error 单独标记便于 LLM 修
-    is_res = wf.get('in_sample') or {}
-    oos_res = wf.get('out_sample') or {}
-    is_sh = is_res.get('sharpe_ratio')
-    oos_sh = oos_res.get('sharpe_ratio')
-    decay = wf.get('decay_pct')
-    full_res = wf.get('full') or {}
-    sfn_err_count = full_res.get('signal_fn_error_count', 0)
-    sfn_first_err = full_res.get('signal_fn_first_error')
+        # 14k-51/68: per-TF gate (+ EV 维度)
+        tf_is_sh, tf_oos_sh, tf_min_trades, tf_max_decay, tf_min_ev = gate_for_tf(timeframe)
+        oos_pnl = oos_res.get('total_pnl') or 0
+        oos_capital = oos_res.get('initial_capital') or 100.0
+        is_trades = is_res.get('total_trades') or 0
+        oos_trades = oos_res.get('total_trades') or 0
+        oos_ev_pct = (oos_pnl / oos_trades / oos_capital * 100) if oos_trades else 0.0
 
-    # 14k-51/68: per-TF gate (+ EV 维度)
-    tf_is_sh, tf_oos_sh, tf_min_trades, tf_max_decay, tf_min_ev = gate_for_tf(timeframe)
-    # 14k-68: 算 OOS EV (期望收益/trade %)
-    oos_pnl = oos_res.get('total_pnl') or 0
-    oos_capital = oos_res.get('initial_capital') or 100.0
-    oos_ev_pct = (oos_pnl / oos_trades / oos_capital * 100) if oos_trades else 0.0
+        qualified_reasons = []
+        candle_n = full_res.get('candle_count', 1)
+        if sfn_err_count > max(10, candle_n * 0.1):
+            qualified_reasons.append(
+                f'signal_fn code error: {sfn_err_count}/{candle_n} candles raised '
+                f'({sfn_err_count/max(1,candle_n)*100:.0f}%); first: {sfn_first_err}'
+            )
+        if is_trades < tf_min_trades:
+            qualified_reasons.append(f'IS trades={is_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
+        if oos_trades < tf_min_trades:
+            qualified_reasons.append(f'OOS trades={oos_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
+        sharpe_ok = (is_sh is not None and is_sh >= tf_is_sh
+                     and oos_sh is not None and oos_sh >= tf_oos_sh)
+        ev_ok = (oos_ev_pct >= tf_min_ev)
+        if not (sharpe_ok or ev_ok) and is_trades >= tf_min_trades and oos_trades >= tf_min_trades:
+            qualified_reasons.append(
+                f'两条路都不过: sharpe IS={is_sh}/OOS={oos_sh} (需≥{tf_is_sh}/{tf_oos_sh}) '
+                f'AND OOS EV={oos_ev_pct:+.2f}% (需≥{tf_min_ev}%) — {timeframe} 门槛'
+            )
+        if decay is not None and decay > tf_max_decay:
+            qualified_reasons.append(f'OOS decay={decay}% > {tf_max_decay}% ({timeframe} 门槛, 过拟合)')
 
-    qualified_reasons = []
-    # 14k-50: signal_fn 大量 raise (>10% candles) → 不是策略烂, 是 code 错; 单独标记
-    candle_n = full_res.get('candle_count', 1)
-    if sfn_err_count > max(10, candle_n * 0.1):
-        qualified_reasons.append(
-            f'signal_fn code error: {sfn_err_count}/{candle_n} candles raised '
-            f'({sfn_err_count/max(1,candle_n)*100:.0f}%); first: {sfn_first_err}'
-        )
-
-    is_trades = is_res.get('total_trades') or 0
-    oos_trades = oos_res.get('total_trades') or 0
-    if is_trades < tf_min_trades:
-        qualified_reasons.append(f'IS trades={is_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
-    if oos_trades < tf_min_trades:
-        qualified_reasons.append(f'OOS trades={oos_trades} < {tf_min_trades} ({timeframe} 门槛, EV 样本不足)')
-    # 14k-68: 双轨制 — sharpe 路径 OR EV 路径过门槛即可 (user 哲学: 不只看胜率)
-    sharpe_ok = (is_sh is not None and is_sh >= tf_is_sh
-                 and oos_sh is not None and oos_sh >= tf_oos_sh)
-    ev_ok = (oos_ev_pct >= tf_min_ev)
-    if not (sharpe_ok or ev_ok) and is_trades >= tf_min_trades and oos_trades >= tf_min_trades:
-        qualified_reasons.append(
-            f'两条路都不过: sharpe IS={is_sh}/OOS={oos_sh} (需≥{tf_is_sh}/{tf_oos_sh}) '
-            f'AND OOS EV={oos_ev_pct:+.2f}% (需≥{tf_min_ev}%) — {timeframe} 门槛'
-        )
-    if decay is not None and decay > tf_max_decay:
-        qualified_reasons.append(f'OOS decay={decay}% > {tf_max_decay}% ({timeframe} 门槛, 过拟合)')
-
-    if not qualified_reasons:
-        c.status = 'qualified'
-        c.error_log = (f'qualified via {"sharpe+EV" if sharpe_ok and ev_ok else ("sharpe" if sharpe_ok else "EV")} '
-                       f'(OOS sharpe={oos_sh}, EV={oos_ev_pct:+.2f}%)')
-    else:
-        c.status = 'translated'
-        c.error_log = 'not qualified: ' + '; '.join(qualified_reasons)
-    db.session.commit()
+        if not qualified_reasons:
+            c.status = 'qualified'
+            c.error_log = (f'qualified via {"sharpe+EV" if sharpe_ok and ev_ok else ("sharpe" if sharpe_ok else "EV")} '
+                           f'(OOS sharpe={oos_sh}, EV={oos_ev_pct:+.2f}%)')
+        else:
+            c.status = 'translated'
+            c.error_log = 'not qualified: ' + '; '.join(qualified_reasons)
+        db.session.commit()
+    except Exception as _persist_err:
+        # 14k-95: 持久化失败 (连接断/PG kicked/etc) — 重 query 用新 connection 写 error 状态
+        print(f'[backtest_candidate] persist fail #{c.id}: {type(_persist_err).__name__}: {_persist_err}')
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        try:
+            # 重新查一次 (新 connection)
+            from app.models import StrategyCandidate as _SC
+            fresh = _SC.query.get(c.id)
+            if fresh is not None:
+                fresh.status = 'error'
+                fresh.error_log = f'[14k-95] persist fail: {type(_persist_err).__name__}: {str(_persist_err)[:200]}'
+                db.session.commit()
+        except Exception as _retry_err:
+            print(f'[backtest_candidate] retry persist also failed #{c.id}: {type(_retry_err).__name__}')
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+        return {'ok': False, 'error': f'persist: {type(_persist_err).__name__}'}
 
     return {
         'ok': True,
@@ -480,6 +502,8 @@ def backtest_all_translated(max_count: int | None = None) -> dict:
             # Phase 14k-89: session rollback 让下一 candidate 能跑
             # 之前: 任意 candidate 抛 PendingRollbackError → session 卡 rollback 状态
             #       → 后续 candidates 都 raise 同 error → 整 batch 烂死
+            # 14k-95: 加 print 让 batch 异常可见 (之前静默存 results 没人看)
+            print(f'[backtest_all_translated] candidate #{c.id} raised: {type(e).__name__}: {str(e)[:200]}')
             try:
                 db.session.rollback()
             except Exception:
