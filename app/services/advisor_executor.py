@@ -511,13 +511,30 @@ def run_auto_apply() -> dict:
             'propose_signal_grid': '排程参数优化',
             'invent_new_strategy': '创建新候选策略',
         }
-        lines = [f'🤖 <b>AI 已自动执行 {len(applied)} 项操作 · AI Auto-Apply ({len(applied)})</b>']
-        for r in applied:
-            label = ACTION_LABELS.get(r['action'], r['action'])
-            lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")
-        if already_today + len(applied) >= daily_cap:
-            lines.append(f'\n今日已达上限 {daily_cap} 项, 剩下时间不会再自动操作.')
-        _telegram_safe('\n'.join(lines))
+        # Phase 14k-99: TG batch summary 只通知 sync mutate (已生效) 不通知 async dispatch
+        # async (optimize_strategy_risk_full / propose_signal_grid / invent_new_strategy):
+        #   仅排队任务, 5-15min 后才知道结果 (lift / no_lift / error)
+        #   - lift 时 strategy_tasks.py:2253 有独立 TG "AI 已优化止损/止盈"
+        #   - no_lift 时 14k-65 规定静默 (避免噪音)
+        # 之前 mix 一起报让 user 误以为 "AI 一次性 6 项已生效", 实际 4 sync + 2 async-pending
+        # 对齐 user "守门员通过可上线才通知" 关切
+        ASYNC_DISPATCH_ACTIONS = {
+            'optimize_strategy_risk_full', 'propose_signal_grid', 'invent_new_strategy',
+        }
+        sync_applied = [r for r in applied if r['action'] not in ASYNC_DISPATCH_ACTIONS]
+        async_dispatched = [r for r in applied if r['action'] in ASYNC_DISPATCH_ACTIONS]
+
+        if sync_applied:
+            lines = [f'🤖 <b>AI 已自动执行 {len(sync_applied)} 项操作 · AI Auto-Apply</b>']
+            for r in sync_applied:
+                label = ACTION_LABELS.get(r['action'], r['action'])
+                lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")
+            if async_dispatched:
+                lines.append(f'\n另派 {len(async_dispatched)} 项重测任务, 跑完通过门槛才会上线 (no_lift 时静默不打扰)')
+            if already_today + len(applied) >= daily_cap:
+                lines.append(f'今日已达上限 {daily_cap} 项, 剩下时间不会再自动操作.')
+            _telegram_safe('\n'.join(lines))
+        # else: 全是 async dispatch, 不发 TG (等任务跑完独立通知)
 
     return {
         'skipped': False,
