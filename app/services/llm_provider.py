@@ -291,6 +291,18 @@ def call_llm(
     attempts: list[tuple[str, str | None, str]] = []   # (provider, api_key_or_None, model)
 
     user_providers = list_for_user(user_id, only_active=True)
+    # 14k-75: LLM call 前显式提交/释放 DB transaction
+    # 防 SQLAlchemy implicit transaction 把 SELECT 锁住 → LLM call 长跑 → idle in transaction 占满 pool
+    # 实测 1:36 worker hang 因 7 idle in transaction 占满 SQLAlchemy 默认 5 pool
+    try:
+        from app.extensions import db as _db
+        _db.session.commit()   # 释放 SELECT 后的隐式事务
+    except Exception:
+        try:
+            from app.extensions import db as _db
+            _db.session.rollback()
+        except Exception:
+            pass
     if user_id == ADMIN_USER_ID and not user_providers:
         # admin 沒綁任何 API → 走 claude_cli (host /root/.claude OAuth via 訂閱)
         attempts.append(('claude_cli', None, DEFAULT_MODELS['claude_cli']))
