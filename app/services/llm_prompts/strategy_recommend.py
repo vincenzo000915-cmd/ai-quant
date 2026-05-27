@@ -451,9 +451,16 @@ def _maybe_auto_apply(clone: StrategyCandidate, user_id: int, mode: str, cfg: di
 
     Phase 14k-91: 守门 1-3 (concentration / max_running / capital_util) 抽到 _check_promote_gates
     新 propose 路径 (recommend_strategies) 已在 propose 前先 check, 这里是兜底
+    Phase 14k-96: 强制 status='qualified' 才能 promote (回测真理)
+        translated/backtesting 不让 auto-promote, 让 auto_backtest 跑完真 EV/sharpe 再算
     """
     if mode == 'manual':
         return None
+    # 14k-96: 没真 backtest 不允许 auto-promote (clone 在 14k-96 后 没 mx.backtest 时 status='translated')
+    if clone.status != 'qualified':
+        return {'skipped': True,
+                'reason': f'status={clone.status} 需先跑回测 (14k-96 回测真理: 没真回测不准 auto-promote)'}
+
     cm = clone.catalog_meta or {}
     sharpe = float(cm.get('verified_oos_sharpe') or 1.5)
     sym = (clone.source_meta or {}).get('symbol') or 'AVAX/USDT'
@@ -904,6 +911,11 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
     selected = gated_selected   # 后续 clone 只用 gated
 
     # Clone + auto-apply. clone 继承 matrix backtest_result_id
+    # Phase 14k-96: 修违反回测真理 — clone 没真 backtest 不准标 qualified
+    # 之前: clone.status='qualified' 无条件设, 即使 mx 没 backtest_result_id
+    # 后果: panel 上 candidate 显文献 Sharpe (没本地回测), EV 双轨制 gate 也绕过没跑
+    # 修后: 没继承 backtest_result_id → status='translated', 等 auto_backtest 跑真 walkforward
+    #        EV/sharpe 双轨制 gate 才真起作用 [[feedback-backtest-is-truth]]
     recommendations = []
     for entry, mx, score, reasons in selected:
         sym = mx.symbol     # 用 matrix 的 best symbol
@@ -912,8 +924,10 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         # 继承 matrix backtest_result_id, panel 直接显真 metrics
         if mx.backtest_result_id:
             clone.backtest_result_id = mx.backtest_result_id
-        # 验证过了, 直接 qualified
-        clone.status = 'qualified'
+            clone.status = 'qualified'   # 真有 backtest → qualified (EV 已在 backtest 时 gate)
+        else:
+            # 14k-96: 没 backtest → translated, 等 auto_backtest_translated_candidates 跑
+            clone.status = 'translated'
         sm = dict(clone.source_meta or {})
         sm['matrix_id'] = mx.id
         sm['verified_oos_sharpe'] = mx.oos_sharpe

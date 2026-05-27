@@ -307,11 +307,20 @@ export default function AiPickPanel() {
             )}
           </Collapse>
 
-          {/* Phase 14k-15: 没自动上架原因 */}
+          {/* Phase 14k-15: 没自动上架原因 (历史 source_meta) */}
           {it.auto_skip_reason && (
             <Box sx={{ mb: 1, p: 0.8, borderRadius: 1, bgcolor: 'rgba(251,191,36,0.08)', border: '1px dashed rgba(251,191,36,0.3)' }}>
               <Typography variant="caption" sx={{ color: '#fbbf24' }}>
                 🛑 未自动上架原因: {it.auto_skip_reason}
+              </Typography>
+            </Box>
+          )}
+
+          {/* Phase 14k-96: 实时 gate 状态 — 此刻能不能上架 */}
+          {it.gate_block && (
+            <Box sx={{ mb: 1, p: 0.8, borderRadius: 1, bgcolor: 'rgba(239,68,68,0.08)', border: '1px dashed rgba(239,68,68,0.4)' }}>
+              <Typography variant="caption" sx={{ color: '#ef4444' }}>
+                ⛔ 当前不能上架: {it.gate_block.reason}
               </Typography>
             </Box>
           )}

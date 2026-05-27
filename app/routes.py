@@ -2005,6 +2005,19 @@ def candidates_ai_picks():
         StrategyCandidate.source == 'catalog_clone',     # 14k-18: 仅 AI 推荐 clone
     ).order_by(StrategyCandidate.created_at.desc()).limit(20).all()
 
+    # Phase 14k-96: 每个 candidate 算当前 gate 状态, 供 UI 显示原因 chip
+    # 之前: panel 全显示, user 看到一堆 "未自动上架 running 10>=8" 莫名其妙
+    # 现在: API 直接返回 gate_block, frontend 可选 hide 或 show chip
+    from app.services.llm_prompts.strategy_recommend import _check_promote_gates
+    from app.services.config_service import get_config as _get_cfg
+    from app.services.exchange_binding import primary_exchange as _pex
+    _cfg = _get_cfg()
+    try:
+        _user_id_for_gate = (current_user_id() or 1)
+        _user_exchange = _pex(_user_id_for_gate) or 'okx'
+    except Exception:
+        _user_id_for_gate, _user_exchange = 1, 'okx'
+
     out = []
     for c in rows:
         meta = c.source_meta or {}
@@ -2095,7 +2108,29 @@ def candidates_ai_picks():
             'source_meta': meta,                                  # 14k-15: 让 panel debug
             'trade_patterns': meta.get('trade_patterns') or {},
         })
-    return jsonify({'count': len(out), 'items': out})
+        # Phase 14k-96: 算 gate 状态 (当前能不能上架)
+        try:
+            _g_ok, _g_reason = _check_promote_gates(
+                symbol=meta.get('symbol') or 'BTC/USDT',
+                timeframe=c.timeframe,
+                category=c.category,
+                user_id=_user_id_for_gate,
+                target_exchange=_user_exchange,
+                cfg=_cfg,
+            )
+            out[-1]['gate_block'] = (None if _g_ok else {'reason': _g_reason})
+        except Exception:
+            out[-1]['gate_block'] = None
+    blocked_count = sum(1 for x in out if x.get('gate_block'))
+    return jsonify({
+        'count': len(out),
+        'items': out,
+        'gate_summary': {
+            'total': len(out),
+            'promotable': len(out) - blocked_count,
+            'blocked': blocked_count,
+        },
+    })
 
 
 @api_bp.route('/candidates/<int:cid>/promote-and-start', methods=['POST'])
