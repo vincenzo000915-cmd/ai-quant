@@ -789,6 +789,26 @@ def _strategy_risk_opt_item(strategy) -> dict | None:
         ).all()
         if any((a.context or {}).get('strategy_id') == strategy.id for a in recent):
             return None
+    else:
+        # Phase 14k-93: force_optimize 即使绕过 24h 通用 cooldown, 也必须尊重最近 no_lift 结果
+        # 回测真理 [[feedback-backtest-is-truth]]: 同 K 线刚测过没改善, 1h 后再测必然还是没改善
+        # 之前 force bypass cooldown 让 advisor 每 cycle 重 propose, 烧 LLM/CPU 又永不成功
+        no_lift_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=RISK_OPT_COOLDOWN_HOURS)
+        recent_no_lift = AuditLog.query.filter(
+            AuditLog.event_type == 'risk_opt_no_lift',
+            AuditLog.created_at > no_lift_cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_no_lift):
+            return None   # 24h 内 no_lift 过 → 即使 force 也信回测, 不再 propose
+        # 14k-93: force 路径也防短期重复 propose (advisor cycle 1h, 已 propose 过的策略 6h 内不重提)
+        # 跟 no_lift 24h 区分: no_lift 是"测完无效", proposed 是"刚排, 任务可能还没跑完"
+        proposed_cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=6)
+        recent_proposed = AuditLog.query.filter(
+            AuditLog.event_type == 'risk_opt_proposed',
+            AuditLog.created_at > proposed_cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == strategy.id for a in recent_proposed):
+            return None   # 6h 内已 propose, 等任务跑完看结果再说
 
     reason = '24h 未做 SL/TP 闪测, 排一次'
     if long_idle:
