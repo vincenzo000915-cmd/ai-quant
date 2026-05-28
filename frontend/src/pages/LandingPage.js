@@ -184,9 +184,9 @@ function Hero() {
 
 function Stats() {
   const stats = [
-    { value: 22, label: '内置策略', suffix: '+' },
+    { value: 22, label: '内置模板 · AI 每日扩张', suffix: '+' },
     { value: 4, label: 'USDT 链', suffix: '' },
-    { value: 65, label: '迭代 commits', suffix: '+' },
+    { value: 110, label: '迭代 commits', suffix: '+' },
     { value: 100, label: '自动化率', suffix: '%' },
   ];
   return (
@@ -219,13 +219,13 @@ function HowItWorks() {
   const steps = [
     {
       icon: LinkIcon,
-      title: '1 · 绑定你的 OKX API key',
-      desc: 'AES-256 加密保存，仅 Celery worker 内存解密。你的资金始终在你自己的 OKX 账户，我们不持有、不挪用。',
+      title: '1 · 绑定 OKX 或 Hyperliquid',
+      desc: 'OKX API key（Fernet AES-256）或 Hyperliquid agent（ECDSA, 授权时长你自定）二选一。仅 Celery worker 内存解密。资金始终在你自己账户，我们不持有、不挪用。',
     },
     {
       icon: AccountTreeIcon,
       title: '2 · AI 自动跑策略 + 改进闭环',
-      desc: '7 个 hardcode 策略 + 候选池（爬虫 + LLM 翻译）+ AI 改进顾问每日生成新候选 + 智能托管 5 actions 自动 retire/revive/apply。',
+      desc: 'L1 市场分析 + L2 信号 watcher + L3 实时合成 三层架构 · 候选池爬虫翻译 · 智能托管 10 actions 自动 retire / apply_params / fan_out / optimize_risk / invent。',
     },
     {
       icon: RocketLaunchIcon,
@@ -285,16 +285,46 @@ function HowItWorks() {
 function Features() {
   const items = [
     {
+      icon: AccountTreeIcon,
+      title: 'L1 / L2 / L3 三层 AI 架构',
+      desc: 'L1 多 TF 市场分析 brief → L2 事件驱动 watcher 5min 巡查 → L3 LLM 看 brief+余额+目标实时合成 signal_fn。AI 不再瞎调参，按市场状态精准下手',
+      tag: 'AI 核心',
+    },
+    {
+      icon: VerifiedIcon,
+      title: '回测真理 · EV 双轨守门',
+      desc: '文献 Sharpe 不算数。必须真 OOS walk-forward 跑过 per-TF EV gate（追盈利率不只追胜率）。所有 backtest 走单一漏斗自动回填 truth table',
+      tag: '反过拟合',
+    },
+    {
       icon: AutoAwesomeIcon,
-      title: 'AI 改进顾问',
-      desc: '看你现有策略 + regime 自动生成补完性新候选；4 重门槛过滤（Sharpe ≥1.5 + PF ≥1.5 + AR ≥8% + 30 trades）',
-      tag: 'Pro',
+      title: 'AI 改进顾问（你专属）',
+      desc: '看你现有策略 + 当前 regime + EV 数据自动为你生成补完候选（不跨用户共享）；EV 双轨过滤（per-TF Sharpe + EV/trade 阈值）；no_lift 静默 / lift 才推',
+      tag: 'Pro 专享',
+    },
+    {
+      icon: PsychologyIcon,
+      title: '智能托管',
+      desc: '10 actions 自动决策：apply_params / pause / retire / fan_out / promote / adjust_risk / optimize_risk_full / propose_signal_grid / invent / sizing。守门员每动作都过 sanity gate',
+      tag: '自动',
     },
     {
       icon: ShowChartIcon,
       title: 'TradingView 专业 K 线',
-      desc: '完整 TV widget · OKX 实时 WebSocket · MACD/RSI/BB 等几十指标 · 截图导出 · 全屏',
+      desc: '完整 TV widget · OKX + Hyperliquid 双交易所实时 WebSocket · MACD/RSI/BB 等几十指标 · 截图导出 · 全屏',
       tag: '通用',
+    },
+    {
+      icon: BoltIcon,
+      title: 'HL LIVE 4 道安全网',
+      desc: 'szDecimals 按币精度截 size · market_close + reduce_only 守住平仓不反向 · place_order 双重 fill 校验 · 60s reconcile grace 防误关',
+      tag: 'LIVE',
+    },
+    {
+      icon: HubIcon,
+      title: '动态候选池',
+      desc: '22 内置模板 + GitHub 爬虫 + LLM 翻译 + 沙箱验证 + 自动回测 + 守门员 EV 双轨过滤 + auto-promote。AI 每日筛新策略入池，质量越用越高',
+      tag: '24/7 扩张',
     },
     {
       icon: CurrencyExchangeIcon,
@@ -303,21 +333,9 @@ function Features() {
       tag: '0%',
     },
     {
-      icon: PsychologyIcon,
-      title: '智能托管',
-      desc: '5 actions 自动决策：retire / revive / apply_params / fan-out / promote。Sanity gates 防滥推',
-      tag: '自动',
-    },
-    {
-      icon: HubIcon,
-      title: '全候选池',
-      desc: 'GitHub 爬虫 + LLM 翻译 + 沙箱验证 + 自动回测 + auto-promote。策略池每日自动扩张',
-      tag: '24/7',
-    },
-    {
       icon: LockIcon,
       title: '资金安全',
-      desc: 'OKX/LLM key Fernet AES-256 加密；不持有资金；不替你下单；不需要 KYC',
+      desc: 'OKX key Fernet AES-256 / Hyperliquid agent ECDSA（授权时长用户自定）/ LLM key 加密；不持有资金；不替你下单；不需要 KYC',
       tag: '安全',
     },
   ];
