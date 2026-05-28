@@ -217,6 +217,7 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
             signal_fn=signal_fn,
             slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
             fee_pct=cfg.get('backtest_fee_pct', 0.05),
+            exchange='hyperliquid',   # 14k-139 (B3): catalog 共享, 用最低 fee 所代表性评 edge (venue-无关; 路由时复核)
         )
     except Exception as e:
         c.status = 'error'

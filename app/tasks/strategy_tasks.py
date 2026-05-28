@@ -312,6 +312,22 @@ def _venue_open_slots(user_id, exchange, per_position_margin) -> int:
     return max(0, n - open_ct)
 
 
+def _edge_eval_exchange(user_id=None) -> str:
+    """Phase 14k-139 (B3): 评估 edge (qualify/retire 回测) 用哪个所的条件 = 该 user 绑定所中 fee
+    最低的 (edge 会被 B1b 路由去最优所, 只要在最优所可行就不该被埋葬 — venue-无关原则).
+    无 user/无绑定 → 'hyperliquid' (系统支持的最低 fee, 给 edge 最好机会; 路由时按实际所复核)."""
+    _FEE = {'hyperliquid': 0.035, 'okx': 0.05}
+    if user_id is not None:
+        try:
+            from app.services.exchange_binding import bound_exchanges
+            vs = [e.lower() for e in (bound_exchanges(user_id) or [])]
+            if vs:
+                return min(vs, key=lambda e: _FEE.get(e, 0.05))
+        except Exception:
+            pass
+    return 'hyperliquid'
+
+
 def _run_signals(strategy_id=None, category_filter=None):
     """執行策略信號計算（模擬盤模式）"""
     if strategy_id:
@@ -974,6 +990,7 @@ def monitor_strategy_health():
             wf = run_walkforward_backtest(
                 s.type, s.params or {}, candles,
                 timeframe=s.timeframe, signal_fn=signal_fn,
+                exchange=_edge_eval_exchange(s.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
             )
 
             if wf.get('status') == 'error':
@@ -1312,6 +1329,7 @@ def backtest_and_maybe_start(strategy_id: int):
         timeframe=strategy.timeframe,
         slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
         fee_pct=cfg.get('backtest_fee_pct', 0.05),
+        exchange=_edge_eval_exchange(strategy.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
     )
     oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
     is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
@@ -1711,6 +1729,7 @@ def auto_revive_retired_strategies():
             wf = run_walkforward_backtest(
                 s.type, s.params or {}, candles,
                 timeframe=s.timeframe, signal_fn=signal_fn,
+                exchange=_edge_eval_exchange(s.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
             )
             if wf.get('status') == 'error':
                 skipped += 1
