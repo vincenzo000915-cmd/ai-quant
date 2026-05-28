@@ -379,6 +379,20 @@ def _execute_one(item: dict) -> tuple[bool, str]:
             v = float(new_rp['position_size_usdt'])
             if not (0.1 <= v <= 10000):
                 return False, f'position_size_usdt {v} 超出范围'
+        # Phase 14k-134 (Finding E): 成交可行性护栏 — 防 AI 设出 size×lev < 交易所最小下单的"砖"配置.
+        # (此前 #28 SOL 被设 lev=1×$5=$5 < HL 最小 $10 → 永久开不了仓). 自动抬 leverage 到可成交.
+        _cur_rp = (strategy.params or {}).get('risk_params') or {}
+        _eff_size = float(new_rp.get('position_size_usdt') or _cur_rp.get('position_size_usdt') or 5)
+        _eff_lev = float(new_rp.get('leverage') or _cur_rp.get('leverage') or 3)
+        _ex = (strategy.exchange or 'okx').lower()
+        _min_notional = 10.0 if _ex == 'hyperliquid' else 0.0   # HL 硬下限 $10; OKX 走 contract-size 检查
+        if _min_notional and _eff_size * _eff_lev < _min_notional:
+            import math
+            _need_lev = min(20.0, math.ceil(_min_notional / _eff_size))
+            if _eff_size * _need_lev >= _min_notional:
+                new_rp['leverage'] = _need_lev          # 抬杠杆到可成交 (size 不动)
+            else:
+                new_rp['position_size_usdt'] = round(_min_notional / _eff_lev, 2)   # 杠杆已顶, 抬 size
         # 守: 这里只接受 leverage / position_size_usdt, 拒绝 SL/TP/信号参数 (backtest 真理)
         rejected = [k for k in new_rp if k not in ('leverage', 'position_size_usdt')]
         if rejected:

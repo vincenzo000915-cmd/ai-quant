@@ -414,8 +414,8 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
 
     r = call_llm(
         user_id=user_id, prompt=prompt, system=STEP1_SYSTEM,
-        max_tokens=1500,
-        cache_key=f'synth_v2_step1:{symbol}:{timeframe}:{hashlib.sha256(str(closes[-1]).encode()).hexdigest()[:10]}',
+        max_tokens=1500, model='opus',   # 14k-134: 合成假设走 Opus 4.8 (核心学习路径用最强模型)
+        cache_key=f'synth_v2_step1:opus:{symbol}:{timeframe}:{hashlib.sha256(str(closes[-1]).encode()).hexdigest()[:10]}',
     )
     if not r.get('ok'):
         return {'ok': False, 'error': f'Step 1 LLM 失败: {r.get("error")}'}
@@ -511,8 +511,8 @@ def _step3_encode_signal(hypothesis: dict, verify_result: dict,
 
     r = call_llm(
         user_id=user_id, prompt=prompt, system=STEP3_SYSTEM,
-        max_tokens=2000,
-        cache_key=f'synth_v2_step3:{hashlib.sha256(json.dumps(hypothesis, sort_keys=True).encode()).hexdigest()[:10]}',
+        max_tokens=2000, model='opus',   # 14k-134: 编码 signal_fn 走 Opus 4.8
+        cache_key=f'synth_v2_step3:opus:{hashlib.sha256(json.dumps(hypothesis, sort_keys=True).encode()).hexdigest()[:10]}',
     )
     if not r.get('ok'):
         return {'ok': False, 'error': f'Step 3 LLM 失败: {r.get("error")}'}

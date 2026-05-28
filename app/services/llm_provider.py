@@ -330,6 +330,7 @@ def call_llm(
     cache_key: str | None = None,
     allowed_tools: list[str] | None = None,
     timeout: int | None = None,
+    model: str | None = None,
 ) -> dict:
     """主入口 — 自動選 user 綁的 provider 依 priority 嘗試。
 
@@ -363,7 +364,7 @@ def call_llm(
             pass
     if user_id == ADMIN_USER_ID and not user_providers:
         # admin 沒綁任何 API → 走 claude_cli (host /root/.claude OAuth via 訂閱)
-        attempts.append(('claude_cli', None, DEFAULT_MODELS['claude_cli']))
+        attempts.append(('claude_cli', None, model or DEFAULT_MODELS['claude_cli']))   # 14k-134: 分层 — 合成路径传 model='opus'
     else:
         for rec in user_providers:
             api_key = get_decrypted(user_id, rec.provider)
