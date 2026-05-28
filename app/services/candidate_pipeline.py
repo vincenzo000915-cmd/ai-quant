@@ -195,6 +195,13 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     # 期间 transaction idle → PG 5min 后 autokill → 后面 INSERT 失败
     # commit 后 transaction 关闭 (connection 回 'idle' 不是 'idle in transaction')
     # PG 只 kill 'idle in transaction', plain 'idle' 不动
+
+    # Phase 14k-111: snapshot c 属性到 local var 后再 commit
+    # 14k-84 commit 会 expire ORM instance, 之后访问 c.candidate_type 触发 lazy reload.
+    # 若并发 cleanup_stale_candidates 已删 row → ObjectDeletedError → 整个 task 卡
+    # PendingRollbackError (实测 06:30 同步发生).
+    candidate_type = c.candidate_type or 'candidate'
+    default_params = c.default_params or {}
     db.session.commit()
 
     # Phase 5.4: walk-forward 取代單段回測
@@ -203,8 +210,8 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
         from app.services.config_service import get_config
         cfg = get_config()
         wf = run_walkforward_backtest(
-            c.candidate_type or 'candidate',
-            c.default_params or {},
+            candidate_type,     # 14k-111: 用 snapshot 不再访问 c.candidate_type
+            default_params,
             candles,
             timeframe=timeframe,
             signal_fn=signal_fn,
@@ -237,8 +244,8 @@ def backtest_candidate(candidate_id: int, *, candle_limit: int = 2000, symbol: s
     _bt_sl, _bt_tp = resolve_default_sl_tp(timeframe)
     bt = BacktestResult(
         strategy_id=None,
-        strategy_type=c.candidate_type or 'candidate',
-        params_snapshot=c.default_params or {},
+        strategy_type=candidate_type,   # 14k-111: 用 snapshot 避 ORM lazy reload 撞已删 row
+        params_snapshot=default_params,
         symbol=symbol,
         timeframe=timeframe,
         leverage=15.0,
