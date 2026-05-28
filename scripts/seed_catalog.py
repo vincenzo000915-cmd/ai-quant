@@ -1252,6 +1252,11 @@ def seed():
             existing.parsed_signal = spec['parsed_signal']
             existing.default_params = spec['default_params']
             existing.status = 'qualified'
+            # 14k-130: 模板本来就不该直接 promote (走 catalog_clone 路径).
+            # 14k-52 auto-dismiss 把模板搞坏了, 14k-127 揭出 candidate 55 同一 bug.
+            # seed 重置时一起清 promoted_strategy_id + error_log, 让模板回到 template 角色.
+            existing.promoted_strategy_id = None
+            existing.error_log = None
             skipped += 1
             continue
         c = StrategyCandidate(
