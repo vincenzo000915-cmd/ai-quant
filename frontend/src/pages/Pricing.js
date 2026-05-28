@@ -192,14 +192,15 @@ export default function Pricing() {
         </Box>
       </Box>
 
-      {/* === 3 plans (Phase 12.48: md=4 让 3 张卡占满 12 grid) === */}
+      {/* === 4 plans (Phase 14k-117: md=3 让 4 张卡 Preview/Basic/Pro/Team 占满 12 grid 一排;
+             之前 md=4 是 3-card 时代留下的, Preview tier 加入后 Team 掉到下排) === */}
       <Grid container spacing={2.5} sx={{ mb: 8 }} justifyContent="center">
         {PLANS.map((plan) => {
           const Icon = plan.icon;
           const isAccent = plan.accent;
           const price = calcPrice(plan.price);
           return (
-            <Grid key={plan.id} item xs={12} sm={6} md={4}>
+            <Grid key={plan.id} item xs={12} sm={6} md={3}>
               <Box sx={{
                 position: 'relative', height: '100%',
                 p: 3,

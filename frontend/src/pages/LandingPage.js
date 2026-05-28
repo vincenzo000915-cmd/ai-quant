@@ -403,7 +403,7 @@ function PricingTeaser() {
   const plans = [
     { name: 'Basic', price: 50, desc: '工具基础包 + LIVE 实盘', best: false },
     { name: 'Pro', price: 125, desc: 'BYO LLM key + AI 全套', best: true },
-    { name: 'Team', price: 250, desc: '多账户 + 优先客服', best: false, suffix: '+' },
+    { name: 'Team', price: 299, desc: 'AI 自动托管 + 多交易所', best: false },
   ];
   return (
     <Container maxWidth="lg" sx={{ py: { xs: 8, md: 12 } }}>
