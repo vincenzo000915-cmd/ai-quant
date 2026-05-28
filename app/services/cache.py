@@ -72,10 +72,11 @@ def cached(prefix: str, ttl: int):
     return decorator
 
 
-def cached_response(prefix: str, ttl: int):
+def cached_response(prefix: str, ttl: int, per_user: bool = False):
     """Cache an entire Flask view function's JSON response for TTL seconds.
 
     Key includes request.full_path so different query strings cache separately.
+    per_user=True (14k-142): key 加 current_user_id — 防 user-scoped 端点跨用户串缓存.
     The view must return jsonify(...) — we cache the raw JSON string.
     """
     from flask import request, Response
@@ -86,7 +87,14 @@ def cached_response(prefix: str, ttl: int):
             r = _redis()
             if r is None:
                 return fn(*args, **kwargs)
-            key = f'cache:resp:{prefix}:{request.full_path}'
+            _uk = ''
+            if per_user:
+                try:
+                    from app.services.user_scope import current_user_id
+                    _uk = f':u{current_user_id() or 0}'
+                except Exception:
+                    _uk = ''
+            key = f'cache:resp:{prefix}{_uk}:{request.full_path}'
             try:
                 hit = r.get(key)
                 if hit is not None:

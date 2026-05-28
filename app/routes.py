@@ -321,17 +321,24 @@ def fan_out_strategy(id):
 
 
 @api_bp.route('/advisor/recommendations', methods=['GET'])
-@cached_response('advisor', ttl=60)
+@require_actor
+@require_tier('basic')
+@cached_response('advisor', ttl=60, per_user=True)
 def advisor_recommendations():
-    """Phase 10.7: 综合所有 phase-10 诊断（相关性 + regime + MTF + 优化）生成建议。"""
+    """Phase 10.7: 综合所有 phase-10 诊断（相关性 + regime + MTF + 优化）生成建议。
+    Phase 14k-142: 加 @require_actor + @require_tier(basic) + user-scope + per_user cache
+    (修多租户泄漏: 原本无门且 build_recommendations() 默认 admin → 任何人拿到 admin 建议)。"""
     from app.services.strategy_advisor import build_recommendations
-    return jsonify(build_recommendations())
+    return jsonify(build_recommendations(current_user_id() or 1))
 
 
 @api_bp.route('/advisor/auto-apply/run', methods=['POST'])
+@require_actor
+@require_tier('basic')
 @rate_limit('10/min')
 def trigger_auto_apply():
-    """Phase 10.8: 手動觸發智能托管掃描（同步跑一次，回傳結果摘要）。"""
+    """Phase 10.8: 手動觸發智能托管掃描（同步跑一次，回傳結果摘要）。
+    Phase 14k-142: 加 @require_actor + @require_tier(basic) (原本无门, 免费/未登录可触发改策略)。"""
     from app.services.advisor_executor import run_auto_apply
     r = run_auto_apply()
     return jsonify(r)
