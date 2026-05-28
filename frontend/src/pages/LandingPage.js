@@ -545,7 +545,7 @@ function FinalCTA() {
             准备好让 AI 跑你的量化了？
           </Typography>
           <Typography sx={{ color: palette.textMuted, fontSize: 14, mb: 4 }}>
-            5 分钟绑定 OKX · 立刻开始 LIVE · USDT 4 链 0 KYC 订阅
+            5 分钟绑定 OKX 或 Hyperliquid · 立刻开始 LIVE · USDT 4 链 0 KYC 订阅
           </Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} justifyContent="center">
             <Button onClick={() => navigate('/login')}

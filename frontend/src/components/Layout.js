@@ -15,7 +15,6 @@ import HistoryIcon from '@mui/icons-material/History';
 import WorkspacePremiumIcon from '@mui/icons-material/WorkspacePremium';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
-import ShowChartIcon from '@mui/icons-material/ShowChart';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import PersonIcon from '@mui/icons-material/Person';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -85,20 +84,27 @@ export default function Layout() {
       <Toolbar sx={{ justifyContent: open ? 'space-between' : 'center', px: 1.5, minHeight: '64px !important' }}>
         {open && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+            {/* Phase 14k-116: 内页 brand mark 用 SVG 跟 favicon 同款 K 线趋势 (取代 generic ShowChartIcon) */}
             <Box sx={{
               width: 32, height: 32, borderRadius: 1,
-              bgcolor: palette.accent, color: palette.bg,
+              bgcolor: palette.accent, color: '#fff',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               boxShadow: `0 0 16px ${palette.accentGlow}`,
             }}>
-              <ShowChartIcon sx={{ fontSize: 20 }} />
+              <Box component="svg" viewBox="0 0 64 64" sx={{ width: 22, height: 22 }}>
+                <path d="M12 46 L22 36 L30 42 L46 22 M40 22 L46 22 L46 28"
+                      stroke="currentColor" strokeWidth="4.5"
+                      fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                <circle cx="22" cy="36" r="2.5" fill="currentColor"/>
+                <circle cx="30" cy="42" r="2.5" fill="currentColor"/>
+              </Box>
             </Box>
             <Box>
               <Typography sx={{ fontSize: 14, fontWeight: 700, color: palette.text, lineHeight: 1.1 }}>
                 Quant Pro
               </Typography>
               <Typography sx={{ fontSize: 10, fontWeight: 500, color: palette.textMuted, fontFamily: typo.mono, letterSpacing: 0.3 }}>
-                v0.1 · OKX
+                v14k · OKX + HL
               </Typography>
             </Box>
           </Box>
