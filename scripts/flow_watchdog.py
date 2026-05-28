@@ -435,6 +435,34 @@ def check_dynamic_synth_recent() -> dict:
     return {'status': OK, 'detail': f'近 24 小时 AI 合成了 {count} 个候选', 'latency_ms': ms(t)}
 
 
+def check_directional_concentration() -> dict:
+    """13. 14k-140 (B4): 持仓方向集中度 — 同向占比过高时 WARN (告警非 halt, 不阻断趋势跟随).
+    防多策略同向堆叠成相关风险; daily_loss 2% / max_dd 5% / consecutive_loss 仍是硬兜底."""
+    t = t0()
+    rc, out = psql("SELECT side, COUNT(*) FROM positions WHERE status='open' GROUP BY side")
+    if rc != 0:
+        return {'status': WARN, 'detail': 'pg query fail', 'latency_ms': ms(t)}
+    longs = shorts = 0
+    for line in out.strip().splitlines():
+        if '|' not in line:
+            continue
+        side, n = [x.strip() for x in line.split('|', 1)]
+        if side == 'long':
+            longs = int(n or 0)
+        elif side == 'short':
+            shorts = int(n or 0)
+    total = longs + shorts
+    if total == 0:
+        return {'status': OK, 'detail': '无持仓', 'latency_ms': ms(t)}
+    dom = max(longs, shorts)
+    dom_dir = '多' if longs >= shorts else '空'
+    if total >= 6 and dom / total >= 0.8:
+        return {'status': WARN,
+                'detail': f'方向集中: {total} 仓中 {dom} 个做{dom_dir} ({dom*100//total}%), 反转相关回撤大 (daily_loss/dd halt 兜底)',
+                'latency_ms': ms(t)}
+    return {'status': OK, 'detail': f'方向均衡: 多 {longs} / 空 {shorts}', 'latency_ms': ms(t)}
+
+
 CHECKS = [
     ('celery_beat_heartbeat', check_celery_beat_heartbeat),
     ('signal_cycle_health',   check_signal_cycle_15m),
@@ -449,6 +477,7 @@ CHECKS = [
     ('market_brief_recent',   check_market_brief_recent),
     ('signal_watchers',       check_signal_watchers),
     ('dynamic_synth_recent',  check_dynamic_synth_recent),
+    ('directional_concentration', check_directional_concentration),   # 14k-140 (B4)
 ]
 
 

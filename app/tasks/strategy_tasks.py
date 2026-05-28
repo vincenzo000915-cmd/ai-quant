@@ -440,6 +440,7 @@ def _run_signals(strategy_id=None, category_filter=None):
         _EX_MIN_NOTIONAL = {'hyperliquid': 10.0, 'okx': 0.0}  # okx 走 contract-size 检查, 这里不卡
         _budget_left = {}      # (user_id, exchange) -> 本轮剩余可开 slot
         _venues_cache = {}     # user_id -> [bound exchanges]
+        _routing_log = []      # 14k-140 (B4): 非平凡路由 (路由所 != 偏好所) → 可观测
         for ev_adj, s in open_candidates:
             u = s.user_id
             if u not in _venues_cache:
@@ -459,7 +460,13 @@ def _run_signals(strategy_id=None, category_filter=None):
                 if _budget_left[key] > 0:
                     allowed_open[s.id] = ex      # 路由到此所
                     _budget_left[key] -= 1
+                    if ex != (s.exchange or 'okx').lower():   # 14k-140 (B4): 路由到非偏好所
+                        _routing_log.append((s.id, s.symbol, (s.exchange or 'okx').lower(), ex))
                     break
+        if _routing_log:   # 14k-140 (B4): 跨所路由可观测 — audit 哪些策略被路由到非偏好所
+            from app.services.audit import log as _audit
+            _audit('cross_exchange_routing', actor='auto:14k140', count=len(_routing_log),
+                   routes=[{'sid': r[0], 'symbol': r[1], 'from': r[2], 'to': r[3]} for r in _routing_log[:20]])
 
     results = []
     for s in strategies:
