@@ -249,6 +249,30 @@ def _release_claude_cli_slot(slot_id: str | None) -> None:
         pass
 
 
+def _ensure_writable_claude_home():
+    """Phase 14k-143: claude CLI 要写 session 到 ~/.claude.json + ~/.claude/, 但 host OAuth 是
+    RO 挂载 (docker-compose :ro) → 间歇 EROFS (read-only file system). 给 CLI 一个可写 HOME,
+    每次从 RO 挂载刷新 OAuth/config 小文件 (~50KB: .claude.json + .claude/.credentials.json +
+    settings) 到副本; CLI 读 OAuth + 写 session 都用副本, 不碰宿主真文件 (不并发写坏 OAuth).
+    232MB 的 projects/plugins/file-history 不复制 (auth 不需要, 实测仅需 .credentials.json)."""
+    import shutil
+    src_json = '/root/.claude.json'
+    if not os.path.exists(src_json):
+        return None   # 本地开发无挂载 → 用默认 HOME
+    home = '/tmp/cc-home'
+    try:
+        cdir = os.path.join(home, '.claude')
+        os.makedirs(cdir, exist_ok=True)
+        shutil.copy2(src_json, os.path.join(home, '.claude.json'))
+        for f in ('.credentials.json', 'settings.json', 'settings.local.json'):
+            s = os.path.join('/root/.claude', f)
+            if os.path.exists(s):
+                shutil.copy2(s, os.path.join(cdir, f))
+        return home
+    except Exception:
+        return None
+
+
 def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
                      max_tokens: int, model: str,
                      allowed_tools: list[str] | None = None,
@@ -277,6 +301,11 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
         args.extend(['--allowedTools', ' '.join(allowed_tools)])
     if system:
         args.extend(['--append-system-prompt', system])
+    # 14k-143: 可写 HOME (修 EROFS — RO 挂载的 .claude.json 无法写 session)
+    _env = dict(os.environ)
+    _wh = _ensure_writable_claude_home()
+    if _wh:
+        _env['HOME'] = _wh
     try:
         proc = subprocess.run(
             args,
@@ -284,6 +313,7 @@ def _call_claude_cli(api_key: str | None, prompt: str, system: str | None,
             capture_output=True,
             text=True,
             timeout=timeout if timeout is not None else CLAUDE_CLI_TIMEOUT,
+            env=_env,
         )
     finally:
         _release_claude_cli_slot(slot)
