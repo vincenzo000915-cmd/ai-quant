@@ -2374,11 +2374,13 @@ def me_okx_get():
 
 @api_bp.route('/me/okx', methods=['POST'])
 @require_actor
+@require_tier('basic')
 def me_okx_bind():
     """綁定 / 更新 user OKX key。{api_key, secret, passphrase}
 
     Phase 14k-7: 非 team user 已绑 HL 时, 自动走 atomic switch (迁移策略 +
     解绑 HL + 写 OKX), user 无需手动解绑.
+    Phase 14k-118: 加 require_tier('basic') 防 Preview free user 绑实盘交易所.
     """
     from app.services.okx_creds import save_for_user
     from app.services.exchange_binding import needs_switch
@@ -2487,11 +2489,13 @@ def me_hl_get():
 
 @api_bp.route('/me/hyperliquid', methods=['POST'])
 @require_actor
+@require_tier('basic')
 def me_hl_bind():
     """绑定 / 更新 HL agent. {agent_address, main_address, agent_private_key, network='mainnet'|'testnet'}
 
     Phase 14k-7: 非 team user 已绑 OKX 时, 自动 atomic switch (迁移策略 +
     解绑 OKX + 写 HL), user 无需手动解绑.
+    Phase 14k-118: 加 require_tier('basic') 防 Preview free user 绑实盘交易所.
     """
     from app.services.hyperliquid_creds import save_for_user
     from app.services.exchange_binding import needs_switch

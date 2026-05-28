@@ -40,7 +40,7 @@ const PLANS = [
     description: '量化交易工具基础包',
     features: [
       '✓ 全部 22 个内置策略 + 自动信号循环',
-      '✓ LIVE 实盘模式（接你自己的 OKX API key）',
+      '✓ LIVE 实盘模式（接 OKX API key 或 Hyperliquid agent · 单交易所）',
       '✓ 智能托管（auto retire / revive / apply / fan-out）',
       '✓ 候选池浏览 + 单个 candidate promote 上架',
       '✓ Walk-forward 回测 + per-TF gate 自动筛选',

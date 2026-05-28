@@ -20,7 +20,7 @@ const PURPLE = '#a78bfa';
 export default function ProfitTargetCard() {
   const navigate = useNavigate();
   const [target, setTarget] = useState(null);
-  const [needsPro, setNeedsPro] = useState(false);
+  const [needsTeam, setNeedsTeam] = useState(false);
   const [needsExchange, setNeedsExchange] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState({ target_pct: 20, days: 30, max_dd_pct: 15, daily_loss_halt_pct: 5 });
@@ -28,13 +28,13 @@ export default function ProfitTargetCard() {
 
   const refresh = useCallback(async () => {
     try {
-      // 1. check Pro tier
+      // 1. check Team tier (Phase 14k-23 升级后此 endpoint 要 Team, 14k-118 修变量名 needsPro→needsTeam)
       const r = await fetch('/api/me/profit-target');
       if (r.status === 402) {
-        setNeedsPro(true);
+        setNeedsTeam(true);
         return;
       }
-      setNeedsPro(false);
+      setNeedsTeam(false);
       const d = await r.json();
       setTarget(d.target);
       // 2. check exchange bound
@@ -90,7 +90,7 @@ export default function ProfitTargetCard() {
   };
 
   // 需要 Team 订阅 (14k-23 升级)
-  if (needsPro) {
+  if (needsTeam) {
     return (
       <Card sx={{ mb: 2, border: '1px dashed #fbbf24aa', bgcolor: 'rgba(251,191,36,0.04)' }}>
         <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
