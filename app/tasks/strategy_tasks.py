@@ -2880,15 +2880,23 @@ def auto_revert_ai_changes():
         after_start = c.created_at
         after_end = c.created_at + _dt.timedelta(hours=24)
 
+        # Phase 14k-121: 排除 reconcile_orphan_* 虚拟 trade —
+        # HL/OKX 上有但本地 DB 没的持仓 reconcile 时自动补的清理记录, 不是 strategy 真信号开单.
+        # 旧 bug 让 #29 ParabolicSAR AVAX 被误判: 5/27 早上 5-7 UTC 有 3 笔 reconcile_orphan
+        # → 算 "before 3 trades", AI 10:10/11:10/12:10 加槓桿后 24h 真 0 trades →
+        # → 退化判定假阳性触发 auto_revert (跟 14k-100 修 dashboard PnL 同口径排除).
+        ORPHAN_REASONS = ['reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan']
         before_trades = Trade.query.filter(
             Trade.strategy_id == sid,
             Trade.exit_time >= before_start,
             Trade.exit_time < before_end,
+            ~Trade.reason.in_(ORPHAN_REASONS),
         ).all()
         after_trades = Trade.query.filter(
             Trade.strategy_id == sid,
             Trade.exit_time >= after_start,
             Trade.exit_time < after_end,
+            ~Trade.reason.in_(ORPHAN_REASONS),
         ).all()
 
         before_pnl = sum(t.pnl or 0 for t in before_trades)
