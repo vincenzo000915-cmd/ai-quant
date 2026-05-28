@@ -776,7 +776,8 @@ def monitor_strategy_health():
     from app.services.backtest_engine import run_walkforward_backtest
     from app.services.strategy_engine import get_signal
     from app.services.candidate_sandbox import load_signal_fn
-    from app.models import StrategyCandidate, BacktestResult
+    from app.models import StrategyCandidate, BacktestResult, Trade
+    from app.services.config_service import get_inactivity_grace_days
 
     running = Strategy.query.filter_by(status='running').all()
     if not running:
@@ -791,6 +792,35 @@ def monitor_strategy_health():
             if s.created_at and s.created_at > grace_cutoff:
                 days = RETIRE_GRACE_HOURS / 24
                 actions.append(f'⏸ {s.name}: 保護期內（< {days:.0f} 天），跳過 auto-retire')
+                continue
+
+            # Phase 14k-129: TF-aware 占位退役 — 近 inactivity_grace 天 0 trades 即 retire.
+            # 防 zombie 策略占着 max_running slot 不开单, 卡死 AI invent.
+            # 配 14k-128 max_running 上调一起做: 让 invent pipeline 有进有出.
+            inact_grace_days = get_inactivity_grace_days(s.timeframe)
+            inact_cutoff = datetime.utcnow() - timedelta(days=inact_grace_days)
+            recent_trades = Trade.query.filter(
+                Trade.strategy_id == s.id,
+                Trade.exit_time >= inact_cutoff,
+            ).count()
+            if recent_trades == 0:
+                s.status = 'retired'
+                s.retired_at = datetime.utcnow()
+                s.retire_reason = (
+                    f'14k-129: TF {s.timeframe} 近 {inact_grace_days} 天 0 trades '
+                    f'(占位不开单, 让位 AI invent)'
+                )
+                actions.append(f'🔴 {s.name} retired: 占位 0 trades / {inact_grace_days}d')
+                from app.services.audit import log as audit
+                audit('strategy_retired', actor='auto:zombie_14k129',
+                      strategy_id=s.id, timeframe=s.timeframe,
+                      grace_days=inact_grace_days, reason=s.retire_reason)
+                try:
+                    from app.services.telegram_service import notify_retire
+                    notify_retire(s.name, s.retire_reason)
+                except Exception:
+                    pass
+                db.session.commit()
                 continue
 
             candles = fetch_ohlcv_history(s.symbol, s.timeframe, total_limit=2000)
