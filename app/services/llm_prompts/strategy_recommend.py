@@ -604,25 +604,16 @@ def recommend_strategies(user_id: int, *, max_recommend: int | None = None) -> d
         capital = _get_user_capital(user_id)
         max_recommend = _max_recommend_for_capital(capital)
 
-    # team: 每个 exchange 各跑一次; 普通 user: 单个 exchange
-    if is_team_tier(user_id) and len(bound) > 1:
-        all_recs = []
-        per_exchange = {}
-        for ex in bound:
-            sub = _recommend_for_exchange(user_id, ex, max_recommend=max_recommend)
-            per_exchange[ex] = sub
-            all_recs.extend(sub.get('recommendations', []))
-        return {
-            'ok': True,
-            'mode': sub.get('mode') if all_recs else 'manual',
-            'recommendations': all_recs,
-            'by_exchange': per_exchange,
-            'bound_exchanges': bound,
-            'total_recommendations': len(all_recs),
-        }
-
-    # 普通 user 或 team 只绑 1 个
-    return _recommend_for_exchange(user_id, bound[0], max_recommend=max_recommend)
+    # Phase 14k-138 (B2): 无论普通 user 还是 team 多绑, 都只推一次 (venue-无关) —
+    # 一个 edge 一份策略, 执行时 B1b 跨所路由选最优可成交所. 不再 per-exchange 复制
+    # (旧 team 逻辑每所各推同一 edge → 重复策略 → 双倍敞口/相互竞争). 可行性用 primary 代理,
+    # 路由时再按实际所复核. (is_team_tier 多绑的价值改由 B1b 路由 + B2 去重承载)
+    rec_exchange = primary_exchange(user_id) or bound[0]
+    res = _recommend_for_exchange(user_id, rec_exchange, max_recommend=max_recommend)
+    if isinstance(res, dict):
+        res['bound_exchanges'] = bound
+        res['venue_routing'] = len(bound) > 1   # 执行时 B1b 路由, 不绑死 rec_exchange
+    return res
 
 
 def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend: int = 3) -> dict:

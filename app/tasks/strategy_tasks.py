@@ -1621,6 +1621,47 @@ def recheck_strategies_for_primary_exchange(user_id: int = 1, max_revive: int = 
     return f'recheck: {len(pool)} 评估 (primary={primary}), {len(revived)} 上架 (headroom={headroom})'
 
 
+@celery_app.task(name='app.tasks.strategy_tasks.dedup_cross_exchange_strategies')
+def dedup_cross_exchange_strategies(user_id: int = None):
+    """Phase 14k-138 (B2): 去重跨所重复策略. 旧 team per-所 recommend 会给同一 edge
+    (user, base_type, symbol) 在每个绑定所各建一份 running → B1b 路由后一份就够 (执行时选所),
+    多份只会双倍敞口/相互竞争. 留实盘净 PnL 最高的一份, 其余退役.
+    """
+    import re
+    from datetime import datetime as _dt
+    from app.models import Trade
+    from sqlalchemy import func as _func
+    from app.services.audit import log as audit
+
+    q = Strategy.query.filter_by(status='running')
+    if user_id:
+        q = q.filter_by(user_id=user_id)
+    groups = {}
+    for s in q.all():
+        base = re.sub(r'_u\d+_\d{12,16}$', '', s.type or '')
+        groups.setdefault((s.user_id, base, s.symbol), []).append(s)
+
+    retired = []
+    for (uid, base, sym), group in groups.items():
+        if len(group) < 2:
+            continue   # 同 (user, edge, symbol) 只一份 → 不是重复
+        def _net_pnl(st):
+            r = db.session.query(_func.coalesce(_func.sum(Trade.pnl), 0)).filter(
+                Trade.strategy_id == st.id).scalar()
+            return float(r or 0)
+        group.sort(key=_net_pnl, reverse=True)
+        keep = group[0]
+        for s in group[1:]:
+            s.status = 'retired'
+            s.retired_at = _dt.utcnow()
+            s.retire_reason = (f'14k-138 B2 去重: 同 edge {sym}/{base[:20]} 已有 #{keep.id} '
+                               f'({keep.exchange}), B1b 跨所路由不需多份')
+            retired.append((s.id, keep.id))
+            audit('strategy_dedup_retired', actor='auto:14k138', strategy_id=s.id, kept_id=keep.id)
+    db.session.commit()
+    return f'dedup: {len(groups)} edge 组, 退役 {len(retired)} 个跨所重复'
+
+
 @celery_app.task
 def auto_revive_retired_strategies():
     """Phase 12.11: 每週掃描 retired 策略，行情變了重新試。
@@ -2493,6 +2534,14 @@ def short_tf_revive_check():
         s.status = 'running'
         s.retired_at = None
         s.retire_reason = None
+        # 14k-138 (B2): 复活到 venue-correct — 策略所不在用户当前绑定所则重 tag 到 primary
+        # (否则留陈旧 exchange tag; B1b 路由按 bound 走, 但 tag 该跟现实一致)
+        try:
+            from app.services.exchange_binding import bound_exchanges as _be, primary_exchange as _pe
+            if (s.exchange or '').lower() not in [e.lower() for e in (_be(s.user_id) or [])]:
+                s.exchange = (_pe(s.user_id) or s.exchange)
+        except Exception:
+            pass
         # 14k-64 风格 _revived_by marker
         if s.params is None:
             s.params = {}

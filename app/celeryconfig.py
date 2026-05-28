@@ -162,6 +162,12 @@ beat_schedule = {
         'schedule': crontab(hour='5', minute='30', day_of_week='sun'),
     },
 
+    # === Phase 14k-138 (B2): 每周去重跨所重复策略 (同 edge 多份 → B1b 路由后留一份) ===
+    'weekly-dedup-cross-exchange': {
+        'task': 'app.tasks.strategy_tasks.dedup_cross_exchange_strategies',
+        'schedule': crontab(hour='5', minute='45', day_of_week='sun'),
+    },
+
     # === Phase 12.4: 每 90s 預熱 Dashboard 緩存（保用戶不見 24s 冷啟動）===
     'prewarm-dashboard-cache': {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',
