@@ -39,7 +39,8 @@ def _simulated_order(symbol, side, amount_usdt, price):
 
 def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 15.0,
                  pos_side: str | None = None, user_id: int | None = None,
-                 order_type: str = 'market', exchange: str = 'okx'):
+                 order_type: str = 'market', exchange: str = 'okx',
+                 reduce_only: bool = False):
     """Phase 6.5 + 11.1.4 + 11.2.2 + 13 + 14k: 模式 + 交易所分派.
 
     mode:
@@ -111,7 +112,7 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                 # HL 不支持 maker post_only via 该接口, 全走 market IOC
                 if order_type in ('maker', 'maker_with_fallback'):
                     print(f'[HL] order_type={order_type} 暂不支持, 降级 market')
-                hl_res = hl_place(symbol, side, amount_usdt, leverage=leverage, creds=user_creds)
+                hl_res = hl_place(symbol, side, amount_usdt, leverage=leverage, creds=user_creds, reduce_only=reduce_only)
                 if not hl_res.get('ok'):
                     # Phase 14k-85: 真校验 ok = outer status + statuses[0].filled 都通过
                     # reject_reason 来自 HL inner statuses[0].error (Insufficient margin / Min size 等)
@@ -507,7 +508,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                 # Phase 12.8: size 已含 lev，PnL = size × delta_price，不再 × lev
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
-                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
+                # Phase 14k-110: close 路径必传 reduce_only=True — HL 否则 close 同时反向开 leverage× 仓
+                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'), reduce_only=True)
 
                 # Phase 12.10 + 14k-12 + 14k-86: live 平倉用真實 balChg 覆寫 PnL (含手續費)
                 # 按 exchange dispatch — OKX 走 fetch_okx_order_real_pnl, HL 走 fetch_order_real_pnl
@@ -651,7 +653,8 @@ def check_stop_loss():
 
             if sl_hit:
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
+                # Phase 14k-110: SL close 必传 reduce_only=True (HL bug: 否则 close 同时反向开仓)
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch, reduce_only=True)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 # Phase 12.10 + 14k-12 + 14k-86: live 用真實 balChg 覆寫 PnL — 按 exchange dispatch
                 if mode == 'live' and order and not order.get('simulated'):
@@ -697,7 +700,9 @@ def check_stop_loss():
 
             elif tp_hit:
                 _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
-                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch)
+                # Phase 14k-110: TP close 必传 reduce_only=True (HL bug: 否则 close 同时反向开仓)
+                # 实测今日 ETH #33 + DOGE #34 TP 触发后都被反向开 leverage× orphan long
+                order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch, reduce_only=True)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
                 # Phase 14k-12 + 14k-86: live balChg 覆写 — 按 exchange dispatch
                 if mode == 'live' and order and not order.get('simulated'):

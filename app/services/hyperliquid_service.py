@@ -325,20 +325,32 @@ def place_order_live(
     reduce_only: bool = False,
     order_type: str = 'market',
 ) -> dict:
-    """市价/限价开仓 — 返回 HL response dict.
+    """市价/限价开仓 OR 平仓 (reduce_only=True) — 返回 HL response dict.
 
-    side: 'buy' (long) | 'sell' (short)
-    size_usdt: 名义 USDT, 实际 = size_usdt * leverage / price 张
+    side: 'buy' (long) | 'sell' (short) — open 用; close 时 SDK 自动按现有 position 反向
+    size_usdt:
+      - open (reduce_only=False): 名义 USDT (无 leverage), 实际 = size_usdt * leverage / price 张
+      - close (reduce_only=True): 名义 USDT (含真实 size 已乘 leverage), 实际 = size_usdt / price 张
 
     Phase 14k-6: caller 先 check expiry — _place_order in strategy_tasks
-    用 user_id 拉 days_until_expiry, 已过期 → 直接 raise (而不是签名失败)
+    Phase 14k-110: close 路径 size 不再乘 leverage + 改走 market_close (SDK 内部 reduce_only=True)
+      旧 bug: close 时 caller 传 pos.size*price (裸 notional 无 leverage), 函数无论何路径都乘
+      leverage 算 size → 真发 leverage× size BUY → 平 + 反向开 leverage× 仓.
+      ETH #33 短仓 0.0073 平仓后变 0.0145 long (lev=2);
+      DOGE #34 短仓 249 平仓后变 1246 long (lev=5).
     """
     if not creds:
         raise RuntimeError('HL creds 必填 (per-user only; admin 用 OKX path)')
     exchange, info = _exchange_client(creds)
     base = hl_base(symbol)
     px = get_ticker(symbol, creds.get('network') or 'mainnet')['price']
-    notional = size_usdt * leverage
+
+    # Phase 14k-110: close 路径 size_usdt 已是真实 close 名义 (含 leverage),
+    # 不该再乘 leverage. 否则 close 变 leverage× BUY 把短仓平掉的同时反向开 long.
+    if reduce_only:
+        notional = size_usdt
+    else:
+        notional = size_usdt * leverage
     size_base = notional / px
     if size_base <= 0:
         raise ValueError('size 计算 ≤ 0')
@@ -358,22 +370,32 @@ def place_order_live(
 
     is_buy = side.lower() in ('buy', 'long')
 
-    # 先设杠杆 (cross margin)
-    try:
-        exchange.update_leverage(int(leverage), base, is_cross=True)
-    except Exception as e:
-        # 已经是这个值会被 silent; 其他 raise
-        if 'leverage' not in str(e).lower():
-            log.warning(f'HL update_leverage {base} {leverage}x failed: {e}')
+    # 14k-110: leverage 只在 open 时设 (close 不该改 leverage)
+    if not reduce_only:
+        try:
+            exchange.update_leverage(int(leverage), base, is_cross=True)
+        except Exception as e:
+            # 已经是这个值会被 silent; 其他 raise
+            if 'leverage' not in str(e).lower():
+                log.warning(f'HL update_leverage {base} {leverage}x failed: {e}')
 
-    # HL 用 IOC market or limit. 这里走 market_open helper (IOC).
-    res = exchange.market_open(
-        name=base,
-        is_buy=is_buy,
-        sz=size_base_rounded,   # 14k-101: 按 szDecimals 精度
-        slippage=0.05,   # 5% max slippage
-        cloid=None,      # SDK 内部生成
-    )
+    # Phase 14k-110: reduce_only 用 SDK market_close (内部 reduce_only=True 守住, 不会反向开仓)
+    if reduce_only:
+        res = exchange.market_close(
+            coin=base,
+            sz=size_base_rounded,
+            slippage=0.05,
+            cloid=None,
+        )
+    else:
+        # HL 用 IOC market or limit. 这里走 market_open helper (IOC).
+        res = exchange.market_open(
+            name=base,
+            is_buy=is_buy,
+            sz=size_base_rounded,   # 14k-101: 按 szDecimals 精度
+            slippage=0.05,   # 5% max slippage
+            cloid=None,      # SDK 内部生成
+        )
 
     # Phase 14k-85: 真校验订单成交, 不只看 outer status
     # HL response: outer status='ok' = 请求合法, 实际 fill/reject 在 statuses[0]
