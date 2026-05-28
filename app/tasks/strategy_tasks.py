@@ -1935,12 +1935,18 @@ def profit_progress_monitor():
                 if not recently_reviewed:
                     recommend_strategies(t.user_id)
                     t.last_ai_review_at = now
+                # Phase 14k-124: 跨档时 AI 重评 EXISTING 策略 mix (跟 recommend_strategies 推新分工)
+                # 用 .delay() 异步触发, 不阻塞 profit_monitor 5min cycle.
+                try:
+                    capital_tier_strategy_review.delay(t.user_id, t.last_tier_value or 0, crossed, total)
+                except Exception as ex:
+                    print(f'[14k-124] tier review dispatch failed: {ex}')
                 t.last_tier_triggered_at = now
                 t.last_tier_value = crossed
                 tg_send(
                     f'📈 <b>资金跨档</b> ${crossed}\n'
                     f'用户 {user.email}\n'
-                    f'AI 自动扩展策略数 (现 ${total:.2f})',
+                    f'AI 自动扩展策略数 + 重评 mix (现 ${total:.2f})',
                     event_key=f'capital_tier_{t.id}_{crossed}',
                 )
                 actions.append(f'tier {crossed} triggered user={user.email}')
@@ -1950,6 +1956,99 @@ def profit_progress_monitor():
         db.session.commit()
 
     return f'profit_monitor: {len(targets)} targets, actions: {actions}'
+
+
+# ===== Phase 14k-124: 资金跨档时 AI 重评 mix =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.capital_tier_strategy_review')
+def capital_tier_strategy_review(user_id: int, old_tier: float, new_tier: float, current_balance: float):
+    """Phase 14k-124: 跨档时 AI 重评 existing 策略 mix.
+
+    跟现有机制分工 (不矛盾):
+      - sizing_advisor: 账户级 lev/size/daily_loss (不动)
+      - recommend_strategies: 推**新**策略 candidate (profit_monitor 已 hook)
+      - 14k-124 本任务: **重评 existing mix**, 看新档应该 fan_out / adjust_risk / 加 TF 多样性
+
+    auto-apply 守门:
+      - 只跑 fan_out + adjust_strategy_risk (low risk, advisor 已支持的 action)
+      - 经 advisor_executor._execute_one 同条 pipeline 走 EV gate / cap
+      - 上限 3 个 auto_actions (LLM prompt 内已限)
+      - retire/pause 只发 TG suggestion 让 user 看, 不自动执行
+      - audit log 全程
+    """
+    from app.models import Strategy
+    from app.services.llm_prompts.capital_tier_review import review_mix_for_capital_tier
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as tg_send
+
+    r = review_mix_for_capital_tier(user_id, old_tier, new_tier, current_balance)
+    if not r.get('ok'):
+        audit('capital_tier_review_failed', user_id=user_id,
+              old_tier=old_tier, new_tier=new_tier, error=r.get('error', ''))
+        return f'tier_review LLM failed: {r.get("error", "")[:200]}'
+
+    analysis = r.get('analysis', '')
+    auto_actions = r.get('auto_actions', [])[:3]   # 安全冗余, prompt 已限 3
+    user_suggestions = r.get('user_suggestions', [])
+
+    # 1) auto-apply low-risk actions 走 advisor_executor 同管道
+    applied = []
+    skipped = []
+    from app.services.advisor_executor import _execute_one
+    SAFE_ACTIONS = {'fan_out', 'adjust_strategy_risk'}
+    for action_spec in auto_actions:
+        act = action_spec.get('action')
+        sid = action_spec.get('strategy_id')
+        if act not in SAFE_ACTIONS:
+            skipped.append({'spec': action_spec, 'why': f'action {act} 非 safe list'})
+            continue
+        # 构造 advisor_executor 兼容 item
+        item = {
+            'action': act,
+            'strategy_id': sid,
+            'strategy_name': '',
+            'reason': action_spec.get('reason', '14k-124 capital tier review'),
+            'meta': action_spec.get('params', {}),
+        }
+        # 拿 strategy name 补 item
+        s = Strategy.query.get(sid) if sid else None
+        if s:
+            item['strategy_name'] = s.name
+        else:
+            skipped.append({'spec': action_spec, 'why': f'strategy {sid} 不存在'})
+            continue
+        try:
+            ok, msg = _execute_one(item)
+        except Exception as e:
+            skipped.append({'spec': action_spec, 'why': f'{type(e).__name__}: {e}'})
+            continue
+        if ok:
+            applied.append({'action': act, 'sid': sid, 'msg': msg})
+            audit('capital_tier_review_applied', user_id=user_id,
+                  action=act, strategy_id=sid, tier=new_tier,
+                  reason=action_spec.get('reason', '')[:200])
+        else:
+            skipped.append({'spec': action_spec, 'why': msg})
+
+    # 2) TG suggestions (不自动执行, 给 user 决定)
+    if user_suggestions or applied:
+        lines = [f'🧠 <b>AI 资金跨档重评 mix</b> (${old_tier:.0f} → ${new_tier:.0f})']
+        if analysis:
+            lines.append(f'\n📊 分析: {analysis}')
+        if applied:
+            lines.append(f'\n✅ AI 已自动调整 {len(applied)} 项 (经守门员):')
+            for a in applied:
+                lines.append(f'  · #{a["sid"]} {a["action"]} — {a["msg"][:80]}')
+        if user_suggestions:
+            lines.append(f'\n💡 AI 建议你考虑 (需手动):')
+            for sug in user_suggestions[:5]:
+                lines.append(f'  · {sug.get("kind")}: {sug.get("target")} — {sug.get("reason", "")[:100]}')
+        tg_send('\n'.join(lines), event_key=f'tier_review_{user_id}_{int(new_tier)}')
+
+    audit('capital_tier_review_done', user_id=user_id, old_tier=old_tier, new_tier=new_tier,
+          applied_count=len(applied), suggestions_count=len(user_suggestions),
+          analysis=analysis[:300])
+    return f'tier_review: applied={len(applied)}, suggestions={len(user_suggestions)}, skipped={len(skipped)}'
 
 
 @celery_app.task(name='app.tasks.strategy_tasks.weekly_strategy_review')
