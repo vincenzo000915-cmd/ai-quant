@@ -418,9 +418,10 @@ def _check_promote_gates(symbol: str, timeframe: str, category: str,
     if overlap:
         return False, f'已 running 同 (sym={symbol}, TF={timeframe}, cat={category}) 策略 #{overlap.id}'
 
-    # Guard 2: running >= max
+    # Guard 2: running >= max (Phase 14k-123: 资金感知)
+    from app.services.config_service import get_max_running_for_user
     n_running = scoped_query(Strategy).filter_by(status='running').count()
-    max_running = int(cfg.get('auto_apply_max_running', 8))
+    max_running = get_max_running_for_user(user_id)
     if n_running >= max_running:
         return False, f'running {n_running} >= max {max_running}'
 
@@ -1032,10 +1033,12 @@ def _maybe_auto_apply_invent(cand, user_id: int, mode: str, cfg: dict) -> dict |
     sym = (cand.source_meta or {}).get('symbol') or 'AVAX/USDT'
     rp = (cand.source_meta or {}).get('risk_params') or {}
 
-    # Guardrail: 总 running 限制
+    # Guardrail: 总 running 限制 (Phase 14k-123: 资金感知)
+    from app.services.config_service import get_max_running_for_user
     n_running = scoped_query(Strategy).filter_by(status='running').count()
-    if n_running >= int(cfg.get('auto_apply_max_running', 8)):
-        return {'skipped': True, 'reason': f'running {n_running} >= max'}
+    max_running = get_max_running_for_user(user_id)
+    if n_running >= max_running:
+        return {'skipped': True, 'reason': f'running {n_running} >= max {max_running}'}
 
     promote_res = do_promote(cand.id, symbol=sym, owner_user_id=user_id)
     if not promote_res.get('ok'):

@@ -114,6 +114,14 @@ beat_schedule = {
         'schedule': crontab(minute='20', hour='*/6'),
     },
 
+    # === Phase 14k-123: 短 TF 自动 revive — 每小时 :22 跑 ===
+    # weekly_review 周 1 次太迟钝, 1h 策略 retire 后 1 周才看, 短 TF 市场早变化
+    'short-tf-revive-check': {
+        'task': 'app.tasks.strategy_tasks.short_tf_revive_check',
+        'schedule': crontab(minute='22'),
+        'options': {'expires': 1800},
+    },
+
     # === Phase 14k-45 L1: AI 市场分析 brief prewarm ===
     # Phase 14k-79 临时禁用: claude CLI 单次 ~3min × 7 symbol = 21min, lock TTL 14min 失效, CPU 雪崩
     # advisor _get_market_brief 调 analyze_market 时按需懒加载即可 (cache 30min TTL 仍生效)

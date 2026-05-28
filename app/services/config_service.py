@@ -172,3 +172,69 @@ def set_halted(reason: str | None):
 
 def invalidate():
     _cache.clear()
+
+
+# Phase 14k-123: 资金感知 max_running + TF-aware 沉默期 + 短 TF revive
+# User 反馈: "max_running=8 写死, 资金多了应该开放; 极短 TF 信号变化快需要即时淘汰/回滚/新增"
+
+# 资金跨档 → max_running (跟 14k-55 invent_quota 同设计哲学)
+CAPITAL_TIER_MAX_RUNNING = [
+    (100,    4),    # < $100: 4 个策略 ($25/策略, 小本不过度分散)
+    (500,    6),    # < $500: 6 个
+    (2000,   8),    # < $2000: 8 个 (default)
+    (10000,  12),   # < $10000: 12 个
+    (10**9,  20),   # >= $10000: 20 个 (上限封顶, 防爆)
+]
+
+# TF-aware 沉默期 (days) — 短 TF 信号密集, 几天无 trade 即可怀疑死循环; 长 TF 信号稀, 多日才合理
+# 标准: 大约 = TF 跑出 ~60-90 candles 的天数 (统计显著样本)
+INACTIVITY_GRACE_DAYS_BY_TF = {
+    '15m': 1,   # 96 candles/day, 1 day = 96 信号机会
+    '30m': 2,   # 96 candles
+    '1h':  3,   # 72 candles
+    '2h':  7,
+    '4h':  14,  # 84 candles
+    '6h':  21,
+    '8h':  28,
+    '12h': 42,
+    '1d':  60,  # 60 candles
+    '3d':  90,
+    '1w':  180,
+}
+
+
+def get_max_running_for_user(user_id: int | None = None) -> int:
+    """Phase 14k-123: 资金感知 max_running.
+
+    资金少 → 限策略数 (避免过度分散, 单策略本金太薄即使信号触发也开仓空闲).
+    资金多 → 开放策略数 (能真分散不同 symbol/TF/regime).
+
+    Override: 用户/admin 在 SystemConfig.auto_apply_max_running 显式 set 非 default 值 → 用它.
+    Default 8 → 走资金 tier 计算.
+    """
+    cfg = get_config(user_id)
+    explicit = cfg.get('auto_apply_max_running')
+    if explicit is not None and explicit != 8:   # 8 是 DEFAULTS, 非 8 视为用户显式 set
+        return int(explicit)
+    try:
+        from app.services.exchange_service import fetch_balance, _resolve_creds
+        creds = _resolve_creds(user_id) if user_id else None
+        balances = fetch_balance(creds=creds) if creds else fetch_balance()
+        total_usd = sum(float(v.get('total', 0) or 0) for v in (balances or {}).values())
+    except Exception:
+        total_usd = 0
+    if total_usd <= 0:
+        return 4   # 没余额 = 最低
+    for threshold, max_n in CAPITAL_TIER_MAX_RUNNING:
+        if total_usd < threshold:
+            return max_n
+    return 20
+
+
+def get_inactivity_grace_days(timeframe: str | None) -> int:
+    """Phase 14k-123: TF-aware 沉默期 — 用于 weekly_review / revive 判定 "信号死循环".
+
+    短 TF (15m/30m/1h) 1-3 天无 trade 即可怀疑死, 因为 candle 密信号机会多.
+    长 TF (4h/1d) 需要 2-8 周才能下结论, 因为 candle 稀.
+    """
+    return INACTIVITY_GRACE_DAYS_BY_TF.get(timeframe or '4h', 14)

@@ -1954,44 +1954,55 @@ def profit_progress_monitor():
 
 @celery_app.task(name='app.tasks.strategy_tasks.weekly_strategy_review')
 def weekly_strategy_review():
-    """Phase 14k-22 (B): 每周日 23:00 UTC 跑.
+    """Phase 14k-22 + 14k-123: 每周日 23:00 UTC 跑.
     - 7 日 Sharpe<0 且亏损>$5 的 running 策略 → pause
-    - 30 天无 trade 策略 → retire (信号死循环)
+    - TF-aware 沉默期 (14k-123) 无 trade 策略 → retire (信号死循环)
+      15m: 1d / 30m: 2d / 1h: 3d / 4h: 14d / 1d: 60d 等
+      (旧硬编码 30 天对 15m 策略太迟钝, 对 1d 策略又过早)
     - 触发 AI improve 补新策略
     """
     from app.models import Strategy, Trade
     from app.services.telegram_service import send as tg_send
     from app.services.audit import log as audit
+    from app.services.config_service import get_inactivity_grace_days
     from sqlalchemy import func
     import datetime as _dt
     import statistics
 
+    # 14k-121: 排除 reconcile_orphan 虚拟清理 trade (跟 14k-100 / 14k-121 同口径)
+    ORPHAN_REASONS = ['reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan']
+
     now = _dt.datetime.utcnow()
     week_ago = now - _dt.timedelta(days=7)
-    month_ago = now - _dt.timedelta(days=30)
 
     running = Strategy.query.filter_by(status='running').all()
     paused = []
     retired = []
     for s in running:
-        # 7 日 trades
+        # 7 日真 trades (排除 orphan)
         week_trades = (Trade.query.filter(Trade.strategy_id == s.id,
                                             Trade.exit_time > week_ago)
+                       .filter(~Trade.reason.in_(ORPHAN_REASONS))
                        .all())
-        # 30 天 trades
-        month_count = (Trade.query.filter(Trade.strategy_id == s.id,
-                                            Trade.exit_time > month_ago)
+
+        # Phase 14k-123: TF-aware 沉默期 — 短 TF 几天就够判, 长 TF 需周月
+        grace_days = get_inactivity_grace_days(s.timeframe)
+        grace_ago = now - _dt.timedelta(days=grace_days)
+        grace_count = (Trade.query.filter(Trade.strategy_id == s.id,
+                                            Trade.exit_time > grace_ago)
+                       .filter(~Trade.reason.in_(ORPHAN_REASONS))
                        .count())
 
-        # 死循环 — 30 天 0 trade (上线 > 30 天的策略)
+        # 死循环 — TF-aware 沉默期内 0 真 trade (上线 > grace_days 才判, 给上线初期 buffer)
         days_old = (now - s.created_at).total_seconds() / 86400 if s.created_at else 0
-        if month_count == 0 and days_old > 30:
+        if grace_count == 0 and days_old > grace_days:
             s.status = 'retired'
             s.retired_at = now
-            s.retire_reason = 'weekly_review: 30 天 0 trade (signal_dead)'
+            s.retire_reason = f'weekly_review: {grace_days}d 0 真 trade (signal_dead, {s.timeframe} TF)'
             retired.append(s)
             audit('weekly_review_retire', actor='system',
-                  strategy_id=s.id, reason='signal_dead_30d')
+                  strategy_id=s.id, reason=f'signal_dead_{grace_days}d',
+                  timeframe=s.timeframe, grace_days=grace_days)
             continue
 
         # 7 日 Sharpe<0 + 亏>$5
@@ -2036,6 +2047,110 @@ def weekly_strategy_review():
 
     tg_send('\n'.join(msg_lines), event_key='weekly_review')
     return f'review: paused={len(paused)}, retired={len(retired)}, refilled={refilled}'
+
+
+# ===== Phase 14k-123: 短 TF 自动 revive (每小时跑) =====
+
+@celery_app.task(name='app.tasks.strategy_tasks.short_tf_revive_check')
+def short_tf_revive_check():
+    """Phase 14k-123: 每小时检查近 7 天 retired 的短 TF (15m/30m/1h) 策略是否该 revive.
+
+    背景 (user 反馈): "极短 TF 市场变化快, 可能现在被淘汰, 下一个小时就反转指标又能用了".
+    weekly_review 一周 1 次太迟钝 — 1h TF 策略 retire 后 1 周才检查, 早晚很多 revive 机会.
+
+    Revive 守门:
+      1. 退役在近 7 天内 (太老的不冒险)
+      2. timeframe ∈ {15m, 30m, 1h}
+      3. 当前 regime fit_label = 'good' (跟策略 type 匹配)
+      4. 用户 max_running 还有 headroom (14k-123 资金感知)
+      5. dedup: 同 strategy 7 天内只 revive 1 次 (防来回翻)
+
+    Revive 后:
+      params.risk_params._revived_by = '14k-123_auto_revive'
+      audit 'strategy_auto_revived'
+      Telegram 通知
+    """
+    from app.models import Strategy, AuditLog
+    from app.services.regime_detector import detect_regime, fit_label
+    from app.services.config_service import get_max_running_for_user
+    from app.services.audit import log as audit
+    from app.services.telegram_service import send as tg_send
+    from sqlalchemy.orm.attributes import flag_modified
+    import datetime as _dt
+
+    SHORT_TF = ('15m', '30m', '1h')
+    now = _dt.datetime.utcnow()
+    revive_max_age = now - _dt.timedelta(days=7)
+    dedup_cutoff = now - _dt.timedelta(days=7)
+
+    recently_retired = Strategy.query.filter(
+        Strategy.status == 'retired',
+        Strategy.timeframe.in_(SHORT_TF),
+        Strategy.retired_at >= revive_max_age,
+    ).all()
+
+    if not recently_retired:
+        return 'no recently-retired short-TF candidates'
+
+    revived = []
+    skipped = []
+    for s in recently_retired:
+        # dedup: 7 天内是否已 revive 过 (防止来回 retire/revive 翻转)
+        recent_revive = AuditLog.query.filter(
+            AuditLog.event_type == 'strategy_auto_revived',
+            AuditLog.created_at >= dedup_cutoff,
+        ).all()
+        if any((a.context or {}).get('strategy_id') == s.id for a in recent_revive):
+            skipped.append((s.id, 'recent_revive_dedup'))
+            continue
+
+        # max_running headroom
+        n_running = Strategy.query.filter_by(status='running').count()
+        max_run = get_max_running_for_user(s.user_id)
+        if n_running >= max_run:
+            skipped.append((s.id, f'max_running {n_running}/{max_run}'))
+            continue
+
+        # regime fit
+        try:
+            rd = detect_regime(s.symbol, s.timeframe)
+            regime = rd.get('regime', 'unknown')
+            if rd.get('n', 0) < 50:
+                skipped.append((s.id, f'regime data thin (n={rd.get("n", 0)})'))
+                continue
+            fit = fit_label(s.type, regime)
+        except Exception as e:
+            skipped.append((s.id, f'regime err: {type(e).__name__}'))
+            continue
+        if fit != 'good':
+            skipped.append((s.id, f'regime {regime} fit={fit} not good'))
+            continue
+
+        # revive
+        s.status = 'running'
+        s.retired_at = None
+        s.retire_reason = None
+        # 14k-64 风格 _revived_by marker
+        if s.params is None:
+            s.params = {}
+        rp = s.params.setdefault('risk_params', {})
+        rp['_revived_by'] = '14k-123_auto_revive'
+        flag_modified(s, 'params')
+        revived.append((s, regime, fit))
+        audit('strategy_auto_revived', actor='system',
+              strategy_id=s.id, symbol=s.symbol, timeframe=s.timeframe,
+              regime=regime, fit=fit, reason='short_tf_regime_turn_fit')
+
+    db.session.commit()
+
+    # Telegram 通知
+    if revived:
+        lines = [f'🔄 <b>AI 复活 {len(revived)} 个短 TF 策略</b>']
+        for s, regime, fit in revived:
+            lines.append(f'  · #{s.id} {s.name[:40]} ({s.symbol} {s.timeframe}) — regime={regime}/fit={fit}')
+        tg_send('\n'.join(lines), event_key='short_tf_revive')
+
+    return f'revive_check: {len(revived)} revived, {len(skipped)} skipped'
 
 
 @celery_app.task(name='app.tasks.strategy_tasks.retry_stuck_ai_recommendations')

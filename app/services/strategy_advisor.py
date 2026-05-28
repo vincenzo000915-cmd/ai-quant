@@ -1180,7 +1180,9 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
         cfg = get_config()
         # 14k-104.1: 用 Strategy.query (admin user_id=1 默认行为, 不用 scoped 也对)
         n_running = Strategy.query.filter_by(status='running').count()
-        max_running = int(cfg.get('auto_apply_max_running', 8))
+        # Phase 14k-123: 资金感知 max_running 取代硬编码 8
+        from app.services.config_service import get_max_running_for_user
+        max_running = get_max_running_for_user(user_id)
         if n_running >= max_running:
             print(f'[invent] skip: running {n_running} >= max {max_running} (gates 堵, invent 也无法 promote)')
             return None
