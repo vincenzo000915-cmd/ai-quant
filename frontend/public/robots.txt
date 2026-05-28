@@ -1,0 +1,23 @@
+# Phase 14k-115: robots.txt
+# Quant Pro · AI 量化驾驶舱
+
+User-agent: *
+Allow: /
+Allow: /pricing
+Allow: /terms
+Allow: /privacy
+Allow: /refund-policy
+
+# 私密 / 需登录 — 不爬
+Disallow: /dashboard
+Disallow: /strategies
+Disallow: /candidates
+Disallow: /trades
+Disallow: /audit
+Disallow: /settings
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /checkout
+Disallow: /api/
+
+Sitemap: https://ai-quant.medias-ai.cloud/sitemap.xml
