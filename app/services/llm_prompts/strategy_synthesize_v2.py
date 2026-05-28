@@ -85,6 +85,53 @@ def get_few_shot_with_trades(target_timeframe: str | None = None, max_n: int = 3
                     })
             ex['real_trades'] = trades[:6]   # 每个模板最多 6 笔真 trades
 
+        # ---- Part 2 (14k-132): AI 自己合成并实盘盈利的赢家也回流成 few-shot ----
+        # Why: 原本 few-shot 只拉 source='catalog' (教科书), AI 学不到自己发现的赢家 →
+        #   学习环在"自己的成功"端断开, 永远只模仿教科书. 这里补上: 把 candidate-backed 且
+        #   实盘净盈利 (≥3 笔, sum(pnl)>0) 的 promoted 策略, 连同它的盈利 trades 一起喂回.
+        #   下游仍有 OOS≥1.5 + paper dry-run 门槛兜底, 故纯增益、安全.
+        from app.extensions import db
+        from sqlalchemy import func
+        existing_types = {t['candidate_type'] for t in top}
+        winner_rows = (db.session.query(
+                Strategy.id.label('sid'), Strategy.type, Strategy.timeframe,
+                Strategy.candidate_id,
+                func.coalesce(func.sum(Trade.pnl), 0).label('net'),
+                func.count(Trade.id).label('n'))
+            .join(Trade, Trade.strategy_id == Strategy.id)
+            .filter(Strategy.candidate_id.isnot(None))
+            .group_by(Strategy.id, Strategy.type, Strategy.timeframe, Strategy.candidate_id)
+            .having(func.sum(Trade.pnl) > 0)
+            .having(func.count(Trade.id) >= 3)
+            .order_by(func.sum(Trade.pnl).desc())
+            .limit(2).all())
+        for w in winner_rows:
+            c = StrategyCandidate.query.get(w.candidate_id)
+            if not c or not c.parsed_signal:
+                continue
+            base_type = c.candidate_type or w.type
+            if base_type in existing_types:
+                continue   # catalog 已含同 type, 不重复
+            wins = (Trade.query.filter(Trade.strategy_id == w.sid, Trade.pnl > 0)
+                    .order_by(Trade.exit_time.desc()).limit(6).all())
+            cm = c.catalog_meta or {}
+            top.append({
+                'candidate_type': base_type + ' [自研赢家·实盘盈利]',
+                'signal_code': c.parsed_signal,
+                'verified_oos_sharpe': float(cm.get('verified_oos_sharpe') or 0),
+                'description': (cm.get('description') or '')[:80] + f' (实盘净盈利 ${float(w.net):.2f} / {w.n} 笔)',
+                'timeframe': w.timeframe,
+                'real_trades': [{
+                    'symbol': t.symbol,
+                    'date': t.exit_time.strftime('%m/%d %H:%M') if t.exit_time else '?',
+                    'side': t.side,
+                    'entry': round(float(t.entry_price or 0), 2),
+                    'exit': round(float(t.exit_price or 0), 2),
+                    'pnl_pct': round(float(t.pnl_percent or 0), 2),
+                    'reason': t.reason or '?',
+                } for t in wins],
+            })
+
         return top
     except Exception as e:
         print(f'[14k-62] get_few_shot_with_trades error: {type(e).__name__}: {e}')
