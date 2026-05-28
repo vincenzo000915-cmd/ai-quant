@@ -732,6 +732,182 @@ def ai_diagnose():
     return jsonify(r)
 
 
+# Phase 14k-126: AI chat assistant — Pro/Team/admin 可用, read-only 量化驾驶舱助手
+@api_bp.route('/me/ai-chat', methods=['POST'])
+@require_actor
+@require_pro_tier
+def ai_chat():
+    """Phase 14k-126: read-only AI chat assistant.
+
+    要求: tier >= Pro + 已绑 BYO LLM key + 配额未满 + 输入过滤.
+    Body: {message: str}
+    Returns: {ok, text, quota: {used, limit, remaining}, error?, raw?}
+    """
+    from app.models import LlmCredentials
+    from app.services.chat_filter import check_input, scrub_output, REFUSAL_MESSAGE
+    from app.services.chat_quota import check_and_increment, record_extraction_attempt
+    from app.services.llm_prompts.chat_assistant import chat_reply
+    from app.services.subscription_service import get_user_tier
+    from app.services.audit import log as audit
+    from app.services.regime_detector import detect_regime
+    from app.models import Strategy, Position, Trade, AuditLog, ProfitTarget
+    import datetime as _dt
+
+    uid = current_user_id() or 1
+    data = request.get_json(silent=True) or {}
+    message = (data.get('message') or '').strip()
+
+    # 1. has BYO LLM key?
+    has_key = LlmCredentials.query.filter_by(user_id=uid, is_active=True).count() > 0
+    if not has_key and not is_admin_actor():
+        return jsonify({
+            'ok': False,
+            'error': '请先到「设置 → AI 提供商」绑定 Anthropic / OpenAI / Gemini API key',
+            'hint_url': '/settings',
+        }), 400
+
+    # 2. tier
+    tier = get_user_tier(uid)
+    if tier not in ('pro', 'team', 'admin'):
+        return jsonify({'ok': False, 'error': 'AI chat 需 Pro 及以上订阅', 'tier_required': 'pro'}), 402
+
+    # 3. 输入过滤 (jailbreak / extraction)
+    allowed, reason = check_input(message)
+    if not allowed:
+        if 'matched:' in reason:
+            n = record_extraction_attempt(uid)
+            audit('chat_extraction_attempt', actor='user',
+                  user_id=uid, attempt_num=n, pattern=reason[:80],
+                  preview=message[:120])
+        return jsonify({'ok': True, 'text': REFUSAL_MESSAGE, 'filtered': True})
+
+    # 4. quota
+    ok, qinfo = check_and_increment(uid, tier)
+    if not ok:
+        return jsonify({'ok': False, 'error': qinfo.get('reason', '配额满'), 'quota': qinfo}), 429
+
+    # 5. 拉 user scoped 上下文
+    try:
+        running = scoped_query(Strategy).filter(Strategy.status == 'running').all()
+        ORPHAN = ['reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconcile_orphan']
+        week_ago = _dt.datetime.utcnow() - _dt.timedelta(days=7)
+        strategies_ctx = []
+        for s in running[:20]:
+            recent = (Trade.query.filter(Trade.strategy_id == s.id,
+                                           Trade.exit_time > week_ago,
+                                           ~Trade.reason.in_(ORPHAN)).all())
+            rp = (s.params or {}).get('risk_params') or {}
+            strategies_ctx.append({
+                'id': s.id, 'name': s.name[:50], 'symbol': s.symbol,
+                'timeframe': s.timeframe, 'category': s.category, 'type': s.type,
+                'current_leverage': rp.get('leverage', 3),
+                'trades_7d': len(recent),
+                'pnl_7d': round(sum(float(t.pnl or 0) for t in recent), 2),
+            })
+        # positions
+        positions = (scoped_query(Position).filter_by(status='open').all())
+        positions_ctx = [{
+            'id': p.id, 'symbol': p.symbol, 'side': p.side,
+            'entry_price': p.entry_price, 'current_price': p.current_price,
+            'unrealized_pnl': round(float(p.unrealized_pnl or 0), 3),
+            'hours_held': round((_dt.datetime.utcnow() - p.opened_at).total_seconds() / 3600, 1) if p.opened_at else None,
+        } for p in positions]
+        # today audit (AI 动作摘要)
+        today_audit = (AuditLog.query
+                       .filter(AuditLog.event_type.in_([
+                           'advisor_auto_apply', 'ai_strategy_params_change',
+                           'ai_change_reverted', 'risk_opt_no_lift',
+                           'signal_grid_proposed', 'capital_tier_review_applied'
+                       ]))
+                       .filter(AuditLog.created_at > _dt.datetime.utcnow() - _dt.timedelta(hours=24))
+                       .order_by(AuditLog.created_at.desc()).limit(20).all())
+        audit_ctx = [{
+            'time': a.created_at.strftime('%H:%M') if a.created_at else '',
+            'event': a.event_type,
+            'context': (a.context or {}),
+        } for a in today_audit]
+        # profit target
+        pt = ProfitTarget.query.filter_by(user_id=uid, status='active').first()
+        pt_ctx = None
+        if pt:
+            pt_ctx = {
+                'target_pct': pt.target_pct,
+                'current_equity': pt.current_equity_usdt,
+                'peak_equity': pt.peak_equity_usdt,
+                'deadline': pt.deadline.isoformat() if pt.deadline else None,
+            }
+        # regime (per running strategy 的 symbol/tf — 仅缓存近期 detection)
+        regime_ctx = {}
+        for s in running[:6]:
+            try:
+                rd = detect_regime(s.symbol, s.timeframe)
+                regime_ctx[f'{s.symbol}@{s.timeframe}'] = {
+                    'regime': rd.get('regime'),
+                    'n': rd.get('n'),
+                }
+            except Exception:
+                pass
+        # balance
+        try:
+            from app.services.exchange_service import fetch_balance, _resolve_creds
+            creds = None if is_admin_actor() else _resolve_creds(uid)
+            balances = fetch_balance(creds=creds) if (is_admin_actor() or creds) else {}
+            balance_usd = sum(float(v.get('total', 0) or 0) for v in balances.values())
+        except Exception:
+            balance_usd = 0
+        user_ctx = {
+            'tier': tier,
+            'balance_usd': round(balance_usd, 2),
+            'running_strategies': strategies_ctx,
+            'open_positions': positions_ctx,
+            'today_audit_summary': audit_ctx,
+            'profit_target': pt_ctx,
+            'regime_snapshot': regime_ctx,
+        }
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'context fetch fail: {type(e).__name__}: {e}'}), 500
+
+    # 6. LLM call
+    r = chat_reply(uid, message, user_ctx)
+    if not r.get('ok'):
+        return jsonify({'ok': False, 'error': r.get('error', 'LLM failed'), 'quota': qinfo}), 502
+
+    # 7. 输出过滤
+    safe_text, leaked = scrub_output(r['text'])
+    if leaked:
+        n = record_extraction_attempt(uid)
+        audit('chat_output_leak_detected', actor='system',
+              user_id=uid, attempt_num=n, leaked_patterns=leaked,
+              preview=r['text'][:200])
+
+    return jsonify({
+        'ok': True,
+        'text': safe_text,
+        'quota': qinfo,
+        'filtered': bool(leaked),
+    })
+
+
+@api_bp.route('/me/ai-chat/quota', methods=['GET'])
+@require_actor
+def ai_chat_quota():
+    """Phase 14k-126: get current chat quota status (前端显示用)."""
+    from app.services.chat_quota import get_quota_status
+    from app.services.subscription_service import get_user_tier
+    from app.models import LlmCredentials
+    uid = current_user_id() or 1
+    tier = get_user_tier(uid)
+    has_key = LlmCredentials.query.filter_by(user_id=uid, is_active=True).count() > 0
+    eligible = tier in ('pro', 'team', 'admin') and (has_key or is_admin_actor())
+    status = get_quota_status(uid, tier)
+    return jsonify({
+        'eligible': eligible,
+        'tier': tier,
+        'has_byo_key': has_key,
+        **status,
+    })
+
+
 @api_bp.route('/regime/ai-explain', methods=['POST'])
 @require_actor
 @require_pro_tier

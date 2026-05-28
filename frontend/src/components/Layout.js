@@ -25,6 +25,7 @@ import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import { getUser, onUserChange, logout } from '../auth';
 import { palette, typo } from '../theme';
 import TelegramChip from './TelegramChip';
+import AiChatFloat from './AiChatFloat';   // 14k-126
 
 const DRAWER_WIDTH = 220;
 const DRAWER_COLLAPSED = 64;
@@ -372,6 +373,10 @@ export default function Layout() {
             ))}
           </BottomNavigation>
         )}
+
+        {/* Phase 14k-126: AI chat assistant 右下 floating button
+            自检 tier (Pro+) + has_byo_key, 没资格自动不显示 */}
+        <AiChatFloat />
       </Box>
     </Box>
   );

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Phase 14k-126: AI chat assistant — 可爱小机器人 -->
+  <defs>
+    <linearGradient id="face-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f3eeff"/>
+    </linearGradient>
+    <radialGradient id="led-glow" cx="0.5" cy="0.5">
+      <stop offset="0%" stop-color="#fcd34d"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </radialGradient>
+    <linearGradient id="bubble-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 天线 LED (脉冲动画) -->
+  <line x1="32" y1="6" x2="32" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  <circle cx="32" cy="4.5" r="3" fill="url(#led-glow)">
+    <animate attributeName="opacity" values="1;0.4;1" dur="2.2s" repeatCount="indefinite"/>
+    <animate attributeName="r" values="3;3.3;3" dur="2.2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- 侧耳/听筒 -->
+  <rect x="5" y="26" width="5" height="14" rx="2.5" fill="currentColor" opacity="0.55"/>
+  <rect x="54" y="26" width="5" height="14" rx="2.5" fill="currentColor" opacity="0.55"/>
+
+  <!-- 头部圆角矩形 (白色脸) -->
+  <rect x="12" y="15" width="40" height="36" rx="11" fill="url(#face-bg)"/>
+
+  <!-- 眼睛 (大紫眼, 含眨眼动画) -->
+  <ellipse cx="24" cy="30" rx="3.5" ry="4.2" fill="#7c3aed">
+    <animate attributeName="ry" values="4.2;4.2;4.2;4.2;0.4;4.2;4.2;4.2;4.2" dur="5.5s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse cx="40" cy="30" rx="3.5" ry="4.2" fill="#7c3aed">
+    <animate attributeName="ry" values="4.2;4.2;4.2;4.2;0.4;4.2;4.2;4.2;4.2" dur="5.5s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- 眼睛高光 -->
+  <circle cx="25.3" cy="28.5" r="1.1" fill="white"/>
+  <circle cx="41.3" cy="28.5" r="1.1" fill="white"/>
+
+  <!-- 微笑 -->
+  <path d="M25 40 Q32 44.5 39 40" stroke="#7c3aed" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+
+  <!-- 右下 chat bubble 装饰 (三个点 typing) -->
+  <circle cx="51" cy="51" r="7" fill="url(#bubble-bg)" stroke="white" stroke-width="1.5"/>
+  <circle cx="48" cy="51" r="0.9" fill="white">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.4s" begin="0s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="51" cy="51" r="0.9" fill="white">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.4s" begin="0.2s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="54" cy="51" r="0.9" fill="white">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.4s" begin="0.4s" repeatCount="indefinite"/>
+  </circle>
+</svg>
