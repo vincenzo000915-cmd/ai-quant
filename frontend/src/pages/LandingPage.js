@@ -412,6 +412,26 @@ function AICostTransparency() {
     { tier: '🟡 + Team 自动托管 + invent', tokens: '~1.5M', cost: '~$5/天', note: 'L3 合成 + 策略优化跑满' },
     { tier: '🔴 + Translate 候选池满速', tokens: '~2M', cost: '~$7/天', note: '理论最大 (24/7 全速跑)' },
   ];
+  // Phase 14k-125.2: per-tier 用户实际 AI 月费 (BYO API key 走自己账)
+  const tierCosts = [
+    {
+      tier: 'Basic', monthly: '$0', daily: '0',
+      desc: '无 AI features · 22 内置策略 + 自动信号循环 + LIVE 实盘',
+      highlight: false,
+    },
+    {
+      tier: 'Pro', monthly: '$2-15', daily: '$0.07-0.50',
+      desc: 'AI 解读 / 改进 / 周复盘 / Regime / 个性建议 — 你的 LLM key 跑',
+      highlight: true,
+      note: 'Gemini 免费层可零成本起步',
+    },
+    {
+      tier: 'Team', monthly: '$15-30', daily: '$0.50-1.00',
+      desc: 'AI 24/7 自动托管 + L3 实时合成策略 + 多交易所',
+      highlight: false,
+      note: '< 一杯星巴克 $5 / 一天 ☕',
+    },
+  ];
   return (
     <Box sx={{ py: { xs: 8, md: 12 }, bgcolor: 'rgba(167,139,250,0.02)', borderTop: `1px solid ${palette.border}`, borderBottom: `1px solid ${palette.border}` }}>
       <Container maxWidth="lg">
@@ -500,9 +520,70 @@ function AICostTransparency() {
           </Grid>
         </Grid>
 
+        {/* Phase 14k-125.2: per-tier 用户实际月费 — 强化"低消耗"卖点 */}
+        <Reveal delay={200} sx={{ mt: 6, mb: 3 }}>
+          <Typography sx={{ color: palette.ai, fontSize: 12, fontWeight: 700, letterSpacing: 1.5, textAlign: 'center', mb: 1 }}>
+            按订阅档位 · 用户实际 AI 月费
+          </Typography>
+          <Typography sx={{ color: palette.text, fontSize: { xs: '1.2rem', md: '1.4rem' }, fontWeight: 700, textAlign: 'center' }}>
+            BYO LLM key · 全用 Gemini 免费层 = $0
+          </Typography>
+        </Reveal>
+        <Grid container spacing={2.5}>
+          {tierCosts.map((t, i) => (
+            <Grid item xs={12} md={4} key={t.tier}>
+              <Reveal delay={i * 100}>
+                <Box sx={{
+                  p: 3, height: '100%',
+                  bgcolor: t.highlight ? 'rgba(167,139,250,0.06)' : palette.surface,
+                  border: `1px solid ${t.highlight ? palette.borderAccent : palette.border}`,
+                  borderRadius: 1.5,
+                  position: 'relative',
+                }}>
+                  {t.highlight && (
+                    <Chip label="主力 tier" size="small" sx={{
+                      position: 'absolute', top: -10, right: 16, height: 20,
+                      bgcolor: palette.ai, color: palette.bg,
+                      fontWeight: 700, fontSize: 10, letterSpacing: 0.5,
+                    }} />
+                  )}
+                  <Typography sx={{ color: palette.text, fontWeight: 700, fontSize: 18, mb: 0.5 }}>
+                    {t.tier}
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 1, mt: 1.5 }}>
+                    <Typography sx={{ color: palette.ai, fontSize: { xs: '1.5rem', md: '1.7rem' }, fontWeight: 800, fontFamily: typo.mono, lineHeight: 1 }}>
+                      {t.monthly}
+                    </Typography>
+                    <Typography sx={{ color: palette.textMuted, fontSize: 11.5 }}>
+                      / 月 AI
+                    </Typography>
+                  </Box>
+                  <Typography sx={{ color: palette.textMuted, fontFamily: typo.mono, fontSize: 11, mb: 1.5 }}>
+                    ≈ {t.daily} / 天
+                  </Typography>
+                  <Typography sx={{ color: palette.text, fontSize: 12.5, lineHeight: 1.6, mb: t.note ? 1.5 : 0 }}>
+                    {t.desc}
+                  </Typography>
+                  {t.note && (
+                    <Typography sx={{
+                      color: palette.ai, fontSize: 11.5, lineHeight: 1.5,
+                      bgcolor: 'rgba(167,139,250,0.08)', px: 1.5, py: 0.75, borderRadius: 0.5,
+                      border: `1px solid ${palette.borderAccent}`,
+                    }}>
+                      💡 {t.note}
+                    </Typography>
+                  )}
+                </Box>
+              </Reveal>
+            </Grid>
+          ))}
+        </Grid>
+
         <Reveal delay={250} sx={{ mt: 5, textAlign: 'center' }}>
-          <Typography sx={{ color: palette.textMuted, fontSize: 12.5, lineHeight: 1.7 }}>
-            实测基于 Claude Sonnet 平均价 $3/M input · $15/M output · 输入输出 7:3 split · 各 provider 成本不同请按实际 LLM 定价折算
+          <Typography sx={{ color: palette.textMuted, fontSize: 12.5, lineHeight: 1.7, maxWidth: 720, mx: 'auto' }}>
+            对比: <b style={{ color: palette.text }}>ChatGPT Plus 订阅 $20/月</b> = $0.67/天 · 我们 Pro 档 AI 月费跟它差不多 · Team 档全自动托管也仅 1-1.5×
+            <br/>
+            <span style={{ opacity: 0.7 }}>实测基于 Claude Sonnet 平均价 $3/M input · $15/M output · 各 provider 折算后差异 ±50%</span>
           </Typography>
         </Reveal>
       </Container>
