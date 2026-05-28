@@ -1027,7 +1027,9 @@ def _promote_eligible_count(user_id: int | None = None) -> int:
     14k-54: 加 user_id scope — None=全局 (catalog 全局共享); user_id=N → catalog NULL + user N 私池
     """
     from app.models import StrategyCandidate, BacktestResult
-    q = StrategyCandidate.query.filter_by(status='qualified')
+    q = StrategyCandidate.query.filter_by(status='qualified').filter(
+        StrategyCandidate.promoted_strategy_id.is_(None)
+    )
     if user_id is not None:
         # catalog 全局 (user_id IS NULL) ∪ 该 user 自己的 individual
         from sqlalchemy import or_
@@ -1089,7 +1091,9 @@ def _tf_coverage_gap(user_id: int | None = None) -> tuple[bool, dict, str | None
     from sqlalchemy import or_
     q_by_tf = {}
     for tf in ('15m', '30m', '1h', '4h', '1d'):
-        q = StrategyCandidate.query.filter_by(status='qualified', timeframe=tf)
+        q = StrategyCandidate.query.filter_by(status='qualified', timeframe=tf).filter(
+            StrategyCandidate.promoted_strategy_id.is_(None)
+        )
         if user_id is not None:
             q = q.filter(or_(StrategyCandidate.user_id.is_(None),
                              StrategyCandidate.user_id == user_id))
