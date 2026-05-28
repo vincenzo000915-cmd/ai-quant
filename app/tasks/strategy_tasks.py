@@ -2846,6 +2846,7 @@ def auto_revert_ai_changes():
 
     reverted = 0
     skipped = 0
+    reverted_in_run = set()   # 14k-120: 同 strategy 本 run 已 revert → 后续 change 跳过
     for c in changes:
         ctx = c.context or {}
         sid = ctx.get('strategy_id')
@@ -2853,12 +2854,19 @@ def auto_revert_ai_changes():
         if not sid or not before:
             skipped += 1
             continue
+        # Phase 14k-120: 同 strategy 一轮只 revert 一次, 防 ASC 顺序后续 change 覆写
+        # 已还原的 P1 (changes 按 created_at ASC, 第一个 qualifying change 拿最老 before).
+        # 旧 bug: AI 连续 3 次 adjust → 3 个 ai_change_reverted, params 被 P1 → P2 → P3 覆写,
+        # 最终 = P3 (跟没还原一样) + spam 3 个 TG.
+        if sid in reverted_in_run:
+            skipped += 1
+            continue
         s = Strategy.query.get(sid)
         if not s or s.status != 'running':
             skipped += 1
             continue
 
-        # 跳过已经 revert 过的 (避免反复来回)
+        # 跳过已经 revert 过的 (避免反复来回 — 跨 run 历史 dedup)
         already_reverted = AuditLog.query.filter(
             AuditLog.event_type == 'ai_change_reverted',
             AuditLog.created_at > c.created_at,
@@ -2917,6 +2925,7 @@ def auto_revert_ai_changes():
         flag_modified(s, 'params')
         db.session.commit()
 
+        reverted_in_run.add(sid)   # 14k-120: 标记本 run 已 revert
         audit('ai_change_reverted', strategy_id=sid, original_audit_id=c.id,
               original_action=ctx.get('action'),
               before_pnl=before_pnl, after_pnl=after_pnl,
