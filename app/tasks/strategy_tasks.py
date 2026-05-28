@@ -2817,12 +2817,19 @@ def cleanup_stale_candidates():
 
 @celery_app.task(name='app.tasks.strategy_tasks.auto_revert_ai_changes')
 def auto_revert_ai_changes():
-    """每 6h 跑: 看最近 24-48h AI 改动的 strategy, 退化就还原 params.
+    """每 6h 跑: 看 AI 改动的 strategy, 真退化才还原 params (Phase 14k-122 全面加固).
 
-    退化判定 (任一满足即视为退化):
-      - 改后窗口实盘 trades = 0 (策略停止开单, lev 太大/太小)
-      - 改后 PnL < 改前 PnL × 0.5 (且改前 PnL 非零正值)
-      - 改后 win_rate 比改前低 ≥ 20 个百分点 (且各窗口 trades ≥ 5)
+    退化判定 (要任一满足 + 通过样本守门, 不再轻信短样本):
+      - check 1: 改后窗口 0 trades 且改前 ≥ 3 trades (策略真被卡住, 不是稀信号)
+      - check 2: 改后 PnL < 改前 PnL × 0.5 (改前 ≥ $5 真盈利, 不是 $0.5 → $0.2 噪音)
+      - check 3: 改后 win_rate 比改前低 ≥ 20 pp (各 ≥ 5 trades, 跟之前一样)
+
+    Phase 14k-122: timeframe-aware window — 4h/1d 慢频策略 24h 信号太稀, 拉长窗口
+      15m: 12h before + 12h after  (96 candles/12h, signal 多)
+      1h:  24h + 24h                (24 candles, 仍 OK)
+      4h:  48h + 48h                (12 candles, 6 个机会, 才足 sample)
+      1d:  168h + 168h (7d each)    (7 candles, 至少有可能出 signals)
+      其他: 默认 24h + 24h
     """
     import datetime as _dt
     from app.models import AuditLog, Strategy, Trade
@@ -2830,11 +2837,21 @@ def auto_revert_ai_changes():
     from app.services.telegram_service import send as _tg
     from sqlalchemy.orm.attributes import flag_modified
 
-    now = _dt.datetime.utcnow()
-    cutoff_lo = now - _dt.timedelta(hours=48)
-    cutoff_hi = now - _dt.timedelta(hours=24)
+    # Phase 14k-122: timeframe-aware window 长度 (hours)
+    TF_WINDOW_HOURS = {
+        '15m': 12, '30m': 18, '1h': 24, '2h': 36, '4h': 48,
+        '6h': 60, '8h': 72, '12h': 96, '1d': 168, '3d': 336, '1w': 504,
+    }
 
-    # 找 24-48h 内的 AI 改动 (留 24h 给改后表现累积)
+    now = _dt.datetime.utcnow()
+    # 14k-122: cutoff_lo 拉到 max window × 2 防漏 (1d 策略需 14d 历史)
+    max_window_h = max(TF_WINDOW_HOURS.values())
+    cutoff_lo = now - _dt.timedelta(hours=max_window_h * 2)
+    # cutoff_hi 仍是 now - shortest_window 让最快的 (15m) 至少有 12h after 数据成熟
+    min_window_h = min(TF_WINDOW_HOURS.values())
+    cutoff_hi = now - _dt.timedelta(hours=min_window_h)
+
+    # 找 AI 改动 (留足窗口给改后表现累积)
     changes = AuditLog.query.filter(
         AuditLog.event_type == 'ai_strategy_params_change',
         AuditLog.created_at >= cutoff_lo,
@@ -2874,11 +2891,16 @@ def auto_revert_ai_changes():
         if any((a.context or {}).get('original_audit_id') == c.id for a in already_reverted):
             continue
 
-        # 窗口: change 时点前 24h vs change 后 24h
-        before_start = c.created_at - _dt.timedelta(hours=24)
+        # Phase 14k-122: timeframe-aware 窗口 (慢频策略不能用 24h 误判)
+        win_h = TF_WINDOW_HOURS.get(s.timeframe or '4h', 24)
+        # 但 after 窗口必须已成熟 — change 后至少 win_h 才能评估
+        if (now - c.created_at).total_seconds() < win_h * 3600:
+            skipped += 1
+            continue   # 改后窗口还没满, 等下次 run
+        before_start = c.created_at - _dt.timedelta(hours=win_h)
         before_end = c.created_at
         after_start = c.created_at
-        after_end = c.created_at + _dt.timedelta(hours=24)
+        after_end = c.created_at + _dt.timedelta(hours=win_h)
 
         # Phase 14k-121: 排除 reconcile_orphan_* 虚拟 trade —
         # HL/OKX 上有但本地 DB 没的持仓 reconcile 时自动补的清理记录, 不是 strategy 真信号开单.
@@ -2909,12 +2931,16 @@ def auto_revert_ai_changes():
         degraded = False
         reason = []
 
-        # check 1: 改后 24h 0 trades, 但改前有 trades (策略被卡住了)
-        if not after_trades and before_trades:
+        # Phase 14k-122: check 1 加 min sample size — 改前 1 → 后 0 不算策略卡死, 算统计噪音
+        # 必须改前 ≥ 3 真信号 trades 才能判 "卡住". 防止 AI 推合理参数但市场恰好没 signal 被误杀.
+        # check 1: 改后窗口 0 trades, 改前有 ≥ 3 trades (策略真被卡住)
+        if not after_trades and len(before_trades) >= 3:
             degraded = True
-            reason.append(f'改后 24h 无开单 (改前 {len(before_trades)} 笔)')
-        # check 2: PnL 显著下滑 (改前正盈利且改后亏 50%+)
-        elif before_pnl > 0 and after_pnl < before_pnl * 0.5:
+            reason.append(f'改后 {win_h}h 无开单 (改前 {len(before_trades)} 笔)')
+        # Phase 14k-122: check 2 加 min absolute PnL — 防 $0.5→$0.2 (60% drop) 这种噪音触发
+        # 必须改前真盈 ≥ $5 才有"退化"语义 (低于 $5 单笔 noise 太大没意义)
+        # check 2: PnL 显著下滑 (改前 ≥ $5 真盈利且改后亏 50%+)
+        elif before_pnl >= 5.0 and after_pnl < before_pnl * 0.5:
             degraded = True
             reason.append(f'PnL 退化 ${before_pnl:.2f} → ${after_pnl:.2f}')
         # check 3: win_rate 显著下滑
