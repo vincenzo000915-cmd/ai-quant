@@ -242,6 +242,54 @@ def run_strategy_signals_ultra():
     return _run_signals(None, category_filter='ultra')
 
 
+def _strategy_ev(strategy) -> float:
+    """Phase 14k-131: 单笔期望值 EV = p_win×avg_win − (1−p_win)×|avg_loss|.
+    读最近一条缓存 BacktestResult (不现算回测, 避开 14k-79 CPU 雪崩).
+    无回测/无成交 → 0.0 (排序垫底但不为负, 让有回测数据的优先)."""
+    from app.models import BacktestResult
+    br = (BacktestResult.query
+          .filter_by(strategy_id=strategy.id)
+          .order_by(BacktestResult.id.desc())
+          .first())
+    if not br or not br.total_trades:
+        return 0.0
+    p = (br.win_rate or 0) / 100.0
+    return p * (br.avg_win or 0.0) - (1 - p) * abs(br.avg_loss or 0.0)
+
+
+def _regime_ev_weight(strategy) -> float:
+    """Phase 14k-131: 当前 regime 对该策略 type 的适配权重 — 让回测很猛但当下不匹配的策略 EV 打折.
+    good=1.0 / ok=0.6 / bad=0.2 / 数据不足或异常=0.5. detect_regime 有 @cached(ttl=120) 按 symbol+tf 去重."""
+    from app.services.regime_detector import detect_regime, fit_label
+    try:
+        rd = detect_regime(strategy.symbol, strategy.timeframe)
+        if rd.get('n', 0) < 50:
+            return 0.5
+        fit = fit_label(strategy.type, rd.get('regime', 'unknown'))
+    except Exception:
+        return 0.5
+    return {'good': 1.0, 'ok': 0.6, 'bad': 0.2}.get(fit, 0.5)
+
+
+def _position_budget(user_id, exchange, per_position_margin) -> int:
+    """Phase 14k-131: 资金感知同时开仓上限 N = floor(可用权益×80% / 单仓保证金).
+    替代 anomaly_detector 反应式 12-halt — 开仓前主动限流, 满了优雅跳过不全停.
+    注意: _get_user_capital 会打交易所 API, 故只在'本轮有待开仓候选'时被调用 (Pass 1 内),
+    多数 cycle 无开仓信号 → 零 API 调用. cap 在 MAX_CONCURRENT_POSITIONS 以内,
+    保证主动预算闸永远先于 anomaly_detector 反应式 halt 触发 → 优雅跳过而非全停."""
+    import math
+    from app.services.anomaly_detector import MAX_CONCURRENT_POSITIONS
+    try:
+        from app.services.llm_prompts.strategy_recommend import _get_user_capital
+        cap = _get_user_capital(user_id, exchange=exchange)
+    except Exception:
+        cap = 0.0
+    if cap <= 0 or per_position_margin <= 0:
+        return 1   # 余额≈0 或拉取失败 → 保守放 1, 真开仓会在下单层因资金不足失败(fail-safe)
+    n = int(math.floor(cap * 0.8 / per_position_margin))
+    return max(1, min(n, MAX_CONCURRENT_POSITIONS))
+
+
 def _run_signals(strategy_id=None, category_filter=None):
     """執行策略信號計算（模擬盤模式）"""
     if strategy_id:
@@ -320,6 +368,46 @@ def _run_signals(strategy_id=None, category_filter=None):
         except Exception:
             return False
 
+    # ---- Phase 14k-131: Pass 1 — 开仓择优限额 ----
+    # 旧逻辑: 主循环按策略 id 顺序谁先 fire 谁先开 (FIFO), 全局仓位上限靠 anomaly_detector,
+    #   第 13 仓开进去后 halt 全停 (反应式). 问题: 多策略同 cycle fire 时, 资金被平庸信号先占满,
+    #   最强信号反而没 slot; 且"丰盈"会触发全停. 这也是 max_running 被迫压低的根因 (安全没下沉到开仓层).
+    # 新逻辑: 开仓前先给"要开新仓"的策略按 regime 调整后 EV 排序, 用资金感知预算
+    #   N=floor(权益×80%/单仓保证金) 选出本轮可开的, 其余优雅跳过(不全停). 平仓不排队(只降风险).
+    allowed_open = {}        # s.id -> ev_adj (本轮 EV 排序+预算选中、可开新仓的)
+    if not halted:
+        open_candidates = []   # [(ev_adj, s)]
+        for s in strategies:
+            try:
+                if Position.query.filter_by(strategy_id=s.id, status='open').first():
+                    continue   # 已有持仓 → 反向平仓由主循环即时处理, 不是开新仓候选
+                _candles = Candle.query.filter_by(
+                    symbol=s.symbol, timeframe=s.timeframe
+                ).order_by(Candle.timestamp.asc()).all()
+                if len(_candles) < 30:
+                    continue
+                _sig = get_signal(s.type, get_candle_df([c.to_dict() for c in _candles]), s.params)
+                if _sig not in ('buy', 'long', 'sell', 'short'):
+                    continue
+                open_candidates.append((_strategy_ev(s) * _regime_ev_weight(s), s))
+            except Exception:
+                continue
+        open_candidates.sort(key=lambda x: -x[0])
+        # 预算按 (user, exchange) 分键 — 每个交易所的资金只限该所的仓位 (user 跨所资金独立)
+        _budget_left = {}      # (user_id, exchange) -> 本轮剩余可开 slot 数
+        for ev_adj, s in open_candidates:
+            ex = (s.exchange or 'okx').lower()
+            key = (s.user_id, ex)
+            if key not in _budget_left:
+                _n = _position_budget(s.user_id, ex, trade_size_default)
+                _c = (Position.query.join(Strategy, Position.strategy_id == Strategy.id)
+                      .filter(Position.status == 'open', Strategy.user_id == s.user_id,
+                              Strategy.exchange == s.exchange).count())
+                _budget_left[key] = max(0, _n - _c)
+            if _budget_left[key] > 0:
+                allowed_open[s.id] = ev_adj
+                _budget_left[key] -= 1
+
     results = []
     for s in strategies:
         trade_size, lev, sl_pct, tp_pct, ord_type = _resolve_risk(s)
@@ -377,6 +465,11 @@ def _run_signals(strategy_id=None, category_filter=None):
             # Phase 6.1: halted 時拒新開倉，但允許平倉
             if halted and action in ('open_long', 'open_short'):
                 results.append(f'⛔ {s.name}: 系統 HALTED，拒絕開倉信號')
+                continue
+
+            # Phase 14k-131: 只有本轮 EV 排序+资金预算选中的才开新仓; 其余优雅跳过(不全停)
+            if action in ('open_long', 'open_short') and s.id not in allowed_open:
+                results.append(f'⛔ {s.name}: 仓位预算本轮已满, 按 EV 排序未入选, 跳过開倉')
                 continue
 
             # 獲取當前價格
