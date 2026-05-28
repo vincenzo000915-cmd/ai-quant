@@ -87,15 +87,13 @@ def reconcile_hl_user(user_id: int) -> dict:
     except Exception as e:
         return {'ok': False, 'error': f'fetch_positions: {type(e).__name__}: {e}', 'actions': []}
 
-    # 只比对该 user 的 HL 策略
-    hl_strat_ids = {s.id for s in Strategy.query.filter(
-        Strategy.user_id == user_id,
-        Strategy.exchange == 'hyperliquid',
-    ).all()}
+    # 14k-136 (B1a): 按 Position.exchange 定位该 user 在 HL 真实开的仓 (而非 strategy.exchange) —
+    # 为 B1b 跨所路由准备; backfill 后 pos.exchange==strategy.exchange, 行为不变.
     local_open = Position.query.filter(
         Position.status == 'open',
-        Position.strategy_id.in_(hl_strat_ids) if hl_strat_ids else False,
-    ).all() if hl_strat_ids else []
+        Position.user_id == user_id,
+        db.func.lower(Position.exchange) == 'hyperliquid',
+    ).all()
 
     hl_by_key = {}
     for p in hl_positions:
@@ -221,15 +219,12 @@ def reconcile() -> dict:
     except Exception as e:
         return {'ok': False, 'error': f'fetch_okx_positions: {type(e).__name__}: {e}', 'actions': []}
 
-    # 仅对比 OKX 策略 — HL positions 不在 OKX 上, 排除避免误判 orphan
-    from app.models import Strategy
-    okx_strat_ids = {s.id for s in Strategy.query.filter(
-        (Strategy.exchange == 'okx') | (Strategy.exchange.is_(None))
-    ).all()}
+    # 14k-136 (B1a): 按 Position.exchange 定位 OKX 上的仓 (而非 strategy.exchange) — HL 仓不在 OKX 上,
+    # 排除避免误判 orphan. null 视为 okx (旧仓兜底). backfill 后行为不变.
     local_open = Position.query.filter(
         Position.status == 'open',
-        Position.strategy_id.in_(okx_strat_ids) if okx_strat_ids else False,
-    ).all() if okx_strat_ids else []
+        (db.func.lower(Position.exchange) == 'okx') | (Position.exchange.is_(None)),
+    ).all()
 
     # 用 (symbol, side) 當 key 對齊
     okx_by_key = {}

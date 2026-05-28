@@ -419,6 +419,9 @@ class Position(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'))
+    # Phase 14k-136 (B1a): 仓位真实成交所 — 与 strategy.exchange 解耦, 为 B1b 跨所路由铺路.
+    # 平仓/SL/TP/reconcile 一律用 pos.exchange (而非 strategy.exchange) 定位该仓在哪个所.
+    exchange = db.Column(db.String(20), nullable=True)
     symbol = db.Column(db.String(20))
     side = db.Column(db.String(10))       # long / short
     size = db.Column(db.Float)            # 持倉數量

@@ -567,6 +567,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pos = Position(
                     strategy_id=s.id,
                     user_id=s.user_id,
+                    exchange=(s.exchange or 'okx').lower(),   # 14k-136 (B1a): 记录真实成交所
                     symbol=s.symbol,
                     side=side,
                     size=real_size,
@@ -602,12 +603,12 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pnl_leveraged = pnl_raw_pct * position.size * position.entry_price / 100
 
                 # Phase 14k-110: close 路径必传 reduce_only=True — HL 否则 close 同时反向开 leverage× 仓
-                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'), reduce_only=True)
+                order = _place_order(s.symbol, okx_side, position.size * price, price, strategy_mode, leverage=lev, pos_side=position.side, user_id=s.user_id, order_type=ord_type, exchange=(position.exchange or s.exchange or 'okx'), reduce_only=True)
 
                 # Phase 12.10 + 14k-12 + 14k-86: live 平倉用真實 balChg 覆寫 PnL (含手續費)
                 # 按 exchange dispatch — OKX 走 fetch_okx_order_real_pnl, HL 走 fetch_order_real_pnl
                 if mode == 'live' and order and not order.get('simulated'):
-                    strat_ex = (s.exchange or 'okx').lower()
+                    strat_ex = (position.exchange or s.exchange or 'okx').lower()
                     try:
                         ord_id = order.get('id') if isinstance(order, dict) else None
                         if strat_ex == 'okx':
@@ -745,7 +746,7 @@ def check_stop_loss():
                 tp_hit = pnl_pct >= tp_pct
 
             if sl_hit:
-                _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
+                _exch = (pos.exchange or (pos.strategy.exchange if pos.strategy else None) or 'okx')
                 # Phase 14k-110: SL close 必传 reduce_only=True (HL bug: 否则 close 同时反向开仓)
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch, reduce_only=True)
                 pnl = raw_pct * pos.size * pos.entry_price / 100   # Phase 12.8: size 已含 lev
@@ -792,7 +793,7 @@ def check_stop_loss():
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 
             elif tp_hit:
-                _exch = (pos.strategy.exchange if pos.strategy else 'okx') or 'okx'
+                _exch = (pos.exchange or (pos.strategy.exchange if pos.strategy else None) or 'okx')
                 # Phase 14k-110: TP close 必传 reduce_only=True (HL bug: 否则 close 同时反向开仓)
                 # 实测今日 ETH #33 + DOGE #34 TP 触发后都被反向开 leverage× orphan long
                 order = _place_order(pos.symbol, close_side, pos.size * current, current, mode, leverage=lev, pos_side=pos.side, user_id=pos.user_id, exchange=_exch, reduce_only=True)
