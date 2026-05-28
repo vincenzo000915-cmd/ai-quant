@@ -1286,5 +1286,29 @@ def _invent_new_strategy_item(user_id: int, target_ctx: dict) -> dict | None:
             },
         }
 
+    # T5 (14k-130): healthy_explore — 健康状态下池子薄, 主动补 catalog candidate.
+    # T1-T4 全 False (健康 + 不落后 + 不干旱 + TF 无缺口 + regime 匹配) 时, 若 eligible_pool < 阈值,
+    # 用 catalog_first 安全路径 clone 已验证 catalog 策略入池. 不 synth (LLM 直接写代码风险高).
+    # 12h global cooldown (INVENT_COOLDOWN_HOURS, line 1167) 自带兜底, 一天最多 2 次.
+    # 设计目的: pool 永远预留 N 个 qualified, 等 lag 来了 (T1) 立刻能 promote 不等 catalog 翻译.
+    if eligible_pool < INVENT_CANDIDATE_POOL_THRESHOLD:
+        return {
+            'action': 'invent_new_strategy',
+            'strategy_id': 0,
+            'strategy_name': '寻找新策略 (健康探索)',
+            'severity': 'info',
+            'reason': (
+                f'当前可上线池只 {eligible_pool} 个 (目标 ≥ {INVENT_CANDIDATE_POOL_THRESHOLD}), '
+                f'系统健康趁稳定补库存; 落后/干旱时直接 promote 不等翻译'
+            ),
+            'meta': {
+                'user_id': user_id,
+                'trigger_type': 'healthy_explore',
+                'invent_method': 'catalog_first',
+                'eligible_pool': eligible_pool,
+                'threshold': INVENT_CANDIDATE_POOL_THRESHOLD,
+            },
+        }
+
     # 没 trigger 匹配
     return None
