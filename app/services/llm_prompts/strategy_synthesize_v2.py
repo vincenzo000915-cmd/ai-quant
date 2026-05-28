@@ -72,7 +72,7 @@ def get_few_shot_with_trades(target_timeframe: str | None = None, max_n: int = 3
             for s in related[:3]:    # 最多看 3 个 promoted 实例
                 tr = Trade.query.filter_by(strategy_id=s.id).order_by(
                     Trade.exit_time.desc()
-                ).limit(5).all()
+                ).limit(10).all()
                 for t in tr:
                     trades.append({
                         'symbol': t.symbol,
@@ -83,7 +83,10 @@ def get_few_shot_with_trades(target_timeframe: str | None = None, max_n: int = 3
                         'pnl_pct': round(float(t.pnl_percent or 0), 2),
                         'reason': t.reason or '?',
                     })
-            ex['real_trades'] = trades[:6]   # 每个模板最多 6 笔真 trades
+            # 14k-133 (Finding B): 不再取最近 6 笔 (可能恰好一串亏损, 与"已成功策略"框架矛盾).
+            # 按 pnl 排序取「最赚 4 + 最亏 2」, 都带 pnl 标签 → LLM 评价式学习"何时有效/何时失效".
+            trades.sort(key=lambda x: -x['pnl_pct'])
+            ex['real_trades'] = (trades[:4] + trades[-2:]) if len(trades) > 6 else trades
 
         # ---- Part 2 (14k-132): AI 自己合成并实盘盈利的赢家也回流成 few-shot ----
         # Why: 原本 few-shot 只拉 source='catalog' (教科书), AI 学不到自己发现的赢家 →

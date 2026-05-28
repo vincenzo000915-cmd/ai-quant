@@ -179,15 +179,18 @@ def invalidate():
 
 # 资金跨档 → max_running (跟 14k-55 invent_quota 同设计哲学)
 CAPITAL_TIER_MAX_RUNNING = [
-    # Phase 14k-128: 上调 ladder.
-    # 旧 4/6/8/12 是「防分散过细」(统计有效性), 不是「防爆仓」(daily_loss_halt $1.41 + max_dd 5% 才是).
-    # 真正风控锁死最大日损 = capital × 2% (daily_loss_halt_pct), 跟 max_running 解耦.
-    # 让 AI invent 有空间 + 占位策略 14k-129 自然退役.
-    (100,    8),    # < $100: 4→8
-    (500,    10),   # < $500: 6→10
-    (2000,   12),   # < $2000: 8→12 (旧 default)
-    (10000,  16),   # < $10000: 12→16
-    (10**9,  20),   # >= $10000: 20 (顶不变, 防 ORM session 爆)
+    # Phase 14k-133: 放开 ladder — 安全已下沉到开仓层 (14k-131 EV 排序+资金感知预算闸).
+    # max_running 不再是安全旋钮: 实际开仓数由 position-open 预算 N=min(floor(权益×80%/单仓),
+    #   MAX_CONCURRENT_POSITIONS=12) 限死; 雪球由 daily_loss_halt 2% / max_dd 5% /
+    #   CONSECUTIVE_LOSS_LIMIT 3 / 相关性接住. 这里只决定"几个哨兵能在岗待命".
+    # 多养哨兵 = 多撒网接 regime-fit 信号, 只有 EV 最高的少数每 cycle 真开火.
+    # 剩余软约束: ① 防分散过细 ② 每日 03:00 monitor_strategy_health O(n) walkforward 成本
+    #   ③ ORM session — 故顶档仍留上限. (n 大到回测拖慢 → 下一步按 regime/活跃度跳过 dormant 回测)
+    (100,    20),   # < $100: 8→20  (开仓预算仍只放 ~12, 余 8 哨兵给 regime 轮换)
+    (500,    28),   # < $500: 10→28
+    (2000,   40),   # < $2000: 12→40
+    (10000,  52),   # < $10000: 16→52
+    (10**9,  64),   # >= $10000: 20→64 (顶档留余地防 daily walkforward / ORM 压力)
 ]
 
 # TF-aware 沉默期 (days) — 短 TF 信号密集, 几天无 trade 即可怀疑死循环; 长 TF 信号稀, 多日才合理
@@ -232,7 +235,7 @@ def get_max_running_for_user(user_id: int | None = None) -> int:
     for threshold, max_n in CAPITAL_TIER_MAX_RUNNING:
         if total_usd < threshold:
             return max_n
-    return 20
+    return CAPITAL_TIER_MAX_RUNNING[-1][1]   # 14k-133: 取末档值, 不再写死 (防 ladder 改后 stale)
 
 
 def get_inactivity_grace_days(timeframe: str | None) -> int:
