@@ -183,10 +183,12 @@ beat_schedule = {
         'options': {'expires': 240},   # 4min 没跑就丢
     },
 
-    # === Phase 12.34: Daily 早报 (08:00 UTC = 北京 16:00)
+    # === Phase 12.34 + 14k-112: Daily 早报 — 北京 08:05 = UTC 00:05
+    # (前: hour=8 UTC → 北京 16:00 下午, "早报" 名实不符)
+    # (后: hour=0 minute=5 UTC → 北京 08:05 早上, 跟 user 直觉对齐)
     'daily-morning-report': {
         'task': 'app.tasks.strategy_tasks.daily_morning_report',
-        'schedule': crontab(hour='8', minute='0'),
+        'schedule': crontab(hour='0', minute='5'),
     },
 
     # === Phase 12.35: 内部 health monitor (每 5 min)

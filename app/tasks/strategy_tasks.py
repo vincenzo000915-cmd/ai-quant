@@ -1594,11 +1594,12 @@ def check_onchain_payments():
 
 
 # ============================================================
-# Phase 12.34: Daily Telegram 早报 (08:00 UTC 推昨日总结)
+# Phase 12.34 + 14k-112: Daily Telegram 早报 — 北京 08:05 (UTC 00:05)
+# (前: 08:00 UTC = 北京 16:00 下午, "早报" 名实不符)
 # ============================================================
 @celery_app.task(name='app.tasks.strategy_tasks.daily_morning_report')
 def daily_morning_report():
-    """每天 08:00 UTC 推昨日运转总结 + 异常 highlight"""
+    """每天 UTC 00:05 (= 北京 08:05 早上) 推昨日运转总结 + 异常 highlight"""
     import datetime
     from app.models import StrategyCandidate, Strategy, Trade, BacktestResult, PaymentInvoice
     from app.extensions import db
