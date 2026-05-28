@@ -56,6 +56,20 @@ def primary_exchange(user_id: int) -> str:
     return bound[0]
 
 
+def routable_exchanges(user_id: int) -> list[str]:
+    """Phase 14k-141: B1b 跨所路由 / B3 评估 edge 可用的交易所 — tier-aware.
+    team/admin → 所有 active 绑定 (可跨所路由); 非 team → 只 primary 一个所
+    (即使数据里遗留多个绑定, 如从 team 降级 — 非 team 不该被跨所路由).
+    防降级/数据异常让非 team 用户意外获得跨所能力."""
+    bound = bound_exchanges(user_id)
+    if not bound:
+        return []
+    if is_team_tier(user_id):
+        return bound
+    primary = primary_exchange(user_id)
+    return [primary] if primary in bound else bound[:1]
+
+
 def needs_switch(user_id: int, target_exchange: str) -> tuple[bool, str | None]:
     """非 team user 绑新交易所时, 检查是否需要走 atomic switch 流程.
 

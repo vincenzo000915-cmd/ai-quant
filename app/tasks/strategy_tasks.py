@@ -319,8 +319,8 @@ def _edge_eval_exchange(user_id=None) -> str:
     _FEE = {'hyperliquid': 0.035, 'okx': 0.05}
     if user_id is not None:
         try:
-            from app.services.exchange_binding import bound_exchanges
-            vs = [e.lower() for e in (bound_exchanges(user_id) or [])]
+            from app.services.exchange_binding import routable_exchanges   # 14k-141: tier-aware
+            vs = [e.lower() for e in (routable_exchanges(user_id) or [])]
             if vs:
                 return min(vs, key=lambda e: _FEE.get(e, 0.05))
         except Exception:
@@ -435,7 +435,7 @@ def _run_signals(strategy_id=None, category_filter=None):
         #   候选所按 net-EV 排序 (fee 低 → 净 EV 高); 逐个试: 满足最小下单 + 有预算(资金感知, 余额≈0→0)
         #   → 选中并占该所 1 slot; 否则顺延下一个绑定所; 都不行才跳过 (Finding D: 不可成交不占预算).
         # allowed_open[s.id] 存"路由到的所" (B1a Position.exchange 跟它走). 单绑 user 只一个所 → 行为不变.
-        from app.services.exchange_binding import bound_exchanges as _bound_ex
+        from app.services.exchange_binding import routable_exchanges as _bound_ex   # 14k-141: tier-aware (非team只primary)
         _EX_FEE = {'hyperliquid': 0.035, 'okx': 0.05}         # taker %, 越低净 EV 越高
         _EX_MIN_NOTIONAL = {'hyperliquid': 10.0, 'okx': 0.0}  # okx 走 contract-size 检查, 这里不卡
         _budget_left = {}      # (user_id, exchange) -> 本轮剩余可开 slot

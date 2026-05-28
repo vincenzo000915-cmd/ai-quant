@@ -589,7 +589,7 @@ def recommend_strategies(user_id: int, *, max_recommend: int | None = None) -> d
     - team user (多绑) → 对每个 bound exchange 各调一次, 合并结果
       (team 工作量翻倍, 不是给 user 多个选择, 而是 AI 帮多账户都跑)
     """
-    from app.services.exchange_binding import bound_exchanges, is_team_tier
+    from app.services.exchange_binding import bound_exchanges, is_team_tier, primary_exchange
 
     bound = bound_exchanges(user_id)
     if not bound:
@@ -677,6 +677,23 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
     except Exception:
         pass
 
+    # Phase 14k-141: 防 recommend↔retire 死循环 — 避开近 7 天被自动退役的 type
+    # (advisor/monitor 刚砍了别马上重推; revive 路径自带 OOS 门, 负责"行情好转再带回").
+    recently_retired_types = set()
+    try:
+        import re as _re
+        rr_cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+        rr = db.session.query(Strategy.type).filter(
+            Strategy.status == 'retired',
+            Strategy.retired_at > rr_cutoff,
+        ).all()
+        for (t,) in rr:
+            base = _re.sub(r'_u\d+_\d{12,16}$', '', t or '').replace('cand_', '').replace('cat_', '')
+            if base:
+                recently_retired_types.add(base)
+    except Exception:
+        pass
+
     # Score 所有 feasible catalog
     scored = []
     for entry in feasible_catalog:
@@ -686,6 +703,10 @@ def _recommend_for_exchange(user_id: int, target_exchange: str, *, max_recommend
         if any(lt in base_type or base_type in lt for lt in losing_types):
             s -= 25
             reasons.append(f'历史 30 天 {base_type} 亏损 (-25)')
+        # 14k-141: 近 7 天被退役 → 冷却减分 (防 recommend 重推刚被砍的 type, 断 add↔retire 循环)
+        if any(rt and (rt in base_type or base_type in rt) for rt in recently_retired_types):
+            s -= 40
+            reasons.append(f'近 7 天 {base_type} 被退役, 冷却中 (-40)')
         scored.append((entry, s, reasons))
     scored.sort(key=lambda x: -x[1])
 
