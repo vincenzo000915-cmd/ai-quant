@@ -156,6 +156,12 @@ beat_schedule = {
         'schedule': crontab(hour='5', minute='0', day_of_week='sun'),
     },
 
+    # === Phase 14k-135: 每周重审"非当前主交易所"下退役/停用的策略, 按当前所条件重测 → 合格自动上架 ===
+    'weekly-recheck-primary-exchange': {
+        'task': 'app.tasks.strategy_tasks.recheck_strategies_for_primary_exchange',
+        'schedule': crontab(hour='5', minute='30', day_of_week='sun'),
+    },
+
     # === Phase 12.4: 每 90s 預熱 Dashboard 緩存（保用戶不見 24s 冷啟動）===
     'prewarm-dashboard-cache': {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',
