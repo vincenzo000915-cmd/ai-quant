@@ -398,6 +398,118 @@ function Features() {
   );
 }
 
+// Phase 14k-125: AI 成本透明 — 回答 "AI token 消耗 / 支持哪些模型 / 一天多少钱"
+// 14k-125.1: 只推 BYO API key 模式 (Claude CLI 订阅 mode 走我们 server subprocess 负担过大,
+//            限 admin 内部使用. 14k-79 已有 Redis semaphore=2 守住).
+function AICostTransparency() {
+  const providers = [
+    { name: 'Anthropic Claude', sub: 'claude-sonnet-4-6 (推荐)', note: 'console.anthropic.com 申 API key' },
+    { name: 'OpenAI', sub: 'gpt-4o-mini / o1', note: 'platform.openai.com 申 API key' },
+    { name: 'Google Gemini', sub: 'gemini-2.0-flash · 有免费层', note: 'aistudio.google.com 申 API key' },
+  ];
+  const usageTiers = [
+    { tier: '🟢 系统 baseline (admin key)', tokens: '~700k', cost: '~$2.5/天', note: 'market_brief + recommend + sizing (跟 user 数无关)' },
+    { tier: '🟡 + Team 自动托管 + invent', tokens: '~1.5M', cost: '~$5/天', note: 'L3 合成 + 策略优化跑满' },
+    { tier: '🔴 + Translate 候选池满速', tokens: '~2M', cost: '~$7/天', note: '理论最大 (24/7 全速跑)' },
+  ];
+  return (
+    <Box sx={{ py: { xs: 8, md: 12 }, bgcolor: 'rgba(167,139,250,0.02)', borderTop: `1px solid ${palette.border}`, borderBottom: `1px solid ${palette.border}` }}>
+      <Container maxWidth="lg">
+        <Reveal sx={{ textAlign: 'center', mb: 6 }}>
+          <Typography sx={{ color: palette.ai, fontSize: 12, fontWeight: 700, letterSpacing: 2, mb: 1 }}>
+            AI COST · 成本透明
+          </Typography>
+          <Typography sx={{ fontSize: { xs: '1.6rem', sm: '1.9rem', md: '2.3rem' }, fontWeight: 700, color: palette.text, mb: 1.5, lineHeight: 1.2 }}>
+            $5-15/月 跑出 AI 智能管家
+          </Typography>
+          <Typography sx={{ color: palette.textMuted, fontSize: 14, maxWidth: 660, mx: 'auto', lineHeight: 1.6 }}>
+            <b style={{ color: palette.ai }}>BYO LLM API key</b> 接你自己的 AI 帳號 — 系統不抽 token 費 · 你用多少付多少 · 可選 Anthropic / OpenAI / Gemini
+          </Typography>
+        </Reveal>
+
+        <Grid container spacing={3}>
+          {/* 左: 支持的 provider 列表 */}
+          <Grid item xs={12} md={5}>
+            <Reveal>
+              <Box sx={{ p: 3, bgcolor: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 1.5, height: '100%' }}>
+                <Typography sx={{ color: palette.ai, fontWeight: 700, fontSize: 13, letterSpacing: 1.5, mb: 2 }}>
+                  支持 3 个 LLM provider · 自由切换
+                </Typography>
+                {providers.map((p, i) => (
+                  <Box key={p.name} sx={{
+                    py: 1.5,
+                    borderBottom: i < providers.length - 1 ? `1px solid ${palette.border}` : 'none',
+                  }}>
+                    <Typography sx={{ color: palette.text, fontWeight: 700, fontSize: 14, mb: 0.25 }}>
+                      {p.name}
+                    </Typography>
+                    <Typography sx={{ color: palette.ai, fontFamily: typo.mono, fontSize: 11.5, mb: 0.5 }}>
+                      {p.sub}
+                    </Typography>
+                    <Typography sx={{ color: palette.textMuted, fontSize: 10.5 }}>
+                      {p.note}
+                    </Typography>
+                  </Box>
+                ))}
+                <Typography sx={{ color: palette.textMuted, fontSize: 11, mt: 2, lineHeight: 1.5 }}>
+                  Pro/Team 用户填自己的 API key · Token 消耗直接算你账上 · 我们不当中转不抽佣
+                </Typography>
+              </Box>
+            </Reveal>
+          </Grid>
+
+          {/* 右: 实测 token / 成本 tier */}
+          <Grid item xs={12} md={7}>
+            <Reveal delay={120}>
+              <Box sx={{ p: 3, bgcolor: palette.surface, border: `1px solid ${palette.border}`, borderRadius: 1.5, height: '100%' }}>
+                <Typography sx={{ color: palette.ai, fontWeight: 700, fontSize: 13, letterSpacing: 1.5, mb: 2 }}>
+                  实测 token / 成本 tier
+                </Typography>
+                {usageTiers.map((t, i) => (
+                  <Box key={i} sx={{
+                    py: 1.75,
+                    borderBottom: i < usageTiers.length - 1 ? `1px solid ${palette.border}` : 'none',
+                  }}>
+                    <Box sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 1, mb: 0.5 }}>
+                      <Typography sx={{ color: palette.text, fontSize: 13, fontWeight: 600, flex: 1, minWidth: { xs: 0, sm: 200 } }}>
+                        {t.tier}
+                      </Typography>
+                      <Typography sx={{ color: palette.ai, fontFamily: typo.mono, fontSize: 13, fontWeight: 700 }}>
+                        {t.tokens}
+                      </Typography>
+                      <Typography sx={{ color: palette.textMuted, fontFamily: typo.mono, fontSize: 12 }}>
+                        · {t.cost}
+                      </Typography>
+                    </Box>
+                    <Typography sx={{ color: palette.textMuted, fontSize: 11.5, lineHeight: 1.5 }}>
+                      {t.note}
+                    </Typography>
+                  </Box>
+                ))}
+                <Box sx={{ mt: 2.5, p: 2, bgcolor: 'rgba(167,139,250,0.06)', borderRadius: 1, border: `1px solid ${palette.borderAccent}` }}>
+                  <Typography sx={{ color: palette.text, fontWeight: 700, fontSize: 12.5, mb: 0.5 }}>
+                    💡 BYO LLM key 关键点
+                  </Typography>
+                  <Typography sx={{ color: palette.textMuted, fontSize: 11.5, lineHeight: 1.6 }}>
+                    你的 Pro/Team 个人 AI 功能 (改进顾问 / 解读 / 周复盘 / 个性建议) 走<b style={{ color: palette.ai }}>你自己 API key</b> ·
+                    系统 baseline ($75/月) 由我们扛 · Gemini 有免费层可以零成本试 · 不抽 token 中间费
+                  </Typography>
+                </Box>
+              </Box>
+            </Reveal>
+          </Grid>
+        </Grid>
+
+        <Reveal delay={250} sx={{ mt: 5, textAlign: 'center' }}>
+          <Typography sx={{ color: palette.textMuted, fontSize: 12.5, lineHeight: 1.7 }}>
+            实测基于 Claude Sonnet 平均价 $3/M input · $15/M output · 输入输出 7:3 split · 各 provider 成本不同请按实际 LLM 定价折算
+          </Typography>
+        </Reveal>
+      </Container>
+    </Box>
+  );
+}
+
 function PricingTeaser() {
   const navigate = useNavigate();
   const plans = [
@@ -624,6 +736,7 @@ export default function LandingPage() {
       <Stats />
       <HowItWorks />
       <Features />
+      <AICostTransparency />
       <PricingTeaser />
       <FAQ />
       <FinalCTA />
