@@ -438,9 +438,13 @@ def build_recommendations(user_id: int = 1) -> dict:
                 })
 
     # 6) 合格候選 → promote 上線（Phase 12.12: 加 OOS 門檻 + dedup）
+    # Phase 14k-144: 加 source='catalog_clone' 过滤 — 与 AiPickPanel (/candidates/ai-picks) 对齐.
+    #   原本无 source 过滤 → 把 30 个 catalog 模板也算进 promote_candidate → AdvisorPanel 藏起来
+    #   说"移到 AI 精选", 但 AiPickPanel 只显示 catalog_clone → 模板被藏却没显示 (UI 丢失).
+    #   且概念上: catalog 是模板, 应先 clone 成 catalog_clone 再 promote, 不直接 promote 模板.
     qualified_cands = (
         StrategyCandidate.query
-        .filter_by(status='qualified')
+        .filter_by(status='qualified', source='catalog_clone')
         .filter(StrategyCandidate.promoted_strategy_id.is_(None))
         .all()
     )
