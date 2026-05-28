@@ -197,7 +197,7 @@ function Stats() {
             <Grid item xs={6} md={3} key={s.label}>
               <Reveal delay={i * 80} sx={{ textAlign: 'center' }}>
                 <Typography sx={{
-                  fontSize: { xs: '2rem', md: '2.6rem' }, fontWeight: 800,
+                  fontSize: { xs: '1.6rem', sm: '1.9rem', md: '2.6rem' }, fontWeight: 800,
                   fontFamily: typo.mono, color: palette.ai,
                   textShadow: `0 0 24px ${palette.accentGlow}`,
                 }}>
@@ -352,7 +352,7 @@ function Features() {
         </Reveal>
         <Grid container spacing={2.5}>
           {items.map((f, i) => (
-            <Grid item xs={12} sm={6} md={4} key={i}>
+            <Grid item xs={12} sm={6} md={4} lg={3} key={i}>
               <Reveal delay={i * 70}>
                 <Box sx={{
                   height: '100%', p: 3, position: 'relative',

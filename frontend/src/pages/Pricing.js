@@ -200,7 +200,7 @@ export default function Pricing() {
           const isAccent = plan.accent;
           const price = calcPrice(plan.price);
           return (
-            <Grid key={plan.id} item xs={12} sm={6} md={3}>
+            <Grid key={plan.id} item xs={12} sm={12} md={6} lg={3}>
               <Box sx={{
                 position: 'relative', height: '100%',
                 p: 3,
@@ -330,7 +330,7 @@ export default function Pricing() {
         </Typography>
         <Grid container spacing={2}>
           {FAQ.map((item, i) => (
-            <Grid key={i} item xs={12} md={6}>
+            <Grid key={i} item xs={12} sm={6} md={6}>
               <Box sx={{
                 p: 2,
                 bgcolor: palette.surface,

@@ -95,7 +95,7 @@ export default function ProfitTargetCard() {
       <Card sx={{ mb: 2, border: '1px dashed #fbbf24aa', bgcolor: 'rgba(251,191,36,0.04)' }}>
         <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <WorkspacePremiumIcon sx={{ color: '#fbbf24' }} />
-          <Box sx={{ flex: 1, minWidth: 200 }}>
+          <Box sx={{ flex: 1, minWidth: { xs: 0, sm: 200 } }}>
             <Typography variant="body2" fontWeight={700}>🤖 AI 自动托管 (Team 顶级方案)</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
               设盈利目标 → AI 全权管理: 进度跟踪 / 回撤保护 / 策略轮换 / 资金跨档扩张 / 多交易所
@@ -115,7 +115,7 @@ export default function ProfitTargetCard() {
       <Card sx={{ mb: 2, border: '1px dashed #60a5faaa', bgcolor: 'rgba(96,165,250,0.04)' }}>
         <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <TrackChangesIcon sx={{ color: '#60a5fa' }} />
-          <Box sx={{ flex: 1, minWidth: 200 }}>
+          <Box sx={{ flex: 1, minWidth: { xs: 0, sm: 200 } }}>
             <Typography variant="body2" fontWeight={700}>设定盈利目标前先绑交易所</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
               系统需要拉你的真实余额来跟踪进度. 绑 OKX 或 Hyperliquid 即可.
@@ -135,7 +135,7 @@ export default function ProfitTargetCard() {
         <Card sx={{ mb: 2, border: `1px dashed ${PURPLE}44` }}>
           <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <TrackChangesIcon sx={{ color: PURPLE }} />
-            <Box sx={{ flex: 1, minWidth: 200 }}>
+            <Box sx={{ flex: 1, minWidth: { xs: 0, sm: 200 } }}>
               <Typography variant="body2" fontWeight={700}>🤖 启用 AI 自动托管</Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                 设个目标 (例 +20% / 30 天), AI 跟踪 + 回撤保护 + 策略轮换 + 资金跨档扩张
