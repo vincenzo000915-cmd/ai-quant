@@ -290,6 +290,28 @@ def _position_budget(user_id, exchange, per_position_margin) -> int:
     return max(1, min(n, MAX_CONCURRENT_POSITIONS))
 
 
+def _venue_open_slots(user_id, exchange, per_position_margin) -> int:
+    """Phase 14k-137 (B1b): 某 (user, exchange) 本轮还能开几个新仓 = 资金感知预算 − 该所当前 open 数.
+    与 _position_budget 不同: 余额 < 一个最小仓 → 返回 0 (不 fail-safe 到 1), 因为路由会
+    fallthrough 到别的绑定所 — 这就是"某所余额0则顺延下一个所"的实现.
+    只在'本轮有待开仓候选'时被调 (Pass 1 内), 多数 cycle 零 API 调用."""
+    import math
+    from app.services.anomaly_detector import MAX_CONCURRENT_POSITIONS
+    try:
+        from app.services.llm_prompts.strategy_recommend import _get_user_capital
+        cap = _get_user_capital(user_id, exchange=exchange)
+    except Exception:
+        cap = 0.0
+    if per_position_margin <= 0 or cap < per_position_margin:
+        return 0   # 连一个最小仓都开不起 → 该所不可用, 路由顺延
+    n = min(int(math.floor(cap * 0.8 / per_position_margin)), MAX_CONCURRENT_POSITIONS)
+    open_ct = Position.query.filter(
+        Position.status == 'open', Position.user_id == user_id,
+        db.func.lower(Position.exchange) == exchange,
+    ).count()
+    return max(0, n - open_ct)
+
+
 def _run_signals(strategy_id=None, category_filter=None):
     """執行策略信號計算（模擬盤模式）"""
     if strategy_id:
@@ -393,20 +415,35 @@ def _run_signals(strategy_id=None, category_filter=None):
             except Exception:
                 continue
         open_candidates.sort(key=lambda x: -x[0])
-        # 预算按 (user, exchange) 分键 — 每个交易所的资金只限该所的仓位 (user 跨所资金独立)
-        _budget_left = {}      # (user_id, exchange) -> 本轮剩余可开 slot 数
+        # Phase 14k-137 (B1b): 跨所路由 + fallthrough — 每候选(按 EV 降序)选最优可成交的绑定所:
+        #   候选所按 net-EV 排序 (fee 低 → 净 EV 高); 逐个试: 满足最小下单 + 有预算(资金感知, 余额≈0→0)
+        #   → 选中并占该所 1 slot; 否则顺延下一个绑定所; 都不行才跳过 (Finding D: 不可成交不占预算).
+        # allowed_open[s.id] 存"路由到的所" (B1a Position.exchange 跟它走). 单绑 user 只一个所 → 行为不变.
+        from app.services.exchange_binding import bound_exchanges as _bound_ex
+        _EX_FEE = {'hyperliquid': 0.035, 'okx': 0.05}         # taker %, 越低净 EV 越高
+        _EX_MIN_NOTIONAL = {'hyperliquid': 10.0, 'okx': 0.0}  # okx 走 contract-size 检查, 这里不卡
+        _budget_left = {}      # (user_id, exchange) -> 本轮剩余可开 slot
+        _venues_cache = {}     # user_id -> [bound exchanges]
         for ev_adj, s in open_candidates:
-            ex = (s.exchange or 'okx').lower()
-            key = (s.user_id, ex)
-            if key not in _budget_left:
-                _n = _position_budget(s.user_id, ex, trade_size_default)
-                _c = (Position.query.join(Strategy, Position.strategy_id == Strategy.id)
-                      .filter(Position.status == 'open', Strategy.user_id == s.user_id,
-                              Strategy.exchange == s.exchange).count())
-                _budget_left[key] = max(0, _n - _c)
-            if _budget_left[key] > 0:
-                allowed_open[s.id] = ev_adj
-                _budget_left[key] -= 1
+            u = s.user_id
+            if u not in _venues_cache:
+                try:
+                    vs = [e.lower() for e in (_bound_ex(u) or [])]
+                except Exception:
+                    vs = []
+                _venues_cache[u] = vs or [(s.exchange or 'okx').lower()]   # 兜底用策略自身所
+            _sz, _lv, *_rest = _resolve_risk(s)
+            _intended_notional = float(_sz) * float(_lv)
+            for ex in sorted(_venues_cache[u], key=lambda e: _EX_FEE.get(e, 0.05)):
+                if _intended_notional < _EX_MIN_NOTIONAL.get(ex, 0.0):
+                    continue   # 该所最小下单不满足 → 顺延
+                key = (u, ex)
+                if key not in _budget_left:
+                    _budget_left[key] = _venue_open_slots(u, ex, trade_size_default)
+                if _budget_left[key] > 0:
+                    allowed_open[s.id] = ex      # 路由到此所
+                    _budget_left[key] -= 1
+                    break
 
     results = []
     for s in strategies:
@@ -479,6 +516,7 @@ def _run_signals(strategy_id=None, category_filter=None):
             if action in ('open_long', 'open_short'):
                 side = 'long' if action == 'open_long' else 'short'
                 okx_side = 'buy' if side == 'long' else 'sell'
+                _open_ex = (allowed_open.get(s.id) or s.exchange or 'okx').lower()   # 14k-137 (B1b): 路由到的所
 
                 # Phase 12.35.1: first-mover gate — 同 (symbol, side) 已有 open Position 则跳过
                 # OKX (instId, posSide) 是唯一键，多策略同方向会被合并 → PnL 归属混乱
@@ -512,7 +550,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 intended_base = (effective_size * lev) / price
                 intended_notional = intended_base * price
                 real_size = intended_base
-                strat_exchange = (s.exchange or 'okx').lower()
+                strat_exchange = _open_ex          # 14k-137 (B1b): 用路由到的所做下单/合约检查
                 if mode == 'live' and strat_exchange == 'okx':
                     from app.services.symbols import get_contract_size
                     contract_size = get_contract_size(s.symbol)
@@ -551,7 +589,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                         )
                         continue
 
-                order = _place_order(s.symbol, okx_side, effective_size, price, strategy_mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type, exchange=(s.exchange or 'okx'))
+                order = _place_order(s.symbol, okx_side, effective_size, price, strategy_mode, leverage=lev, pos_side=side, user_id=s.user_id, order_type=ord_type, exchange=_open_ex)
                 if order is None:
                     results.append(f'⛔ {s.name}: 下單失敗（live mode），略過')
                     continue
@@ -567,7 +605,7 @@ def _run_signals(strategy_id=None, category_filter=None):
                 pos = Position(
                     strategy_id=s.id,
                     user_id=s.user_id,
-                    exchange=(s.exchange or 'okx').lower(),   # 14k-136 (B1a): 记录真实成交所
+                    exchange=_open_ex,   # 14k-136 (B1a) + 14k-137 (B1b): 记录路由到的真实成交所
                     symbol=s.symbol,
                     side=side,
                     size=real_size,
