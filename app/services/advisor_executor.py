@@ -133,23 +133,57 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         return False, f'strategy {sid} 不存在'
 
     if action == 'apply_params':
-        new_params = item.get('meta', {}).get('best_params')
-        if not isinstance(new_params, dict) or not new_params:
-            return False, 'meta.best_params 缺失或無效'
-        # Phase 14k-30: snapshot baseline 给 auto-revert
-        before_params = dict(strategy.params or {})
-        # Phase 14k-28: merge 保住 risk_params 等子项, 不被参数网格搜索结果(只含信号参数)清空
+        meta = item.get('meta', {})
+        # 14k-149 (D4): 分离信号维 / 风险维写回. best_params 含 _lev/_sl/_tp 前缀脏键,
+        # 不能整个 merge 进 strategy.params. 信号维 → params; 风险维 → risk_params (经门槛).
+        new_signal = meta.get('best_signal_params')
+        if new_signal is None:   # 兼容老 item: 自己 split
+            from app.services.param_optimizer import split_combo
+            new_signal, _ = split_combo(meta.get('best_params') or {})
+        new_risk = meta.get('best_risk_params') or {}
+        if not new_signal and not new_risk:
+            return False, 'meta 无 best_signal_params / best_risk_params'
+
+        before_params = dict(strategy.params or {})   # Phase 14k-30: auto-revert snapshot
         merged = dict(strategy.params or {})
-        merged.update(new_params)
+        changed = []
+        # 信号维 merge (保住 risk_params 子项)
+        if new_signal:
+            merged.update(new_signal)
+            changed += list(new_signal.keys())
+
+        # 14k-149 (D4): 风险维写回门槛 — 只接受"回测验证过且不病态"的 lev/SL/TP
+        risk_note = ''
+        if new_risk:
+            old_rp = dict(merged.get('risk_params') or {})
+            n_lev = float(new_risk.get('leverage') or old_rp.get('leverage') or 3)
+            n_sl = float(new_risk.get('stop_loss_pct') or new_risk.get('sl_pct') or 0)
+            oos_trades = meta.get('best_oos_trades')
+            # 门槛: 杠杆 [1,20] + 有效价格止损 sl/lev>=0.8% (不被噪音扫) + oos_trades>=5 (样本足)
+            ok_risk = (1.0 <= n_lev <= 20.0)
+            if ok_risk and n_sl > 0:
+                ok_risk = (n_sl / n_lev) >= 0.8
+            if ok_risk and oos_trades is not None:
+                ok_risk = oos_trades >= 5
+            if ok_risk:
+                merged['risk_params'] = {**old_rp, **new_risk}
+                changed += [f'risk.{k}' for k in new_risk]
+                risk_note = f' + 风险维 lev={n_lev}/sl={n_sl}% (有效止损 {n_sl/n_lev:.2f}%)'
+            else:
+                _eff = (n_sl / n_lev) if n_lev else 0
+                risk_note = f' (风险维未达门槛跳过: lev={n_lev} sl={n_sl} 有效止损{_eff:.2f}% trades={oos_trades})'
+
+        if not changed:
+            return False, '无可写回的维度 (信号空 + 风险维未达门槛)'
         strategy.params = merged
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(strategy, 'params')
         db.session.commit()
         from app.services.audit import log as audit
         audit('ai_strategy_params_change', strategy_id=sid, action='apply_params',
-              before_params=before_params, after_params=merged, changed_keys=list(new_params.keys()))
-        kv = ', '.join(f'{k}={v}' for k, v in list(new_params.items())[:4])
-        return True, f'优化参数: {kv}'
+              before_params=before_params, after_params=merged, changed_keys=changed)
+        kv = ', '.join(f'{k}={v}' for k, v in list((new_signal or {}).items())[:3])
+        return True, f'优化参数: {kv or "(无信号维)"}{risk_note}'
 
     if action == 'pause':
         if strategy.status != 'running':

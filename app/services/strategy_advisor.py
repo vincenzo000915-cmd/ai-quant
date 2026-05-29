@@ -20,6 +20,7 @@ from app.models import Strategy, BacktestResult, ParamOptimization, StrategyCand
 from app.services.strategy_correlation import build_correlation_matrix
 from app.services.regime_detector import detect_regime, affinity_for, fit_label
 from app.services.mtf_consensus import mtf_check
+from app.services.param_optimizer import split_combo as _split_combo   # 14k-149 (D4): 分离信号/风险维
 
 
 HIGH_CORR = 0.7
@@ -367,9 +368,14 @@ def build_recommendations(user_id: int = 1) -> dict:
                 'meta': {
                     'optimization_id': opt.id,
                     'best_params': opt.best_params,
+                    # 14k-149 (D4): 分离信号维/风险维 — best_params 含 _lev/_sl/_tp 前缀脏键,
+                    # 不能整个 merge 进 strategy.params. split 出纯信号 + 风险维分别写回.
+                    'best_signal_params': _split_combo(opt.best_params or {})[0],
+                    'best_risk_params': opt.best_risk_params or {},
                     'best_oos_sharpe': best,
                     'baseline_oos_sharpe': baseline,
                     'current_ev_pct': cur_ev_pct,
+                    'best_oos_trades': (opt.candidate_results or [{}])[0].get('oos_trades') if opt.candidate_results else None,
                 },
             })
 
