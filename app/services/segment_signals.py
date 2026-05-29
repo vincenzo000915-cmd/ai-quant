@@ -174,3 +174,50 @@ def confluence(candles: list, side: str) -> dict:
     ok = score >= 2.0
     return {'ok': ok, 'score': score, 'signals': signals,
             'reason': ('共振支持' if ok else '共振不足') + f' (score={score})'}
+
+
+# ============================================================
+# Phase 15: 突破-回踩确认入场 (breakout-retest) — user 实战核心入场逻辑
+# ============================================================
+
+def breakout_retest_signal(df, params=None):
+    """user 实战入场 (2026-05-29): 放量突破前高→回踩不破→进 (做空对称).
+    精髓: 不追突破那一下(末段/被猎), 等回踩确认前高变支撑(初段) + 放量 + MACD动能。
+
+    df: DataFrame(open/high/low/close/volume). 返回 'buy'/'sell'/'hold'.
+    """
+    from app.services.candle_patterns import macd_histogram_series as _mh, detect_candle_pattern, compute_atr
+    p = params or {}
+    lb = p.get('lookback', 40); vm = p.get('vol_mult', 1.5)
+    tol = p.get('retest_tol', 0.004); brk = p.get('break_window', 10)
+    require_pattern = p.get('require_pattern', True)   # 是否必须回踩处顶/底形态确认
+    if df is None or len(df) < lb + 5:
+        return 'hold'
+    rows = df.to_dict('records')[-lb:]
+    h = [float(r['high']) for r in rows]; l = [float(r['low']) for r in rows]
+    c = [float(r['close']) for r in rows]; v = [float(r['volume']) for r in rows]
+    avg_vol = sum(v[:-brk]) / len(v[:-brk]) if len(v) > brk else sum(v) / len(v)
+    mh = _mh([{'close': x} for x in c])
+    hist = next((x for x in reversed(mh) if x is not None), 0.0)
+    atr = compute_atr(rows); atr_now = atr[-1] if atr else None
+    pat = detect_candle_pattern(rows, atr=atr_now)   # 回踩段最后几根的形态
+
+    # === 做多: 放量突破前高 → 回踩不破 → 底部形态确认 + MACD动能向上 ===
+    ph = max(h[:-brk]) if len(h) > brk else max(h)
+    if any(c[i] > ph and v[i] > vm * avg_vol for i in range(lb - brk, lb)):
+        after_low = min(l[-brk:])
+        held = after_low <= ph * (1 + tol) and l[-1] >= ph * (1 - tol) and c[-1] > ph
+        # 形态: 要么回踩处出现底部模型(bullish), 要么至少无顶部反向模型 (require_pattern 控严格度)
+        form_ok = (pat['direction'] == 'bullish') if require_pattern else (pat['direction'] != 'bearish')
+        if held and hist > 0 and form_ok:
+            return 'buy'
+
+    # === 做空: 放量跌破前低 → 反弹不破 → 顶部形态确认 + MACD动能向下 ===
+    pl = min(l[:-brk]) if len(l) > brk else min(l)
+    if any(c[i] < pl and v[i] > vm * avg_vol for i in range(lb - brk, lb)):
+        after_high = max(h[-brk:])
+        held = after_high >= pl * (1 - tol) and h[-1] <= pl * (1 + tol) and c[-1] < pl
+        form_ok = (pat['direction'] == 'bearish') if require_pattern else (pat['direction'] != 'bullish')
+        if held and hist < 0 and form_ok:
+            return 'sell'
+    return 'hold'

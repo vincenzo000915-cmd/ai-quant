@@ -35,7 +35,8 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
                      # ③ 出场层
                      init_sl_pct=1.3, use_breakeven=True, be_activate_r=0.3, be_lock_pct=0.0,
                      use_partial_tp=True, tp1_r=0.5, tp1_frac=0.4, tp2_r=1.2, tp2_frac=0.3,
-                     tp3_r=2.0, use_tail_exit=True):
+                     tp3_r=2.0, use_tail_exit=False):   # 尾部走(动能)默认关: user定 TP 硬性不看动能
+                     # 注: be_activate_r 已废弃 — 保本由 TP1 命中触发 (非浮盈阈值)
     """三层段回测. 返回 {total_pnl, fills, win_rate, ev_per_fill_usdt, profit_factor,
     by_reason, blocked_late, trades}.
     """
@@ -86,21 +87,21 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         # R = 初始风险 = entry→init_sl 的价格距离% (TP/保本都按 R 倍数, 自动随止损/波动缩放)
         R = init_sl_pct
 
-        # 保本激活 (浮盈达 be_activate_r 倍 R)
-        if use_breakeven and not pos['be'] and fav_ext >= be_activate_r * R:
-            pos['be'] = True
-            lk = FEE_RT * 100 + be_lock_pct
-            pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
-        # SL (保守先判) — 平剩余
+        # SL (保守先判) — 平剩余 (TP1后 pos['sl'] 已是保本位)
         hit = (adverse <= pos['sl']) if side == 'long' else (adverse >= pos['sl'])
         if hit:
             close_part(pos, pos['rem'], pos['sl'], 'breakeven' if pos['be'] else 'stop_loss', ac['timestamp'])
             pos['rem'] = 0.0; return True
-        # 分批 TP1/TP2 (盈亏比: TP_n 距离 = tp_n_r × R)
+        # 分批 TP1/TP2 (盈亏比: TP_n 距离 = tp_n_r × R, 硬性设定不看动能)
         if use_partial_tp:
             if not pos['tp1'] and fav_ext >= tp1_r * R:
                 d = tp1_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp1_frac, px, 'tp1', ac['timestamp']); pos['rem'] -= tp1_frac; pos['tp1'] = True
+                # user核心: TP1命中=保本触发 → 剩余仓SL移到盈利之上 (就算被移动止损打掉也在盈利之上→这单稳赚)
+                if use_breakeven:
+                    lk = FEE_RT * 100 + be_lock_pct
+                    pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
+                    pos['be'] = True
             if not pos['tp2'] and fav_ext >= tp2_r * R:
                 d = tp2_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp2_frac, px, 'tp2', ac['timestamp']); pos['rem'] -= tp2_frac; pos['tp2'] = True
