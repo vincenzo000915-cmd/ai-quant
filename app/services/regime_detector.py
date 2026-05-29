@@ -92,7 +92,13 @@ AFFINITY_FIT = {
     },
     'breakout': {
         'strong_trend': 'good', 'weak_trend': 'good',
-        'range': 'bad', 'unknown': 'ok',
+        # 14k-151: range 'bad'→'ok'. breakout 策略 (尤其 squeeze/consolidation/pivot/bb_width)
+        # 的 range 是"埋伏/setup 期"不是坏环境 — 它们专为"盘整→突破"设计, 在 range 不出信号
+        # 是合理等待 (特征非缺陷). 旧 'bad' → fit_label bad → advisor 建议 pause →
+        # full_auto 自动暂停 → 恰在突破前关掉策略 (逻辑自相矛盾 + 追市场屁股反面).
+        # 改 'ok': 不 pause (让它埋伏等突破) 也不强推; 表现真烂的由 walkforward 双轨门退役
+        # (backtest_is_truth — 看实际表现, 不靠 regime 预测性暂停).
+        'range': 'ok', 'unknown': 'ok',
     },
 }
 
