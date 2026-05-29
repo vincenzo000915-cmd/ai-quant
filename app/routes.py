@@ -2784,6 +2784,21 @@ def me_hl_delete():
 
 # ===== Phase 14k-22: 利润目标 (AI 自动跟踪 + 风控) =====
 
+@api_bp.route('/me/profit-target/difficulty', methods=['POST'])
+@require_actor
+def me_profit_target_difficulty():
+    """Phase 15: 盈利目标难度判断 — 单一真相源 (前端 ProfitTargetCard 调本 API, 不再本地写死).
+    纯函数: (target_pct + days) → 难度等级/文案/颜色/保存控制. 不查任何 user 数据 → 无状态, 多租户安全."""
+    from app.services.profit_difficulty import difficulty_for_ui
+    data = request.get_json(silent=True) or {}
+    try:
+        target_pct = float(data.get('target_pct', 0))
+        days = int(data.get('days', 30))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'invalid params'}), 400
+    return jsonify(difficulty_for_ui(target_pct, max(1, days))), 200
+
+
 @api_bp.route('/me/profit-target', methods=['GET'])
 @require_actor
 @require_team_tier

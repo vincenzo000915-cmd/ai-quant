@@ -253,27 +253,26 @@ export default function ProfitTargetCard() {
 }
 
 function TargetDialog({ open, onClose, form, setForm, onSave, busy, title, existing }) {
-  // 14k-25: 现实性等级判定
-  const monthlyEq = form.days > 0
-    ? (Math.pow(1 + form.target_pct / 100, 30 / form.days) - 1) * 100
-    : 0;
-  let level = 'safe', levelColor = '#34d399', levelLabel = '🟢 稳健';
-  let warning = '';
-  if (monthlyEq > 50) {
-    level = 'reject'; levelColor = '#f87171'; levelLabel = '⛔ 超出上限';
-    warning = `月化 ${monthlyEq.toFixed(0)}% 超出系统支持上限 (50%). 一流量化年化 ~30%, 此设置不切实际. 请降目标或拉长周期.`;
-  } else if (monthlyEq > 30) {
-    level = 'aggressive'; levelColor = '#f87171'; levelLabel = '🔴 激进';
-    warning = `月化 ${monthlyEq.toFixed(0)}% 属顶级量化水平, 停损会非常频繁. 需要 user 心理承受波动.`;
-  } else if (monthlyEq > 15) {
-    level = 'ambitious'; levelColor = '#fbbf24'; levelLabel = '🟡 进取';
-    warning = `月化 ${monthlyEq.toFixed(0)}% 高于一线基金平均 (年化 30% ≈ 月 2.4%), 现实但有挑战.`;
-  } else {
-    levelLabel = '🟢 稳健';
-  }
-  const canSave = level !== 'reject';
-  const needsConfirm = level === 'aggressive';
+  // Phase 15: 难度判断改调后端 API (单一真相源 profit_difficulty, 不再前端本地写死阈值/文案)
+  const [diff, setDiff] = useState(null);
   const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => {
+    const tp = Number(form.target_pct), dy = Number(form.days);
+    if (!tp || !dy || dy <= 0) { setDiff(null); return; }
+    const h = setTimeout(() => {
+      fetch('/api/me/profit-target/difficulty', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_pct: tp, days: dy }),
+      }).then(r => r.json()).then(setDiff).catch(() => setDiff(null));
+    }, 300);
+    return () => clearTimeout(h);
+  }, [form.target_pct, form.days]);
+  const monthlyEq = diff?.monthly_eq ?? 0;
+  const levelColor = diff?.color || '#34d399';
+  const levelLabel = diff?.label || '🟢 稳健';
+  const warning = diff?.warning || '';
+  const canSave = diff ? diff.can_save : true;
+  const needsConfirm = diff ? diff.needs_confirm : false;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>

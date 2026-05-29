@@ -59,3 +59,49 @@ def difficulty_guidance_block(target_pct: float, days_remaining: int) -> str:
         f"- 你要在这个基调下, **结合当前行情(regime/波动/胜率)动态定** 盈亏比(R≤上述缩放)、杠杆(≤上限)、仓位 —— "
         f"难度是约束, 行情是你的判断. 保守难度别用激进参数, 激进难度也别赌单笔(守 TP1 保本+分批).\n"
     )
+
+
+# ============================================================
+# 面向前端 UI 的难度判断 (单一真相源: 前端 ProfitTargetCard 改调本函数 API,
+# 不再本地写死阈值/文案 — user 2026-05-29 定统一真相源)
+# ============================================================
+
+_UI_STYLE = {
+    'safe':       {'label': '🟢 稳健',     'color': '#34d399'},
+    'ambitious':  {'label': '🟡 进取',     'color': '#fbbf24'},
+    'aggressive': {'label': '🔴 激进',     'color': '#f87171'},
+    'extreme':    {'label': '⛔ 超出上限', 'color': '#f87171'},
+}
+
+
+def difficulty_for_ui(target_pct: float, days_remaining: int) -> dict:
+    """前端难度展示用 (阈值/文案/颜色/保存控制的单一真相源)。
+    返回 {monthly_eq, level, label, color, warning, can_save, needs_confirm, tiers}。
+    """
+    meq = monthly_equiv(target_pct, days_remaining)
+    d = profit_difficulty(meq)
+    tier = d['tier']
+    warning = {
+        'extreme': f"月化 {meq:.0f}% 超出系统支持上限 (50%). 一流量化年化 ~30%, 此设置不切实际. 请降目标或拉长周期.",
+        'aggressive': f"月化 {meq:.0f}% 属顶级量化水平, 停损会非常频繁. 需要 user 心理承受波动.",
+        'ambitious': f"月化 {meq:.0f}% 高于一线基金平均 (年化 30% ≈ 月 2.4%), 现实但有挑战.",
+        'safe': '',
+    }.get(tier, '')
+    style = _UI_STYLE[tier]
+    return {
+        'monthly_eq': round(meq, 1),
+        'level': tier,
+        'label': style['label'],
+        'color': style['color'],
+        'warning': warning,
+        'can_save': tier != 'extreme',
+        'needs_confirm': tier == 'aggressive',
+        'leverage_cap': d.get('leverage_cap'),
+        'r_scale': d.get('r_scale'),
+        'tiers': [
+            {'range': '≤15%', 'emoji': '🟢', 'color': '#34d399'},
+            {'range': '15-30%', 'emoji': '🟡', 'color': '#fbbf24'},
+            {'range': '30-50%', 'emoji': '🔴', 'color': '#f87171'},
+            {'range': '>50%', 'emoji': '⛔', 'color': '#94a3b8'},
+        ],
+    }
