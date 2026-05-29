@@ -80,40 +80,84 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
     enter: {action, regime, strategy, params, expected_ev, candidates_n, triggered}
     wait:  {action, regime, reason, candidates}
     """
-    # ① 市场感知
-    regime = regime_from_candles(base_candles)
-    if regime == 'unknown':
-        return {'action': 'wait', 'regime': regime, 'reason': '市场 regime 不明'}
+    # ① 富市场感知 (regime+方向+波动+量+MTF+形态动能+funding+指标状态)
+    from app.services.market_perception import perceive_market
+    perc = perceive_market(symbol, base_candles, aux_candles, base_tf)
+    if not perc.get('ok') or perc.get('regime') == 'unknown':
+        return {'action': 'wait', 'reason': '市场 regime 不明', 'perception': perc}
 
-    # ② 画像匹配 (按 regime+周期 选适合策略)
-    candidates = match_strategies(regime, base_tf)
-    if not candidates:
-        return {'action': 'wait', 'regime': regime, 'reason': f'无适配 {regime}/{base_tf} 的策略', 'candidates': []}
+    # ② 富感知精准配对 (富市场画像 × 策略画像 → 匹配度评分排序)
+    scored = match_with_perception(perc, base_tf)
+    if not scored:
+        return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
+                'reason': f"无适配 {perc['regime']}/{perc['direction']}/{base_tf} 的策略"}
 
-    # ③ 信号检测: 匹配策略里哪个此刻触发
+    # ③ 信号检测: 高分候选里哪个此刻触发
     from app.services.strategy_engine import get_signal, get_candle_df
     df = get_candle_df([dict(c) for c in base_candles])
     triggered = []
-    for s in candidates:
+    for s in scored:
         try:
-            sig = get_signal(s, df, {})
-            if sig in ('buy', 'sell', 'long', 'short'):
+            if get_signal(s['strategy'], df, {}) in ('buy', 'sell', 'long', 'short'):
                 triggered.append(s)
         except Exception:
             continue
     if not triggered:
-        return {'action': 'wait', 'regime': regime, 'reason': '匹配策略均未触发信号',
-                'candidates': candidates}
+        return {'action': 'wait', 'regime': perc['regime'], 'reason': '匹配策略均未触发信号',
+                'top_match': scored[:3]}
 
-    # ④ 参数优化 + ⑤ 选最优EV (IS段优化, 这里用全段作IS的简化; live时滚动)
+    # ④ 参数优化 + ⑤ 选最优EV (触发的高分策略里)
     best = None
     for s in triggered:
-        opt = _optimize_params(s, base_candles, aux_candles, base_tf, lev)
+        opt = _optimize_params(s['strategy'], base_candles, aux_candles, base_tf, lev)
         if opt['ev'] >= MIN_EV and (best is None or opt['ev'] > best['expected_ev']):
-            best = {'strategy': s, 'params': {'init_sl_pct': opt['sl']},
-                    'expected_ev': opt['ev'], 'fills': opt['fills']}
+            best = {'strategy': s['strategy'], 'match_score': s['score'], 'match_reasons': s['reasons'],
+                    'params': {'init_sl_pct': opt['sl']}, 'expected_ev': opt['ev'], 'fills': opt['fills']}
     if best:
-        return {'action': 'enter', 'regime': regime, 'candidates_n': len(candidates),
-                'triggered': triggered, **best}
-    return {'action': 'wait', 'regime': regime, 'reason': '触发策略均未达标 EV',
-            'triggered': triggered}
+        return {'action': 'enter', 'regime': perc['regime'], 'direction': perc['direction'],
+                'triggered': [t['strategy'] for t in triggered], **best}
+    return {'action': 'wait', 'regime': perc['regime'], 'reason': '触发策略均未达标 EV',
+            'triggered': [t['strategy'] for t in triggered]}
+
+
+def match_with_perception(perception: dict, timeframe: str) -> list:
+    """富感知精准配对: 当前市场富画像 × 策略画像 → 匹配度评分排序。
+    返回 [{strategy, score, reasons}] 按 score 降序。硬过滤(regime/周期/方向冲突)淘汰, 软加分(指标对齐/MTF/猎杀)。"""
+    from app.models import StrategyProfile
+    regime = perception.get('regime'); direction = perception.get('direction', 'flat')
+    want = 'trend' if regime == 'trend' else 'range'
+    ind = perception.get('indicators') or {}
+    pa = perception.get('price_action') or {}
+    out = []
+    for p in StrategyProfile.query.all():
+        prof = p.profile or {}
+        rf = prof.get('regime_fit', {})
+        tff = ' '.join(str(x) for x in (prof.get('timeframe_fit') or []))
+        # 硬过滤: regime + 周期
+        if rf.get(want) != 'good' or timeframe not in tff:
+            continue
+        sdir = prof.get('direction', 'both')
+        # 硬过滤: 趋势市方向冲突 (上涨不用纯空策略, 反之)
+        if regime == 'trend' and direction != 'flat':
+            if (direction == 'up' and sdir == 'short') or (direction == 'down' and sdir == 'long'):
+                continue
+        score = 2.0; reasons = [f'{want}+周期匹配']
+        if regime == 'trend' and direction != 'flat':
+            score += 1; reasons.append(f'方向{direction}对齐')
+        # 软加分: 指标状态对齐 (该策略类型关心的指标当前是否利于进场)
+        if want == 'range':
+            if (ind.get('stochastic', {}).get('state') in ('oversold', 'overbought')
+                    or ind.get('cci', {}).get('state') in ('oversold', 'overbought')
+                    or ind.get('bollinger', {}).get('state') in ('upper', 'lower')):
+                score += 2; reasons.append('震荡指标在极端位(均值回归机会)')
+        else:
+            up_align = ind.get('ichimoku', {}).get('state') == 'above_cloud' or ind.get('psar', {}).get('state') == 'bullish' or ind.get('donchian', {}).get('state') == 'upper_break'
+            dn_align = ind.get('ichimoku', {}).get('state') == 'below_cloud' or ind.get('psar', {}).get('state') == 'bearish' or ind.get('donchian', {}).get('state') == 'lower_break'
+            if (direction == 'up' and up_align) or (direction == 'down' and dn_align):
+                score += 2; reasons.append('趋势指标方向对齐')
+        if perception.get('mtf_aligned'):
+            score += 1; reasons.append('MTF多周期对齐')
+        if pa.get('hunt'):
+            score -= 1.5; reasons.append('⚠有猎杀针(慎)')
+        out.append({'strategy': p.strategy_type, 'score': round(score, 1), 'reasons': reasons})
+    return sorted(out, key=lambda x: -x['score'])
