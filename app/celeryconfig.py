@@ -168,6 +168,19 @@ beat_schedule = {
         'schedule': crontab(hour='5', minute='45', day_of_week='sun'),
     },
 
+    # === Phase 14k-150 (D5): 每周日联合重测 stopped/retired (风险维进网格), 过门槛复活回 stopped ===
+    'weekly-migrate-dormant': {
+        'task': 'app.tasks.strategy_tasks.migrate_risk_grid_sweep',
+        'schedule': crontab(hour='6', minute='15', day_of_week='sun'),
+        'kwargs': {'scope': 'dormant', 'max_n': 5},
+    },
+    # === Phase 14k-150 (D6): 每天 1 个 running 前向迁移 (影子回测达标才改 SL/杠杆, 零空窗) ===
+    'daily-migrate-running': {
+        'task': 'app.tasks.strategy_tasks.migrate_risk_grid_sweep',
+        'schedule': crontab(hour='7', minute='20'),
+        'kwargs': {'scope': 'running', 'max_n': 1},
+    },
+
     # === Phase 12.4: 每 90s 預熱 Dashboard 緩存（保用戶不見 24s 冷啟動）===
     'prewarm-dashboard-cache': {
         'task': 'app.tasks.strategy_tasks.prewarm_dashboard_cache',

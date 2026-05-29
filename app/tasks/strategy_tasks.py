@@ -1653,6 +1653,108 @@ def recheck_strategies_for_primary_exchange(user_id: int = 1, max_revive: int = 
     return f'recheck: {len(pool)} 评估 (primary={primary}), {len(revived)} 上架 (headroom={headroom})'
 
 
+@celery_app.task(name='app.tasks.strategy_tasks.migrate_risk_grid_sweep')
+def migrate_risk_grid_sweep(scope: str = 'dormant', user_id: int = 1, max_n: int = 3):
+    """Phase 14k-150 (D5+D6): 把存量策略迁移到"风险参数经联合回测验证"的新世界.
+    修 SL×杠杆耦合矛盾 (旧策略 SL/杠杆从未经联合回测, 高杠杆窄SL被噪音扫).
+
+    scope='dormant': stopped/retired 联合重测 (零真钱风险) → 过门槛写回 risk_params + 复活回
+      stopped (不自动 running, 等容量/审). 池子只增不减 (不合格保持原状).
+    scope='running': running 前向逐步迁移 (零空窗) — 影子回测 (optimize 不改运行态) 达标才走
+      apply_params 写回. 策略全程 running 从不下线. 优先病态高杠杆窄SL (有效止损 sl/lev 最小).
+
+    每次只处理 max_n 个 (beat 慢慢轮). AI 提议含风险维 grid (grid_proposer D3), fallback 静态.
+    """
+    from app.services.param_optimizer import optimize, split_combo, get_grid
+    from app.services.llm_prompts.grid_proposer import propose_signal_grid
+    from app.services.audit import log as audit
+    from sqlalchemy.orm.attributes import flag_modified
+    import datetime as _dt
+
+    if scope == 'running':
+        pool = Strategy.query.filter_by(status='running', user_id=user_id).all()
+        # 优先病态: 有效价格止损 sl/lev 最小 (高杠杆窄SL, 最该修)
+        def _eff_sl(s):
+            rp = (s.params or {}).get('risk_params') or {}
+            lev = float(rp.get('leverage') or 3)
+            sl = float(rp.get('stop_loss_pct') or rp.get('sl_pct') or 99)
+            return sl / lev if lev else 99
+        pool.sort(key=_eff_sl)
+        min_oos, lift_req = 1.0, 0.3        # running 写回门槛严
+    else:  # dormant
+        pool = Strategy.query.filter(
+            Strategy.user_id == user_id,
+            Strategy.status.in_(('stopped', 'retired')),
+        ).all()
+        min_oos, lift_req = 0.5, 0.0        # 复活门槛松 (REVIVE_MIN_OOS_SHARPE 口径)
+
+    done, migrated = 0, []
+    for s in pool:
+        if done >= max_n:
+            break
+        try:
+            # AI 提议含风险维 grid (fallback 静态信号网格)
+            metrics = {}
+            from app.models import BacktestResult
+            bt = BacktestResult.query.filter_by(strategy_id=s.id).order_by(BacktestResult.id.desc()).first()
+            if bt:
+                metrics = {'oos_sharpe': bt.oos_sharpe if hasattr(bt, 'oos_sharpe') else None,
+                           'win_rate': bt.win_rate, 'trades': bt.total_trades}
+            pr = propose_signal_grid(s.type, s.params or {}, metrics, user_id=user_id)
+            grid = pr.get('grid') if pr.get('ok') else (get_grid(s.type) or None)
+            if not grid:
+                continue
+            done += 1
+            out = optimize(s, grid_override=grid, max_combos=48)
+            if out.get('error'):
+                continue
+            best_oos = out.get('best_oos_sharpe')
+            base_oos = out.get('baseline_oos_sharpe')
+            if best_oos is None or best_oos < min_oos:
+                continue
+            if base_oos is not None and (best_oos - base_oos) < lift_req:
+                continue
+            best_sig = out.get('best_signal_params') or {}
+            best_risk = out.get('best_risk_params') or {}
+            best_trades = (out.get('candidate_results') or [{}])[0].get('oos_trades')
+
+            if scope == 'running':
+                # 走 D4 apply_params 通道 (含风险维门槛 + auto-revert), 零空窗 (S 全程 running)
+                item = {'action': 'apply_params', 'strategy_id': s.id, 'meta': {
+                    'best_params': out.get('best_params'),
+                    'best_signal_params': best_sig, 'best_risk_params': best_risk,
+                    'best_oos_trades': best_trades, 'best_oos_sharpe': best_oos,
+                }}
+                ok, msg = _execute_one(item)
+                if ok:
+                    migrated.append(f'#{s.id} {msg[:60]}')
+            else:
+                # dormant: 写回 params + 复活回 stopped (D4 同款风险维门槛)
+                n_lev = float(best_risk.get('leverage') or (s.params or {}).get('risk_params', {}).get('leverage') or 3)
+                n_sl = float(best_risk.get('stop_loss_pct') or best_risk.get('sl_pct') or 0)
+                if best_risk and n_sl > 0 and (n_sl / n_lev) < 0.8:
+                    best_risk = {}   # 风险维病态 → 只写信号维
+                p = dict(s.params or {})
+                p.update(best_sig)
+                if best_risk:
+                    p['risk_params'] = {**(p.get('risk_params') or {}), **best_risk}
+                p['retired_at'] = None
+                s.params = p
+                flag_modified(s, 'params')
+                s.status = 'stopped'
+                s.retired_at = None
+                s.retire_reason = None
+                audit('strategy_risk_migrate_revive', actor='auto:14k150', strategy_id=s.id,
+                      best_oos=round(float(best_oos), 2), risk=best_risk)
+                migrated.append(f'#{s.id} OOS {best_oos:.2f} risk={best_risk}')
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            continue
+
+    return f'migrate({scope}): {done} 评估, {len(migrated)} 迁移 — ' + '; '.join(migrated[:5])
+
+
 @celery_app.task(name='app.tasks.strategy_tasks.dedup_cross_exchange_strategies')
 def dedup_cross_exchange_strategies(user_id: int = None):
     """Phase 14k-138 (B2): 去重跨所重复策略. 旧 team per-所 recommend 会给同一 edge
