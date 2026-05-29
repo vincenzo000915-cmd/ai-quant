@@ -1977,7 +1977,17 @@ def auto_ai_improve_strategies():
 
     recs = r.get('recommendations', [])
     auto_applied = [x for x in recs if (x.get('auto_apply') or {}).get('applied')]
-    awaiting = [x for x in recs if not (x.get('auto_apply') or {}).get('applied')]
+    # 14k-153: awaiting 只推"回测 qualified 但被 gate 挡"的 (用户一键启用有意义).
+    # 排除"还没回测/回测没过"的 translated — 它们 TG 显示 catalog 模板 verified_sharpe (乐观值),
+    # 但实际 clone 回测常为负 (not qualified) → 误导用户当好策略等审核. (根: 模板 sharpe ≠ 实际,
+    # D1 同源). 这些 not-qualified 候选会被 cleanup 归档, 不该推给用户.
+    def _is_real_awaiting(x):
+        if (x.get('auto_apply') or {}).get('applied'):
+            return False
+        reason = ((x.get('auto_apply') or {}).get('reason') or '')
+        # 排除回测未完成/未过/promote失败 (这些非"等用户审", 是回测没过)
+        return not any(k in reason for k in ('需先跑回测', 'not qualified', 'promote fail', 'translated', 'backtesting'))
+    awaiting = [x for x in recs if _is_real_awaiting(x)]
     mode = r.get('mode', 'manual')
 
     audit('auto_ai_improve_done', actor='auto:daily_recommend',
