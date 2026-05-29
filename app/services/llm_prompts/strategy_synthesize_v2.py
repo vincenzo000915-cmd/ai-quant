@@ -484,8 +484,11 @@ risk_params 按 timeframe 业界标准 (15m SL≤1.5% / 4h SL 5%).
 
 def _step3_encode_signal(hypothesis: dict, verify_result: dict,
                          symbol: str, timeframe: str, few_shot: list,
-                         user_id: int = 1) -> dict:
-    """A Step 3: 把 verify 通过的 hypothesis 编成 signal_fn."""
+                         user_id: int = 1, target_pct: float = 5.0, days_remaining: int = 30) -> dict:
+    """A Step 3: 把 verify 通过的 hypothesis 编成 signal_fn (risk_params 按盈利目标难度基调)."""
+    from app.services.profit_difficulty import difficulty_guidance_block, profit_difficulty, monthly_equiv
+    _diff_block = difficulty_guidance_block(target_pct, days_remaining)
+    _lev_cap = profit_difficulty(monthly_equiv(target_pct, days_remaining)).get('leverage_cap') or 10
     # few-shot 只给代码 (Step 1 已给 trades 学风格了)
     fs_code_block = ''
     if few_shot:
@@ -508,6 +511,8 @@ def _step3_encode_signal(hypothesis: dict, verify_result: dict,
 ## 目标
 - Symbol: {symbol}
 - Timeframe: {timeframe}
+{_diff_block}
+**risk_params 必须符合上述难度: leverage ≤ {_lev_cap} (覆盖 schema 默认 1-10 上限), sl/tp 体现该档盈亏比基调.**
 {fs_code_block}
 
 把上面 hypothesis 编成 Python signal_fn (严格按 entry_condition 实现), 输出 JSON.
@@ -595,7 +600,8 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
                 'stage': 'verify', 'verify': verify}
 
     # 5. A Step 3: LLM 编码 (只在 verify 通过后才调)
-    s3 = _step3_encode_signal(hypothesis, verify, symbol, timeframe, few_shot, user_id=user_id)
+    s3 = _step3_encode_signal(hypothesis, verify, symbol, timeframe, few_shot, user_id=user_id,
+                              target_pct=target_pct, days_remaining=days_remaining)
     if not s3.get('ok'):
         return {'ok': False, 'error': s3.get('error'), 'stage': 'step3', 'verify': verify}
 

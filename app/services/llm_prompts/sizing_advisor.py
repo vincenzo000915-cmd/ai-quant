@@ -54,6 +54,17 @@ def recommend_sizing(user_id: int, account_info: dict) -> dict:
         db.session.query(func.count(Trade.id)), Trade
     ).filter(Trade.exit_time >= since).scalar() or 0
 
+    # Phase 15: 盈利目标难度基调 — 杠杆/仓位按难度档 (稳健≤5 / 进取≤10 / 激进≤15)
+    from app.models import ProfitTarget
+    from app.services.profit_difficulty import difficulty_guidance_block, profit_difficulty, monthly_equiv
+    _t = ProfitTarget.query.filter_by(user_id=user_id, status='active').first()
+    if _t and _t.target_pct:
+        _days = max(1, (_t.deadline - datetime.datetime.utcnow()).days) if _t.deadline else 30
+        _diff_block = '\n' + difficulty_guidance_block(_t.target_pct, _days) + '\n'
+        _lev_cap = profit_difficulty(monthly_equiv(_t.target_pct, _days)).get('leverage_cap') or 20
+    else:
+        _diff_block = ''; _lev_cap = 20
+
     prompt = f"""## 账户状况
 - 余额: ${account_info.get('balance', 0):.2f}
 - 可用保证金: ${account_info.get('free_margin', 0):.2f}
@@ -71,10 +82,12 @@ def recommend_sizing(user_id: int, account_info: dict) -> dict:
 
 ## 最近 7 日表现
 - {recent_count} 笔 trades, 累积 PnL ${recent_pnl:+.2f}
+{_diff_block}
+**leverage 必须 ≤ {_lev_cap} (该盈利目标难度档的杠杆上限).**
 
 请输出新的推荐参数 JSON。"""
 
-    sig = json.dumps([round(account_info.get('balance', 0), 0), len(running), round(recent_pnl, 1)], default=str)
+    sig = json.dumps([round(account_info.get('balance', 0), 0), len(running), round(recent_pnl, 1), _lev_cap], default=str)
     cache_key = 'sizing:' + hashlib.sha256(sig.encode()).hexdigest()[:20]
 
     r = call_llm(

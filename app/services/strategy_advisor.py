@@ -213,6 +213,11 @@ def _get_target_context(user_id: int = 1) -> dict:
         expected = t.expected_equity_now()
         lag_pct = (expected - cur) / expected * 100 if expected > 0 else 0
         dd = t.dd_pct()
+        # Phase 15: 加盈利目标难度档基线 (稳健/进取/激进) — 让规则层+子模块有难度感知
+        from app.services.profit_difficulty import profit_difficulty, monthly_equiv
+        import datetime as _dt
+        _days = max(1, (t.deadline - _dt.datetime.utcnow()).days) if t.deadline else 30
+        _diff = profit_difficulty(monthly_equiv(t.target_pct, _days)) if t.target_pct else {}
         return {
             'none': False,
             'lag_mode': lag_pct > 5,
@@ -221,6 +226,8 @@ def _get_target_context(user_id: int = 1) -> dict:
             'progress_pct': t.progress_pct(),
             'lag_pct': lag_pct,
             'dd_pct': dd,
+            'difficulty': _diff.get('tier'),          # 难度档基线: safe/ambitious/aggressive
+            'leverage_cap': _diff.get('leverage_cap'),
         }
     except Exception:
         return {'none': True}
