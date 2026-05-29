@@ -156,6 +156,42 @@ def _latest_completed_optimization(strategy_id: int):
     )
 
 
+# 14k-156: 结构性失败标记 — 这类 error 不是"测了无改善"(市场性, 换时间可能不同),
+# 而是"前提不满足"(无网格/参数非法), 同策略类型/参数不变则换市场也必败.
+_STRUCTURAL_FAIL_MARKERS = (
+    '沒有定義網格', '没有定义网格', '無法優化', '无法优化',
+    '非法字段', '無信號參數', '无信号参数', '收斂後為空', '收敛后为空',
+)
+
+
+def _recently_failed_structural(strategy_id: int, hours: int = 24) -> str | None:
+    """通用失败反馈环 (用户洞察 14k-156: AI 要"记住"注定失败的 action, 别反复撞墙).
+
+    区别于 no_lift("测了无改善"=市场性): 这里抓"结构性失败" —— 前提不满足, 重提必再败.
+    近期发生过就跳过 propose, 让系统先把前提做好 (补网格/补参数) 再提.
+
+    返回最近一次结构性失败的 error_message (供跳过判断), 无则 None.
+    可复用于任何会产出 ParamOptimization error 的 action (signal_grid / risk_opt).
+    """
+    import datetime as _dt
+    cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
+    rec = (
+        ParamOptimization.query
+        .filter(
+            ParamOptimization.strategy_id == strategy_id,
+            ParamOptimization.status == 'error',
+            ParamOptimization.started_at > cutoff,
+        )
+        .order_by(ParamOptimization.started_at.desc())
+        .first()
+    )
+    if not rec or not rec.error_message:
+        return None
+    if any(m in rec.error_message for m in _STRUCTURAL_FAIL_MARKERS):
+        return rec.error_message
+    return None
+
+
 def _get_target_context(user_id: int = 1) -> dict:
     """Phase 14k-24: 拉 active profit_target 上下文, 让 advisor 调阈值.
 
@@ -833,6 +869,10 @@ def _strategy_risk_opt_item(strategy) -> dict | None:
     if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
         return None
 
+    # 14k-156: 通用失败反馈环 (同 signal_grid) — 近期结构性失败 → 跳过, 别反复撞墙
+    if _recently_failed_structural(strategy.id, hours=RISK_OPT_COOLDOWN_HOURS):
+        return None
+
     # 14k-44: 长期空跑阈值按 timeframe 缩放 (复用 14k-30 GRACE_DAYS_BY_TF)
     # 15m=1d / 1h=2d / 4h=3d / 1d=7d / 1w=21d — 跟策略本身的 trade frequency 匹配
     idle_days = _grace_days(strategy.timeframe)
@@ -918,6 +958,11 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
         return None
     age_h = (_dt.datetime.utcnow() - strategy.created_at).total_seconds() / 3600.0
     if age_h < RISK_OPT_MIN_LIVE_AGE_HOURS:
+        return None
+
+    # 14k-156: 通用失败反馈环 — 近期因结构性原因(无网格/参数非法)失败过 → 别反复撞墙,
+    # 先把前提做好(补网格/补风险参数)再提. 不同于下方 cooldown(纯防重排).
+    if _recently_failed_structural(strategy.id, hours=SIGNAL_GRID_COOLDOWN_HOURS):
         return None
 
     # 14k-44: TF-scaled long_idle (15m=1d / 1h=2d / 4h=3d / 1d=7d / 1w=21d)
@@ -1018,6 +1063,16 @@ def _signal_grid_propose_item(strategy, target_ctx: dict) -> dict | None:
             rationale = r.get('rationale')
     except Exception as e:
         print(f'[advisor] grid_proposer LLM failed: {type(e).__name__}: {e}')
+
+    # 14k-156: 可行性预检 — AI 没给 grid 且 static dict 也没注册该类型 → 这次 optimize 必败.
+    # 别派注定失败的任务污染 param_optimizations + 刷 error. audit 记下"错在哪"(用户: 做好该做的再提).
+    if not proposed_grid:
+        from app.services.param_optimizer import get_grid
+        if not get_grid(strategy.type):
+            from app.services.audit import log as _audit
+            _audit('signal_grid_infeasible', strategy_id=strategy.id,
+                   reason='无 AI 提议 grid 且无静态网格定义 — catalog clone 信号固定且无可调风险参数, 跳过优化')
+            return None
 
     return {
         'action': 'propose_signal_grid',

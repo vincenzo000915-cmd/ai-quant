@@ -386,6 +386,13 @@ def _execute_one(item: dict) -> tuple[bool, str]:
         from app.models import ParamOptimization
         from app.tasks.strategy_tasks import optimize_strategy_params
         proposed_grid = item.get('meta', {}).get('proposed_grid')
+        # 14k-156: 兜底 — 即使 propose 层漏检, executor 也不派注定失败的空网格任务
+        if not proposed_grid:
+            from app.services.param_optimizer import get_grid
+            from app.models import Strategy as _Strategy
+            _strat = _Strategy.query.get(sid)
+            if not _strat or not get_grid(_strat.type):
+                return False, '该策略无可调参数网格，跳过优化（catalog clone 信号固定且无可调风险参数）'
         opt = ParamOptimization(strategy_id=sid, status='pending',
                                 grid=proposed_grid or {})
         db.session.add(opt)
