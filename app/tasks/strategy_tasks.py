@@ -953,6 +953,16 @@ def monitor_strategy_health():
             # 防 zombie 策略占着 max_running slot 不开单, 卡死 AI invent.
             # 配 14k-128 max_running 上调一起做: 让 invent pipeline 有进有出.
             inact_grace_days = get_inactivity_grace_days(s.timeframe)
+            # 14k-152 (D7-2): regime 感知 — regime 匹配但 0 trades = 策略在它的场合理等待信号
+            # (回测验证过的 edge, 不该当僵尸杀) → grace ×2 多等等. regime 不匹配 + 0 trades =
+            # 趋势确实走了 → 原 grace 退役让位 (复活机制会在 regime 回来时捡回, 非永久埋葬).
+            try:
+                from app.services.regime_detector import detect_regime as _dr, fit_label as _fl
+                _rd2 = _dr(s.symbol, s.timeframe)
+                if _rd2.get('n', 0) >= 50 and _fl(s.type, _rd2.get('regime', 'unknown')) in ('good', 'ok'):
+                    inact_grace_days *= 2
+            except Exception:
+                pass
             inact_cutoff = datetime.utcnow() - timedelta(days=inact_grace_days)
             recent_trades = Trade.query.filter(
                 Trade.strategy_id == s.id,

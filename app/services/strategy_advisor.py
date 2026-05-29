@@ -300,14 +300,18 @@ def build_recommendations(user_id: int = 1) -> dict:
         pause_grace = _dt.datetime.utcnow() - _dt.timedelta(days=_grace_days(s.timeframe))
         if s.created_at and s.created_at > pause_grace:
             continue
-        # 14k-70: 同 14k-65 executor 守门 — 真有 trades + PnL ≥ 0 不建议 pause (不追屁股)
+        # 14k-152 (D7-1): 0/少 trades = 策略在等信号 (回测验证过的 edge 还没遇到它的场).
+        # pause 是"阻止开新仓", 但没开过仓的策略 = 零实盘风险, pause 它 = 否定回测 + 错过即将
+        # 到来的信号 (dont_chase_market). 只有"有足够实盘样本 + 当前 regime 真亏"才 pause.
         total_trades = Trade.query.filter_by(strategy_id=s.id).count()
-        if total_trades >= 3:
-            total_pnl = Trade.query.with_entities(
-                _sqlfunc.coalesce(_sqlfunc.sum(Trade.pnl), 0)
-            ).filter_by(strategy_id=s.id).scalar() or 0
-            if float(total_pnl) >= 0:
-                continue   # 真赚过的不推 pause, UI 也不弹
+        if total_trades < 3:
+            continue   # 在等信号, 不预测性 pause (让 walkforward 看实际表现, 或自然等到信号)
+        # 14k-70: 真有 trades + PnL ≥ 0 不建议 pause (不追屁股)
+        total_pnl = Trade.query.with_entities(
+            _sqlfunc.coalesce(_sqlfunc.sum(Trade.pnl), 0)
+        ).filter_by(strategy_id=s.id).scalar() or 0
+        if float(total_pnl) >= 0:
+            continue   # 真赚过的不推 pause, UI 也不弹
         # 14k-70: revive 24h 内不推 pause (尊重 user 救场决定)
         rp = (s.params or {}).get('risk_params') or {}
         if rp.get('_revived_by'):
