@@ -1804,6 +1804,66 @@ def migrate_risk_grid_sweep(scope: str = 'dormant', user_id: int = 1, max_n: int
     return f'migrate({scope}): {done} 评估, {len(migrated)} 迁移 — ' + '; '.join(migrated[:5])
 
 
+@celery_app.task(name='app.tasks.strategy_tasks.migrate_sl_tp_style')
+def migrate_sl_tp_style(user_id: int = 1, max_n: int = 3):
+    """Phase 14k-158 D: 回测按策略各自选 SL/TP 风格 — 采用迁移 (仿 migrate_risk_grid_sweep).
+
+    对 running 策略影子回测 flat_pct vs atr(高R:R+trailing), pick_sl_tp_style 保守取 OOS 胜者:
+    - atr 胜 (OOS Sharpe 优 flat>=margin) → risk_params.sl_mode='atr' (下次开仓起用 ATR+trailing)
+    - flat 胜且当前是 atr → 退回 flat_pct (regime 变了, 安全回退)
+    - 否则不动 (现状)
+    守门员门槛完全不动 — 风格切换不改资格判定, 只改该策略下次开仓的 SL/TP 机制.
+    存量 open 仓不受影响 (管到平仓); 切换纯数据 (sl_mode), 无代码改动, 可瞬时回滚.
+    每次只处理 max_n 个 (beat 慢慢轮)。
+    """
+    from app.services.backtest_engine import pick_sl_tp_style
+    from app.services.candidate_sandbox import load_signal_fn
+    from app.services.exchange_service import fetch_ohlcv_history
+    from app.services.audit import log as audit
+    from sqlalchemy.orm.attributes import flag_modified
+
+    pool = Strategy.query.filter_by(status='running', user_id=user_id).all()
+    done, switched = 0, []
+    for s in pool:
+        if done >= max_n:
+            break
+        try:
+            candles = fetch_ohlcv_history(s.symbol, s.timeframe, total_limit=2000)
+            if len(candles) < 200:
+                continue
+            sfn = None
+            if s.candidate_id:
+                c = StrategyCandidate.query.get(s.candidate_id)
+                if c and c.parsed_signal and c.signal_fn_name:
+                    sfn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
+            done += 1
+            r = pick_sl_tp_style(s, candles, signal_fn=sfn,
+                                 exchange=_edge_eval_exchange(s.user_id))
+            rp = (s.params or {}).get('risk_params') or {}
+            cur = rp.get('sl_mode', 'flat_pct')
+            new = r['style']
+            if new == cur:
+                continue   # 现状已是胜者, 不动
+            p = dict(s.params or {})
+            new_rp = dict(p.get('risk_params') or {})
+            if new == 'atr':
+                new_rp['sl_mode'] = 'atr'
+            else:   # 退回 flat_pct
+                new_rp.pop('sl_mode', None)
+            p['risk_params'] = new_rp
+            s.params = p
+            flag_modified(s, 'params')
+            db.session.commit()
+            audit('sl_tp_style_switch', actor='auto:14k158', strategy_id=s.id,
+                  from_style=cur, to_style=new, flat_oos=r['flat_oos_sharpe'],
+                  atr_oos=r['atr_oos_sharpe'], reason=r['reason'])
+            switched.append(f"#{s.id} {cur}→{new} (flat {r['flat_oos_sharpe']}/atr {r['atr_oos_sharpe']})")
+        except Exception:
+            db.session.rollback()
+            continue
+    return f'sl_tp_style: {done} 评估, {len(switched)} 切换 — ' + '; '.join(switched[:5])
+
+
 @celery_app.task(name='app.tasks.strategy_tasks.dedup_cross_exchange_strategies')
 def dedup_cross_exchange_strategies(user_id: int = None):
     """Phase 14k-138 (B2): 去重跨所重复策略. 旧 team per-所 recommend 会给同一 edge

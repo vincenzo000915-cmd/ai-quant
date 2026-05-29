@@ -180,6 +180,12 @@ beat_schedule = {
         'schedule': crontab(hour='7', minute='20'),
         'kwargs': {'scope': 'running', 'max_n': 1},
     },
+    # === Phase 14k-158 (D): 每天影子回测 running 策略选 SL/TP 风格 (flat vs atr), 保守采用胜者 ===
+    'daily-sl-tp-style': {
+        'task': 'app.tasks.strategy_tasks.migrate_sl_tp_style',
+        'schedule': crontab(hour='7', minute='40'),
+        'kwargs': {'max_n': 2},
+    },
 
     # === Phase 12.4: 每 90s 預熱 Dashboard 緩存（保用戶不見 24s 冷啟動）===
     'prewarm-dashboard-cache': {
