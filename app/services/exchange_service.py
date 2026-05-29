@@ -759,11 +759,15 @@ def fetch_ohlcv_history(symbol='BTC/USDT', timeframe='4h', total_limit=2000):
     return deduped
 
 
+# Phase 15 P0a: 加 5m/1m 细 TF — 操盘手盘感输入层 (15m 策略看 5m 反转/猎杀针)
 _TF_TO_OKX_BAR = {
+    '1m': '1m', '5m': '5m',
     '15m': '15m', '30m': '30m', '1h': '1H', '4h': '4H',
     '1d': '1D', '1w': '1W',
 }
 _TF_DEFAULT_LIMIT = {
+    # 5m: 288 根 = 24h; 1m: 240 根 = 4h (足够看实时拒绝针/动能衰减, 不过度堆存储)
+    '1m': 240, '5m': 288,
     '15m': 96, '30m': 96, '1h': 72, '4h': 90,
     '1d': 60, '1w': 52,
 }

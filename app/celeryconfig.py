@@ -43,6 +43,13 @@ beat_schedule = {
         'schedule': crontab(minute='0'),  # 每小時
     },
 
+    # === Phase 15 P0a: 细 TF (5m) 采集 — 操盘手盘感输入层 ===
+    'fetch-5m-candles': {
+        'task': 'app.tasks.strategy_tasks.fetch_market_data_5m',
+        'schedule': crontab(minute='*/5'),
+        'options': {'expires': 240},   # 4min 没跑就丢, 下个 5min 周期再拉 (细 TF 时效性强)
+    },
+
     # === 持倉價格更新（每5分鐘）===
     'update-positions': {
         'task': 'app.tasks.strategy_tasks.update_positions',

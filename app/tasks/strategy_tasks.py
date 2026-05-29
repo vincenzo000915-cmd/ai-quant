@@ -204,6 +204,32 @@ def fetch_market_data():
     return f'已更新 {len(symbols)} 組K線'
 
 
+@celery_app.task
+def fetch_market_data_5m():
+    """Phase 15 P0a: 细 TF (5m) 采集 — 操盘手盘感输入层.
+
+    与 fetch_market_data 区别: 那个按各策略 base TF 拉; 这个对所有 running 策略的
+    symbol (去重, 不论其 base TF) 统一拉 5m. 5m 是判断层的**辅助 TF** —
+    15m/1h 策略要看 5m 才知道反转/猎杀针发生没 (project-profit-protection-exit
+    要点3: "等策略自己 TF 确认 give-back 就太晚了").
+
+    采集纯入库, 不动任何交易逻辑 — 观察期可安全运行.
+    limit=288 = 24h 的 5m 根, 足够喂 candle_patterns + MTF 动能, 不过度堆存储.
+    """
+    strategies = Strategy.query.filter_by(status='running').all()
+    symbols = sorted(set(s.symbol for s in strategies))
+
+    ok = 0
+    for symbol in symbols:
+        try:
+            from app.services.exchange_service import fetch_ohlcv
+            fetch_ohlcv(symbol, '5m', limit=288)
+            ok += 1
+        except Exception as e:
+            print(f'[fetch_5m] {symbol} 失敗: {e}')
+    return f'已更新 {ok}/{len(symbols)} 個 symbol 的 5m K線'
+
+
 # Phase 14k-32: promote 后立刻拉单币 K 线, 避免新策略首小时撞 K线不足(0)
 @celery_app.task(bind=True, name='app.tasks.strategy_tasks.fetch_symbol_ohlcv',
                  max_retries=3, default_retry_delay=180)
