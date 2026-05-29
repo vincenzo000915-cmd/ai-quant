@@ -34,9 +34,10 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
                      use_position_filter=True, stretch_atr=2.0, require_confluence=False,
                      # ③ 出场层
                      init_sl_pct=1.3, use_breakeven=True, be_activate_r=0.3, be_lock_pct=0.0,
-                     use_partial_tp=True, tp1_r=0.5, tp1_frac=0.4, tp2_r=1.2, tp2_frac=0.3,
-                     tp3_r=2.0, use_tail_exit=False):   # 尾部走(动能)默认关: user定 TP 硬性不看动能
-                     # 注: be_activate_r 已废弃 — 保本由 TP1 命中触发 (非浮盈阈值)
+                     use_partial_tp=True, tp1_r=0.5, tp1_frac=0.5, tp2_r=1.2, tp2_frac=0.3,
+                     tp3_r=2.0, tp1_lock_r=0.3, use_tail_exit=False):
+                     # 两段移动止损: ①方向对(浮盈≥手续费)→移保本 ②TP1触发→移到+tp1_lock_r倍R锁利
+                     # be_activate_r 废弃; 尾部走(动能)默认关(user定TP硬性不看动能)
     """三层段回测. 返回 {total_pnl, fills, win_rate, ev_per_fill_usdt, profit_factor,
     by_reason, blocked_late, trades}.
     """
@@ -87,7 +88,13 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         # R = 初始风险 = entry→init_sl 的价格距离% (TP/保本都按 R 倍数, 自动随止损/波动缩放)
         R = init_sl_pct
 
-        # SL (保守先判) — 平剩余 (TP1后 pos['sl'] 已是保本位)
+        # 第一次移动止损=保本: 方向对了(浮盈达 be_activate_r 倍R=走出确认段) → SL移保本位(entry+手续费, 不亏)
+        # 触发阈值(be_activate_r) ≠ 保本位(entry+fee): 阈值要够大避免刚动就被回调扫, 保本位贴entry保不亏
+        if use_breakeven and not pos['be'] and fav_ext >= be_activate_r * R:
+            lk = FEE_RT * 100 + be_lock_pct
+            pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
+            pos['be'] = True
+        # SL (保守先判) — 平剩余 (be 后 pos['sl'] 是保本位; tp1 后是锁利位)
         hit = (adverse <= pos['sl']) if side == 'long' else (adverse >= pos['sl'])
         if hit:
             close_part(pos, pos['rem'], pos['sl'], 'breakeven' if pos['be'] else 'stop_loss', ac['timestamp'])
@@ -97,11 +104,9 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
             if not pos['tp1'] and fav_ext >= tp1_r * R:
                 d = tp1_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp1_frac, px, 'tp1', ac['timestamp']); pos['rem'] -= tp1_frac; pos['tp1'] = True
-                # user核心: TP1命中=保本触发 → 剩余仓SL移到盈利之上 (就算被移动止损打掉也在盈利之上→这单稳赚)
-                if use_breakeven:
-                    lk = FEE_RT * 100 + be_lock_pct
-                    pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
-                    pos['be'] = True
+                # 第二次移动止损: TP1触发 → SL再上移到 TP1利润之上(锁 tp1_lock_r 倍R), 剩余仓在锁利位之上跑
+                lr = tp1_lock_r * R
+                pos['sl'] = E * (1 + lr / 100) if side == 'long' else E * (1 - lr / 100)
             if not pos['tp2'] and fav_ext >= tp2_r * R:
                 d = tp2_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp2_frac, px, 'tp2', ac['timestamp']); pos['rem'] -= tp2_frac; pos['tp2'] = True
