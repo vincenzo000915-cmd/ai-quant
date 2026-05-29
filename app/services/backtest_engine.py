@@ -69,6 +69,35 @@ def resolve_default_atr_mult(timeframe: str) -> tuple[float, float]:
     return TF_DEFAULT_ATR_MULT.get(timeframe or '4h', (2.0, 3.0))
 
 
+def trailing_sl(side: str, entry_price: float, base_sl: float, peak_price: float,
+                atr: float | None, *, trailing_atr_mult: float | None,
+                trailing_activate_r: float = 1.0) -> float:
+    """14k-158: 移动止盈共享纯函数 — 回测(backtest_engine) 与运行时(check_stop_loss) **必须都调它**,
+    否则回测验证的 edge 在实盘是假的 (方案最大风险#2).
+
+    机制 (让利润奔跑): 浮盈达到 trailing_activate_r × 初始风险距离后激活; 激活后有效 SL =
+    peak ∓ trailing_atr_mult×ATR, 棘轮只进不退 (long 只上移/short 只下移), 永不低于初始 base_sl.
+    未激活 / 无 ATR / 无配置 → 返回 base_sl 不变.
+
+    side: 'long'|'short'; peak_price: long=持仓期最高价 / short=最低价. 返回有效 SL 绝对价.
+    """
+    if not trailing_atr_mult or atr is None or atr <= 0:
+        return base_sl
+    risk_dist = abs(entry_price - base_sl)
+    if risk_dist <= 0:
+        return base_sl
+    if side == 'long':
+        profit = peak_price - entry_price
+        if profit < trailing_activate_r * risk_dist:
+            return base_sl
+        return max(base_sl, peak_price - trailing_atr_mult * atr)   # 棘轮上移
+    else:   # short
+        profit = entry_price - peak_price
+        if profit < trailing_activate_r * risk_dist:
+            return base_sl
+        return min(base_sl, peak_price + trailing_atr_mult * atr)   # 棘轮下移
+
+
 def resolve_backtest_risk_kwargs(strategy) -> dict:
     """Phase 14k-146 (D1): strategy-bound 回测的风险参数单一真理源 — 与运行态 _resolve_risk
     (strategy_tasks.py:380) 同口径. 解决矛盾根因: 回测此前落 run_backtest 默认 leverage=15,
@@ -98,6 +127,16 @@ def resolve_backtest_risk_kwargs(strategy) -> dict:
     except Exception:
         cfg_lev = None
     lev = float(rp.get('leverage') or cfg_lev or 10)
+    # 14k-158: ATR 模式 — 返回 ATR kwargs (绝对价 SL/TP+trailing), 回测口径=运行时 compute_sl_tp.
+    # mult 为 None 时 run_backtest 用 TF-aware/5R 默认. leverage 仍注入(funding/sizing 用).
+    if rp.get('sl_mode') == 'atr':
+        out = {'leverage': lev, 'sl_mode': 'atr'}
+        for _k, _cast in (('atr_sl_mult', float), ('atr_tp_mult', float),
+                          ('atr_period', int), ('trailing_atr_mult', float),
+                          ('trailing_activate_r', float)):
+            if rp.get(_k) is not None:
+                out[_k] = _cast(rp[_k])
+        return out
     sl = float(rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or 0)
     tp = float(rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or 0)
     # 杠杆感知止损下限 — 回测即用运行时真实有效 SL (sl/lev>=0.8%), 抬 SL 同步抬 TP 维持 R:R
@@ -260,6 +299,13 @@ def run_backtest(
     signal_fn=None,
     exchange: str = 'okx',          # Phase 14k-10: 决定 fee_pct 默认值
     symbol: str | None = None,      # Phase 14k-30: 用于查 funding rate
+    # Phase 14k-158: ATR 波动率自适应 SL/TP + 移动止盈 (默认 flat_pct → 行为不变, 向后兼容)
+    sl_mode: str = 'flat_pct',      # 'flat_pct'(固定杠杆后%) | 'atr'(绝对价 entry∓mult×ATR)
+    atr_sl_mult: float | None = None,   # None → TF-aware resolve_default_atr_mult
+    atr_tp_mult: float | None = None,   # None → atr_sl_mult×5 (5R 硬顶, 高 R:R)
+    atr_period: int = 14,
+    trailing_atr_mult: float | None = None,   # None → =atr_sl_mult (移动止盈距离); 0/False=关
+    trailing_activate_r: float = 1.0,         # 浮盈达 N×初始风险距离后激活 trailing
 ):
     """跑單一策略的完整回測
 
@@ -276,6 +322,16 @@ def run_backtest(
             stop_loss_pct = _sl
         if take_profit_pct is None:
             take_profit_pct = _tp
+
+    # Phase 14k-158: ATR 模式倍数解析 (默认高 R:R: TP=5R 硬顶, trailing 距离=1×SL mult)
+    if sl_mode == 'atr':
+        _dsl, _ = resolve_default_atr_mult(timeframe)
+        if atr_sl_mult is None:
+            atr_sl_mult = _dsl
+        if atr_tp_mult is None:
+            atr_tp_mult = atr_sl_mult * 5.0
+        if trailing_atr_mult is None:
+            trailing_atr_mult = atr_sl_mult
 
     # Phase 14k-10: 按 exchange 调整 fee (caller 未显式传时)
     # HL taker 0.035% vs OKX 0.05%; HL maker 0.01% vs OKX 0.02%
@@ -333,23 +389,51 @@ def run_backtest(
         ts = c['timestamp']
         price = c['close']
 
-        # 1. 檢查止損 / 止盈（基於收盤價）— 支援 long/short
+        # 1. 檢查止損 / 止盈 — 14k-158: flat_pct(收盘价杠杆后%) 或 atr(绝对价+移动止盈, 用 low/high 保守判)
         if position:
-            if position['side'] == 'short':
-                raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
-            else:
-                raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
-            pnl_pct = raw_pct * leverage
-
             close_reason = None
-            if pnl_pct <= -stop_loss_pct:
-                close_reason = 'stop_loss'
-            elif pnl_pct >= take_profit_pct:
-                close_reason = 'take_profit'
+            exit_ref_price = price   # flat_pct 用收盘价成交; atr 用触发价成交
+            if sl_mode == 'atr' and position.get('sl_abs') is not None:
+                _atr_now = atr_series[i] if i < len(atr_series) else None
+                if position['side'] == 'long':
+                    position['highest_price'] = max(position['highest_price'], c['high'])
+                    eff_sl = trailing_sl('long', position['entry_price'], position['sl_abs'],
+                                         position['highest_price'], _atr_now,
+                                         trailing_atr_mult=trailing_atr_mult,
+                                         trailing_activate_r=trailing_activate_r)
+                    if c['low'] <= eff_sl:    # 保守: 用最低价判 SL 触发
+                        close_reason = 'trailing_stop' if eff_sl > position['sl_abs'] else 'stop_loss'
+                        exit_ref_price = eff_sl
+                    elif c['high'] >= position['tp_abs']:
+                        close_reason = 'take_profit'
+                        exit_ref_price = position['tp_abs']
+                else:   # short
+                    position['lowest_price'] = min(position['lowest_price'], c['low'])
+                    eff_sl = trailing_sl('short', position['entry_price'], position['sl_abs'],
+                                         position['lowest_price'], _atr_now,
+                                         trailing_atr_mult=trailing_atr_mult,
+                                         trailing_activate_r=trailing_activate_r)
+                    if c['high'] >= eff_sl:   # 保守: 用最高价判 SL 触发
+                        close_reason = 'trailing_stop' if eff_sl < position['sl_abs'] else 'stop_loss'
+                        exit_ref_price = eff_sl
+                    elif c['low'] <= position['tp_abs']:
+                        close_reason = 'take_profit'
+                        exit_ref_price = position['tp_abs']
+            else:
+                # flat_pct: 原逻辑一行不动 — 收盘价杠杆后% (不扰动已校准旧分布)
+                if position['side'] == 'short':
+                    raw_pct = (position['entry_price'] - price) / position['entry_price'] * 100
+                else:
+                    raw_pct = (price - position['entry_price']) / position['entry_price'] * 100
+                pnl_pct = raw_pct * leverage
+                if pnl_pct <= -stop_loss_pct:
+                    close_reason = 'stop_loss'
+                elif pnl_pct >= take_profit_pct:
+                    close_reason = 'take_profit'
 
             if close_reason:
-                # 重算 raw_pct 用 filled exit price（之前的 raw_pct 用 raw price）
-                filled_exit = exit_fill(price, position['side'], i)
+                # 重算 raw_pct 用 filled exit price（flat_pct=收盘价 / atr=触发价, 都过滑点取差侧）
+                filled_exit = exit_fill(exit_ref_price, position['side'], i)
                 if position['side'] == 'short':
                     raw_pct = (position['entry_price'] - filled_exit) / position['entry_price'] * 100
                 else:
@@ -411,6 +495,22 @@ def run_backtest(
                     'opened_idx': i,
                     'opened_ts': ts,
                 }
+                # 14k-158: ATR 模式 — 开仓锁定绝对价 SL/TP (entry∓mult×ATR), 初始化 trailing peak
+                if sl_mode == 'atr':
+                    _atr_open = atr_series[i] if i < len(atr_series) else None
+                    if _atr_open and _atr_open > 0:
+                        sl_dist = atr_sl_mult * _atr_open
+                        tp_dist = atr_tp_mult * _atr_open
+                        if side_open == 'long':
+                            position['sl_abs'] = filled_entry - sl_dist
+                            position['tp_abs'] = filled_entry + tp_dist
+                        else:
+                            position['sl_abs'] = filled_entry + sl_dist
+                            position['tp_abs'] = filled_entry - tp_dist
+                        position['highest_price'] = filled_entry
+                        position['lowest_price'] = filled_entry
+                    else:
+                        position['sl_abs'] = None   # ATR 不可用 → 该仓 fallback flat_pct
         else:
             # 持倉中 — 反向信號平倉
             should_close = (
