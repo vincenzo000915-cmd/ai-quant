@@ -64,6 +64,11 @@ def leverage_aware_sl_floor(sl_pct: float, tp_pct: float, leverage: float,
     return sl_pct, tp_pct
 
 
+# Phase 14k-158: ATR 模式高 R:R + 移动止盈默认 (回测与运行时 compute_sl_tp 共用, 防漂移)
+ATR_TP_R_DEFAULT = 5.0              # TP = 5R 硬顶 (高 R:R, trailing 主导退出)
+ATR_TRAILING_ACTIVATE_R_DEFAULT = 1.0   # 浮盈达 1×初始风险距离后激活 trailing
+
+
 def resolve_default_atr_mult(timeframe: str) -> tuple[float, float]:
     """按 timeframe 返回 ATR SL/TP 倍数. 未知 TF fallback 2/3 (4h 老默认)."""
     return TF_DEFAULT_ATR_MULT.get(timeframe or '4h', (2.0, 3.0))
@@ -372,7 +377,7 @@ def run_backtest(
         if atr_sl_mult is None:
             atr_sl_mult = _dsl
         if atr_tp_mult is None:
-            atr_tp_mult = atr_sl_mult * 5.0
+            atr_tp_mult = atr_sl_mult * ATR_TP_R_DEFAULT   # 5R 硬顶 (与运行时 compute_sl_tp 同源)
         if trailing_atr_mult is None:
             trailing_atr_mult = atr_sl_mult
 

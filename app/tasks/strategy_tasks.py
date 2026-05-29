@@ -642,6 +642,8 @@ def _run_signals(strategy_id=None, category_filter=None):
                     status='open',
                     sl_price=sl_price,
                     tp_price=tp_price,
+                    # 14k-158: atr 仓初始化 trailing 棘轮基准=入场价; flat_pct 仓 (sl_price None) 留 NULL
+                    peak_price=(price if sl_price is not None else None),
                 )
                 db.session.add(pos)
                 db.session.commit()
@@ -758,6 +760,11 @@ def update_positions():
                     lev = rp.get('leverage') or cfg_lev
             _, raw_pct = _pnl_pct_for(pos, current, lev)
             pos.unrealized_pnl = raw_pct * pos.size * pos.entry_price / 100
+            # 14k-158: 移动止盈棘轮 — 维护持仓期最有利价 (trailing 状态唯一写入点, 避免竞态).
+            # 仅 atr 仓 (sl_price 非空) 维护; flat_pct 仓 peak_price 留 NULL 不受影响.
+            if pos.sl_price is not None:
+                base = pos.peak_price if pos.peak_price is not None else pos.entry_price
+                pos.peak_price = max(base, current) if pos.side == 'long' else min(base, current)
         except Exception as e:
             print(f'[update] 持倉 {pos.id} 更新失敗: {e}')
     db.session.commit()
@@ -801,12 +808,36 @@ def check_stop_loss():
             # Phase 9.4: 優先用 position 自帶的絕對 SL/TP（ATR mode）
             sl_hit = False
             tp_hit = False
+            sl_reason = 'stop_loss'
             if pos.sl_price and pos.tp_price:
+                # 14k-158: 移动止盈 — 用共享 trailing_sl() 算有效 SL (与回测 run_backtest 完全同口径).
+                # peak_price 由 update_positions 棘轮维护; 仅 atr 仓有. 计算失败则退回初始 sl_price.
+                eff_sl = pos.sl_price
+                if pos.peak_price is not None and pos.strategy_id and strat:
+                    try:
+                        from app.services.backtest_engine import trailing_sl, resolve_default_atr_mult
+                        from app.services.risk_levels import current_atr as _cur_atr
+                        _rp = (strat.params or {}).get('risk_params') or {}
+                        _dsl, _ = resolve_default_atr_mult(strat.timeframe)
+                        _sl_mult = float(_rp.get('atr_sl_mult') or _dsl)
+                        _trail_mult = float(_rp.get('trailing_atr_mult') or _sl_mult)
+                        _activate_r = float(_rp.get('trailing_activate_r') or 1.0)
+                        _atr_now = _cur_atr(pos.symbol, strat.timeframe)
+                        eff_sl = trailing_sl(pos.side, pos.entry_price, pos.sl_price,
+                                             pos.peak_price, _atr_now,
+                                             trailing_atr_mult=_trail_mult,
+                                             trailing_activate_r=_activate_r)
+                        if (pos.side == 'long' and eff_sl > pos.sl_price) or \
+                           (pos.side == 'short' and eff_sl < pos.sl_price):
+                            sl_reason = 'trailing_stop'
+                    except Exception as _te:
+                        print(f'[trailing] 持倉 {pos.id} 计算失败, 退回初始 SL: {type(_te).__name__}: {_te}')
+                        eff_sl = pos.sl_price
                 if pos.side == 'long':
-                    sl_hit = current <= pos.sl_price
+                    sl_hit = current <= eff_sl
                     tp_hit = current >= pos.tp_price
                 else:   # short
-                    sl_hit = current >= pos.sl_price
+                    sl_hit = current >= eff_sl
                     tp_hit = current <= pos.tp_price
             else:
                 # flat % rule（原本邏輯）
@@ -849,14 +880,15 @@ def check_stop_loss():
                     pnl_percent=pnl_pct,
                     entry_time=pos.opened_at,
                     exit_time=datetime.utcnow(),
-                    reason='stop_loss',
+                    reason=sl_reason,   # 14k-158: stop_loss 或 trailing_stop
                 )
                 pos.status = 'closed'
                 pos.closed_at = datetime.utcnow()
                 pos.realized_pnl = pnl
                 db.session.add(trade)
                 db.session.commit()
-                triggered.append(f'{pos.symbol} 止損 @ ${current:.1f} ({pnl_pct:.1f}%)')
+                _sl_label = '移动止盈' if sl_reason == 'trailing_stop' else '止損'
+                triggered.append(f'{pos.symbol} {_sl_label} @ ${current:.1f} ({pnl_pct:.1f}%)')
                 from app.services.telegram_service import notify_close
                 notify_close(pos.symbol, pos.symbol, current, pnl, pnl_pct, 'stop_loss')
 

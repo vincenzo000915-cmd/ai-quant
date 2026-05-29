@@ -23,6 +23,15 @@ def _fetch_candle_df(symbol: str, timeframe: str, n: int = 60):
     return df
 
 
+def current_atr(symbol: str, timeframe: str, period: int = 14) -> float | None:
+    """14k-158: 取最近一根 K 线的 ATR (运行时 trailing 用, 与回测 atr_series 同口径)."""
+    df = _fetch_candle_df(symbol, timeframe, n=max(period * 4, 60))
+    if df is None or len(df) < period + 5:
+        return None
+    atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=period).average_true_range().iloc[-1]
+    return float(atr) if pd.notna(atr) and atr > 0 else None
+
+
 def compute_sl_tp(*, symbol: str, timeframe: str, side: str, entry_price: float, cfg: dict) -> tuple[float | None, float | None, dict]:
     """回傳 (sl_price, tp_price, debug)。flat_pct mode 回 (None, None, …)"""
     mode = cfg.get('sl_mode', 'flat_pct')
@@ -35,7 +44,10 @@ def compute_sl_tp(*, symbol: str, timeframe: str, side: str, entry_price: float,
         _tf_sl_mult, _tf_tp_mult = resolve_default_atr_mult(timeframe)
         period = int(cfg.get('atr_period', 14))
         sl_mult = float(cfg.get('atr_sl_mult') or _tf_sl_mult)
-        tp_mult = float(cfg.get('atr_tp_mult') or _tf_tp_mult)
+        # 14k-158: TP 默认 = 5R (sl_mult×5), 与回测 run_backtest 同源 (高 R:R, trailing 主导).
+        # _tf_tp_mult(表里 1:1.5) 仅当显式不切高R:R时的 paranoid fallback — 默认走 5R.
+        from app.services.backtest_engine import ATR_TP_R_DEFAULT
+        tp_mult = float(cfg.get('atr_tp_mult') or sl_mult * ATR_TP_R_DEFAULT)
         df = _fetch_candle_df(symbol, timeframe, n=max(period * 4, 60))
         if df is None or len(df) < period + 5:
             return None, None, {'mode': 'atr', 'fallback': f'candle 不足 (have {0 if df is None else len(df)}, need {period+5})'}

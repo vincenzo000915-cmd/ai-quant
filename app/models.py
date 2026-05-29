@@ -433,6 +433,9 @@ class Position(db.Model):
     # Phase 9.4: 開倉時計算好的絕對止損 / 止盈價（ATR mode 用）；NULL 表示走 flat % rule
     sl_price = db.Column(db.Float, nullable=True)
     tp_price = db.Column(db.Float, nullable=True)
+    # Phase 14k-158: 移动止盈状态 — 持仓期最有利价 (long=最高/short=最低), trailing 棘轮基准.
+    # NULL = 非 atr 仓/未初始化, trailing 不生效 (flat_pct 仓不受影响).
+    peak_price = db.Column(db.Float, nullable=True)
     opened_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     closed_at = db.Column(db.DateTime)
 
