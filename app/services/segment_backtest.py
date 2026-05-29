@@ -33,9 +33,9 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
                      # ② 位置层
                      use_position_filter=True, stretch_atr=2.0, require_confluence=False,
                      # ③ 出场层
-                     init_sl_pct=1.3, use_breakeven=True, be_activate_pct=0.5, be_lock_pct=0.0,
-                     use_partial_tp=True, tp1_pct=0.5, tp1_frac=0.4, tp2_pct=1.2, tp2_frac=0.3,
-                     tp3_pct=2.5, use_tail_exit=True):
+                     init_sl_pct=1.3, use_breakeven=True, be_activate_r=0.3, be_lock_pct=0.0,
+                     use_partial_tp=True, tp1_r=0.5, tp1_frac=0.4, tp2_r=1.2, tp2_frac=0.3,
+                     tp3_r=2.0, use_tail_exit=True):
     """三层段回测. 返回 {total_pnl, fills, win_rate, ev_per_fill_usdt, profit_factor,
     by_reason, blocked_late, trades}.
     """
@@ -83,9 +83,11 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         side = pos['side']; E = pos['entry']
         adverse = ac['high'] if side == 'short' else ac['low']
         fav_ext = _favorable(side, ac['low'] if side == 'short' else ac['high'], E) / E * 100
+        # R = 初始风险 = entry→init_sl 的价格距离% (TP/保本都按 R 倍数, 自动随止损/波动缩放)
+        R = init_sl_pct
 
-        # 保本激活
-        if use_breakeven and not pos['be'] and fav_ext >= be_activate_pct:
+        # 保本激活 (浮盈达 be_activate_r 倍 R)
+        if use_breakeven and not pos['be'] and fav_ext >= be_activate_r * R:
             pos['be'] = True
             lk = FEE_RT * 100 + be_lock_pct
             pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
@@ -94,25 +96,22 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         if hit:
             close_part(pos, pos['rem'], pos['sl'], 'breakeven' if pos['be'] else 'stop_loss', ac['timestamp'])
             pos['rem'] = 0.0; return True
-        # 分批 TP1/TP2
+        # 分批 TP1/TP2 (盈亏比: TP_n 距离 = tp_n_r × R)
         if use_partial_tp:
-            if not pos['tp1'] and fav_ext >= tp1_pct:
-                px = E * (1 + tp1_pct / 100) if side == 'long' else E * (1 - tp1_pct / 100)
+            if not pos['tp1'] and fav_ext >= tp1_r * R:
+                d = tp1_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp1_frac, px, 'tp1', ac['timestamp']); pos['rem'] -= tp1_frac; pos['tp1'] = True
-            if not pos['tp2'] and fav_ext >= tp2_pct:
-                px = E * (1 + tp2_pct / 100) if side == 'long' else E * (1 - tp2_pct / 100)
+            if not pos['tp2'] and fav_ext >= tp2_r * R:
+                d = tp2_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
                 close_part(pos, tp2_frac, px, 'tp2', ac['timestamp']); pos['rem'] -= tp2_frac; pos['tp2'] = True
-        # 尾部走: 已过保本(浮盈)且动能衰竭/乖离反向拉伸 → 不贪尾, 平剩余
+        # 尾部走: 已过保本(浮盈)且**动能衰竭**(MACD柱崩塌) → 不贪尾, 平剩余
+        # (user 2026-05-29 定: 尾部走只用动能衰竭, 不用乖离 — 动能衰竭是更直接的"段结束"信号)
         if use_tail_exit and pos['be'] and pos['rem'] > 1e-9:
-            mom = cp.momentum_state(bwin)
-            dev = seg.deviation_state(bwin); d = dev.get('dev_atr')
-            tail = (mom.get('state') == 'collapsing') or \
-                   (d is not None and ((side == 'long' and d > stretch_atr) or (side == 'short' and d < -stretch_atr)))
-            if tail:
+            if cp.momentum_state(bwin).get('state') == 'collapsing':
                 close_part(pos, pos['rem'], ac['close'], 'tail_exit', ac['timestamp']); pos['rem'] = 0.0; return True
-        # TP3 (吃到中段末, 剩余全平)
-        if use_partial_tp and pos['rem'] > 1e-9 and fav_ext >= tp3_pct:
-            px = E * (1 + tp3_pct / 100) if side == 'long' else E * (1 - tp3_pct / 100)
+        # TP3 (吃到 tp3_r 倍 R, 剩余全平; "让它跑"=tp3_r 给较远, 中途动能衰竭则尾部走先出)
+        if use_partial_tp and pos['rem'] > 1e-9 and fav_ext >= tp3_r * R:
+            d = tp3_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
             close_part(pos, pos['rem'], px, 'tp3', ac['timestamp']); pos['rem'] = 0.0; return True
         return False
 
