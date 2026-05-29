@@ -1089,3 +1089,26 @@ class L2Snapshot(db.Model):
             'spread_bps': self.spread_bps, 'imbalance': self.imbalance,
             'bid_depth': self.bid_depth, 'ask_depth': self.ask_depth,
         }
+
+
+# ============================================================
+# Phase 15 地基: 策略画像 (策略理解层) — AI 读策略源码生成的结构化理解
+# 守门员/AI 据此懂策略在做什么 (指标/进场逻辑/适合行情周期/edge/弱点),
+# 回测才用对行情段+解读错配vs没用, 选策略/调参才不盲 (user: 不懂策略回测=儿戏).
+# ============================================================
+
+class StrategyProfile(db.Model):
+    """每 strategy_type 一份画像 (复用, 不按实例冗余)。profile JSON:
+    {indicators, entry_logic, direction, regime_fit, timeframe_fit, edge_source, weakness, summary_zh}"""
+    __tablename__ = 'strategy_profiles'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_type = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    profile = db.Column(db.JSON)
+    source = db.Column(db.String(20), default='builtin')   # builtin | synth
+    created_at = db.Column(db.DateTime, default=db.func.now())
+    updated_at = db.Column(db.DateTime, default=db.func.now(), onupdate=db.func.now())
+
+    def to_dict(self):
+        return {'strategy_type': self.strategy_type, 'profile': self.profile,
+                'source': self.source}
