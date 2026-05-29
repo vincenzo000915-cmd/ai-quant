@@ -45,6 +45,32 @@ def resolve_default_atr_mult(timeframe: str) -> tuple[float, float]:
     return TF_DEFAULT_ATR_MULT.get(timeframe or '4h', (2.0, 3.0))
 
 
+def resolve_backtest_risk_kwargs(strategy) -> dict:
+    """Phase 14k-146 (D1): strategy-bound 回测的风险参数单一真理源 — 与运行态 _resolve_risk
+    (strategy_tasks.py:380) 同口径. 解决矛盾根因: 回测此前落 run_backtest 默认 leverage=15,
+    但实盘用策略实际 lev → SL 语义是"杠杆后%", lev 不一致 → 回测搜出的有效价格止损距离在
+    实盘是错的. 返回 {leverage, stop_loss_pct, take_profit_pct} 供回测 kwargs.
+
+    优先级 (同 _resolve_risk): strategy.params.risk_params > TF-aware 业界标准 > 引擎默认.
+    无 strategy / 无 risk_params → 返回 {} (caller 不传 → run_backtest 用自身默认, 裸回测兼容).
+    """
+    if strategy is None:
+        return {}
+    rp = (getattr(strategy, 'params', None) or {}).get('risk_params') or {}
+    tf_sl, tf_tp = resolve_default_sl_tp(getattr(strategy, 'timeframe', None))
+    out = {}
+    lev = rp.get('leverage')
+    if lev:
+        out['leverage'] = float(lev)
+    sl = rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl
+    if sl:
+        out['stop_loss_pct'] = float(sl)
+    tp = rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp
+    if tp:
+        out['take_profit_pct'] = float(tp)
+    return out
+
+
 def _calc_drawdown(equity_series):
     """計算最大回撤（金額 + 百分比）"""
     if not equity_series:

@@ -99,14 +99,18 @@ def optimize_risk_params(strategy, grid: dict | None = None) -> dict:
 
 def _run_wf(strategy, base_params, candles, sl, tp):
     """跑一次 walk-forward, 把 SL/TP 注入 backtest_engine kwargs."""
-    from app.services.backtest_engine import run_walkforward_backtest
+    from app.services.backtest_engine import run_walkforward_backtest, resolve_backtest_risk_kwargs
     try:
+        # 14k-146 (D1): 用策略实际 leverage (而非默认 15) — SL 是杠杆后%, lev 必须一致,
+        # 否则搜出的 SL 在实盘有效价格距离是错的. sl/tp 用本轮网格值覆盖.
+        _rk = resolve_backtest_risk_kwargs(strategy)
+        _rk['stop_loss_pct'] = float(sl)
+        _rk['take_profit_pct'] = float(tp)
         wf = run_walkforward_backtest(
             strategy.type, base_params, candles,
             timeframe=strategy.timeframe,
-            stop_loss_pct=float(sl),
-            take_profit_pct=float(tp),
             symbol=strategy.symbol,
+            **_rk,
         )
     except Exception as e:
         return {'oos_sharpe': None, 'oos_dd': None, 'oos_trades': 0, 'error': f'{type(e).__name__}: {e}'}

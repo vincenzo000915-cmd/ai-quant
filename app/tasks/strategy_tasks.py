@@ -994,10 +994,12 @@ def monitor_strategy_health():
                         actions.append(f'{s.name}: 跳過 (signal_fn 載入失敗: {e})')
                         continue
 
+            from app.services.backtest_engine import resolve_backtest_risk_kwargs as _rbrk
             wf = run_walkforward_backtest(
                 s.type, s.params or {}, candles,
                 timeframe=s.timeframe, signal_fn=signal_fn,
                 exchange=_edge_eval_exchange(s.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
+                **_rbrk(s),   # 14k-146 (D1): 用策略实际 lev/SL/TP, 不落默认 15
             )
 
             if wf.get('status') == 'error':
@@ -1331,12 +1333,14 @@ def backtest_and_maybe_start(strategy_id: int):
             pass
         return f'fetch failed: {e}'
 
+    from app.services.backtest_engine import resolve_backtest_risk_kwargs as _rbrk
     wf = run_walkforward_backtest(
         strategy.type, strategy.params or {}, candles,
         timeframe=strategy.timeframe,
         slippage_pct=cfg.get('backtest_slippage_pct', 0.05),
         fee_pct=cfg.get('backtest_fee_pct', 0.05),
         exchange=_edge_eval_exchange(strategy.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
+        **_rbrk(strategy),   # 14k-146 (D1): 用策略实际 lev/SL/TP, 不落默认 15
     )
     oos = (wf.get('out_sample') or {}).get('sharpe_ratio')
     is_sh = (wf.get('in_sample') or {}).get('sharpe_ratio')
@@ -1592,10 +1596,12 @@ def recheck_strategies_for_primary_exchange(user_id: int = 1, max_revive: int = 
                         signal_fn = load_signal_fn(c.parsed_signal, c.signal_fn_name)
                     except Exception:
                         continue
+            from app.services.backtest_engine import resolve_backtest_risk_kwargs as _rbrk
             wf = run_walkforward_backtest(
                 s.type, s.params or {}, candles,
                 timeframe=s.timeframe, signal_fn=signal_fn,
                 exchange=primary,   # 14k-135: 用 primary 所 fee (HL 0.035% < OKX 0.05%)
+                **_rbrk(s),   # 14k-146 (D1): 用策略实际 lev/SL/TP, 不落默认 15
             )
             if wf.get('status') != 'completed':
                 continue
@@ -1733,10 +1739,12 @@ def auto_revive_retired_strategies():
                         skipped += 1
                         continue
 
+            from app.services.backtest_engine import resolve_backtest_risk_kwargs as _rbrk
             wf = run_walkforward_backtest(
                 s.type, s.params or {}, candles,
                 timeframe=s.timeframe, signal_fn=signal_fn,
                 exchange=_edge_eval_exchange(s.user_id),   # 14k-139 (B3): 用最优绑定所 fee 评 edge
+                **_rbrk(s),   # 14k-146 (D1): 用策略实际 lev/SL/TP, 不落默认 15
             )
             if wf.get('status') == 'error':
                 skipped += 1
