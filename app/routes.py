@@ -552,13 +552,20 @@ def strategies_correlation():
     so the matrix is useful even with no closed trades yet.
     """
     from app.services.strategy_correlation import build_correlation_matrix
+    # 14k-160: 多租户隔离 — 只算当前 actor 可见的策略 (admin 全部/用户自己), 防跨用户探测他人策略相关性.
+    owned_ids = {s.id for s in scoped_query(Strategy).all()}
     ids_param = request.args.get('ids')
-    ids = None
     if ids_param:
         try:
-            ids = [int(x) for x in ids_param.split(',') if x.strip()]
+            req_ids = [int(x) for x in ids_param.split(',') if x.strip()]
         except ValueError:
             return jsonify({'error': 'ids must be comma-separated integers'}), 400
+        ids = [i for i in req_ids if i in owned_ids]   # 交集: 传了别人的 id 直接剔除
+    else:
+        ids = [s.id for s in scoped_query(Strategy).filter(Strategy.status == 'running').all()]
+    # 14k-160: 空 ids 直接返空 — 否则 build_correlation_matrix([]) 把空当 None → fallback 查全部 (泄漏)
+    if not ids:
+        return jsonify({'flagged': [], 'matrix': [], 'ids': [], 'threshold': 0.7})
     return jsonify(build_correlation_matrix(ids))
 
 
@@ -1965,7 +1972,8 @@ def estimate_returns():
 @api_bp.route('/candidates', methods=['GET'])
 def list_candidates():
     """列出候選策略，可按 status / source 過濾，預設按建立時間倒序"""
-    q = StrategyCandidate.query
+    # 14k-160: 多租户隔离 — 用户看 共享系统候选(catalog/github=user_id NULL) + 自己的; admin 看全部.
+    q = scoped_query(StrategyCandidate, include_null_user=True)
     status = request.args.get('status')
     source = request.args.get('source')
     if status:
@@ -1999,14 +2007,15 @@ def list_candidates():
 def candidates_stats():
     """候選池摘要（給 dashboard 統計用）"""
     from sqlalchemy import func
-    rows = db.session.query(
-        StrategyCandidate.status,
-        func.count(StrategyCandidate.id),
+    # 14k-160: 多租户隔离 — 统计也按 actor 可见范围 (共享 + 自己; admin 全部)
+    rows = apply_user_filter(
+        db.session.query(StrategyCandidate.status, func.count(StrategyCandidate.id)),
+        StrategyCandidate, include_null_user=True,
     ).group_by(StrategyCandidate.status).all()
     by_status = {s: n for s, n in rows}
-    rows2 = db.session.query(
-        StrategyCandidate.source,
-        func.count(StrategyCandidate.id),
+    rows2 = apply_user_filter(
+        db.session.query(StrategyCandidate.source, func.count(StrategyCandidate.id)),
+        StrategyCandidate, include_null_user=True,
     ).group_by(StrategyCandidate.source).all()
     by_source = {s: n for s, n in rows2}
     return jsonify({
@@ -2019,7 +2028,10 @@ def candidates_stats():
 @api_bp.route('/candidates/<int:cid>', methods=['GET'])
 def get_candidate(cid):
     """取得單一候選策略（含原始碼 + 翻譯 + 回測連結）"""
-    c = StrategyCandidate.query.get_or_404(cid)
+    # 14k-160: 多租户隔离 — 只能取 共享 或 自己的 候选 (admin 全部), 防按 id 探测他人候选源码
+    c = get_owned(StrategyCandidate, cid, include_null_user=True)
+    if not c:
+        abort(404)
     d = c.to_dict(include_code=True)
     if c.backtest:
         d['backtest'] = c.backtest.to_dict(include_curve=False)

@@ -223,5 +223,8 @@ def compute_live_state(strategy: Strategy) -> dict:
 
 
 def all_live_states() -> list:
-    strategies = Strategy.query.filter_by(status='running').order_by(Strategy.id).all()
+    # 14k-160: 多租户隔离 — 用 scoped_query 而非裸 Strategy.query (admin/Celery 看全部, 用户只看自己,
+    # 未登录看空). 修 /strategies/live-state 此前泄漏所有用户 running 策略动向的污染洞.
+    from app.services.user_scope import scoped_query
+    strategies = scoped_query(Strategy).filter(Strategy.status == 'running').order_by(Strategy.id).all()
     return [compute_live_state(s) for s in strategies]
