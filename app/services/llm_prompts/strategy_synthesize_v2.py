@@ -363,8 +363,9 @@ STEP1_SYSTEM = """你是量化研究员. 我给你一段真实 K 线 + 已成功
 
 
 def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
-                              few_shot: list, user_id: int = 1, hint: str | None = None) -> dict:
-    """A Step 1: LLM 看 K 线 + few-shot 真 trades → 提 structured hypothesis."""
+                              few_shot: list, user_id: int = 1, hint: str | None = None,
+                              target_pct: float = 5.0, days_remaining: int = 30) -> dict:
+    """A Step 1: LLM 看 K 线 + few-shot 真 trades → 提 structured hypothesis (按盈利目标难度基调)."""
     # K 线压缩 (太多 token 浪费, LLM 看最近 60 根 + 全段统计)
     recent = candles[-60:]
     closes = [c['close'] for c in candles]
@@ -392,6 +393,8 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
         fs_block = '\n## 已成功策略的真实 LIVE 交易\n' + '\n'.join(lines)
 
     hint_block = f"\n## Trigger 提示\n{hint}\n" if hint else ''
+    from app.services.profit_difficulty import difficulty_guidance_block
+    diff_block = '\n' + difficulty_guidance_block(target_pct, days_remaining)
 
     # K 线最近 60 根 (OHLC 简化)
     candle_block = '\n'.join(
@@ -409,13 +412,14 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
 {candle_block}
 {fs_block}
 {hint_block}
-请输出 structured hypothesis JSON.
+{diff_block}
+请输出符合上述难度基调的 structured hypothesis JSON (盈亏比/进场严格度需匹配基调).
 """
 
     r = call_llm(
         user_id=user_id, prompt=prompt, system=STEP1_SYSTEM,
         max_tokens=1500, model='opus',   # 14k-134: 合成假设走 Opus 4.8 (核心学习路径用最强模型)
-        cache_key=f'synth_v2_step1:opus:{symbol}:{timeframe}:{hashlib.sha256(str(closes[-1]).encode()).hexdigest()[:10]}',
+        cache_key=f'synth_v2_step1:opus:{symbol}:{timeframe}:t{int(target_pct)}:{hashlib.sha256(str(closes[-1]).encode()).hexdigest()[:10]}',
     )
     if not r.get('ok'):
         return {'ok': False, 'error': f'Step 1 LLM 失败: {r.get("error")}'}
@@ -564,7 +568,8 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
     few_shot = get_few_shot_with_trades(target_timeframe=timeframe, max_n=3)
 
     # 3. A Step 1: LLM 提 hypothesis
-    s1 = _step1_propose_hypothesis(symbol, timeframe, candles, few_shot, user_id=user_id, hint=hint)
+    s1 = _step1_propose_hypothesis(symbol, timeframe, candles, few_shot, user_id=user_id, hint=hint,
+                                   target_pct=target_pct, days_remaining=days_remaining)
     if not s1.get('ok'):
         return {'ok': False, 'error': s1.get('error'), 'stage': 'step1'}
     hypothesis = s1['hypothesis']
