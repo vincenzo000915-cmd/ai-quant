@@ -492,36 +492,61 @@ def check_logic_health_risk_params() -> dict:
     逻辑矛盾: ① 有效价格止损 sl/lev 过紧 (<0.8% → 被噪音扫, SL×杠杆耦合) ② 砖策略
     (size×lev < HL 最小 $10 → 永远开不了仓). 把人工巡查固化成自动监控."""
     t = t0()
+    # 14k-157: 镜像运行时 fallback (strategy_tasks._resolve_risk): lev=rp.lev OR cfg_lev;
+    # sl=rp.sl OR TF-aware OR cfg_sl. 取代旧硬编码默认 3/5 (与运行时背离 → 漏报空 risk_params 策略).
     rc, out = psql("""
-        SELECT id,
-          COALESCE((params->'risk_params'->>'leverage'),'3')::float,
-          COALESCE((params->'risk_params'->>'stop_loss_pct'),(params->'risk_params'->>'sl_pct'),'5')::float,
-          COALESCE((params->'risk_params'->>'position_size_usdt'),'5')::float,
-          COALESCE(lower(exchange),'okx')
-        FROM strategies WHERE status='running'
+        SELECT s.id,
+          (s.params->'risk_params'->>'leverage'),
+          COALESCE((s.params->'risk_params'->>'stop_loss_pct'),(s.params->'risk_params'->>'sl_pct')),
+          COALESCE((s.params->'risk_params'->>'position_size_usdt'),'5'),
+          COALESCE(lower(s.exchange),'okx'),
+          COALESCE(s.timeframe,'4h'),
+          sc.leverage, sc.stop_loss_pct
+        FROM strategies s
+        CROSS JOIN (SELECT leverage, stop_loss_pct FROM system_config WHERE id=1) sc
+        WHERE s.status='running'
     """)
     if rc != 0:
         return {'status': WARN, 'detail': 'pg query fail', 'latency_ms': ms(t)}
-    tight, brick = [], []
+    # ⚠️ 与 backtest_engine.TF_DEFAULT_SL_TP 同步 (改那里记得改这里)
+    TF_SL = {'15m': 1.0, '30m': 1.5, '1h': 2.5, '4h': 5.0, '1d': 10.0}
+    MIN_EFF = 0.8   # 同 backtest_engine.leverage_aware_sl_floor / grid_proposer 约束
+    tight, brick, floored = [], [], []
     for line in out.strip().splitlines():
         parts = [p.strip() for p in line.split('|')]
-        if len(parts) < 5:
+        if len(parts) < 8:
             continue
         try:
-            sid, lev, sl, size, ex = parts[0], float(parts[1]), float(parts[2]), float(parts[3]), parts[4]
+            sid, lev_raw, sl_raw, size_s, ex, tf, cfg_lev_s, cfg_sl_s = parts[:8]
+            cfg_lev, cfg_sl = float(cfg_lev_s), float(cfg_sl_s)
+            lev = float(lev_raw) if lev_raw else cfg_lev
+            sl_stored = float(sl_raw) if sl_raw else (TF_SL.get(tf, 5.0) or cfg_sl)
+            size = float(size_s)
         except Exception:
             continue
-        if lev > 0 and (sl / lev) < 0.8:
-            tight.append(f'#{sid}(有效止损{sl/lev:.2f}%)')
+        if lev <= 0:
+            continue
+        # 运行时 floor 后的真实有效止损 (14k-157: 全局兜底到 >=0.8%)
+        sl_runtime = max(sl_stored, lev * MIN_EFF)
+        eff_runtime = sl_runtime / lev
+        eff_stored = sl_stored / lev
+        if eff_runtime < 0.8:   # floor 后仍 <0.8 → 真异常 (理论不该发生, 抓回归)
+            tight.append(f'#{sid}(有效止损{eff_runtime:.2f}%)')
+        elif eff_stored < 0.8:  # 存量 risk_params 过紧, 已被运行时 floor 兜底 → 方案D迁移待修
+            floored.append(f'#{sid}(存量{eff_stored:.2f}%→floor0.80%)')
         if ex == 'hyperliquid' and size * lev < 10:
             brick.append(f'#{sid}(notional${size*lev:.0f})')
     if brick:
         return {'status': FAIL,
-                'detail': f'砖策略(永远开不了仓 size×lev<$10): {", ".join(brick)}; 止损过紧: {", ".join(tight) or "无"}',
+                'detail': f'砖策略(永远开不了仓 size×lev<$10): {", ".join(brick)}; floor后仍过紧: {", ".join(tight) or "无"}',
                 'latency_ms': ms(t)}
-    if tight:
+    if tight:   # floor 失效 = 14k-157 回归, 真告警
         return {'status': WARN,
-                'detail': f'{len(tight)} 个策略有效价格止损<0.8% (高杠杆窄SL易被噪音扫): {", ".join(tight[:5])}',
+                'detail': f'{len(tight)} 个策略 floor 后有效止损仍<0.8% (14k-157 floor 可能失效!): {", ".join(tight[:5])}',
+                'latency_ms': ms(t)}
+    if floored:
+        return {'status': OK,
+                'detail': f'风险参数自洽; {len(floored)} 个存量止损过紧已被运行时 floor 兜底(方案D迁移待修): {", ".join(floored[:5])}',
                 'latency_ms': ms(t)}
     return {'status': OK, 'detail': '风险参数自洽 (无砖/无过紧止损)', 'latency_ms': ms(t)}
 

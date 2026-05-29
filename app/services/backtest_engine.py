@@ -40,6 +40,30 @@ def resolve_default_sl_tp(timeframe: str) -> tuple[float, float]:
     return TF_DEFAULT_SL_TP.get(timeframe or '4h', (5.0, 8.0))
 
 
+def leverage_aware_sl_floor(sl_pct: float, tp_pct: float, leverage: float,
+                            min_eff_pct: float = 0.8) -> tuple[float, float]:
+    """14k-157: 杠杆感知止损下限 — 运行时全局安全不变量 (应用到所有策略, 含显式 risk_params).
+
+    SL/TP 在系统里是"杠杆后 %"语义 (止损触发是比杠杆后 pnl%). 不论 SL 来自显式回测 risk_params
+    还是 TF/cfg fallback, 除以高杠杆后有效价格止损 sl/lev 都可能 < 噪音级 (如 1h tf_sl=2.5 ÷
+    lev10 = 0.25%, 或 #69 sl5/lev8 = 0.62% → 噪音即扫, 反复打止损流血). 保证 sl/lev >=
+    min_eff_pct (0.8%); 抬 SL 时同步抬 TP 维持 R:R>=1.2. 根因见 feedback_sl_leverage_coupling.
+
+    为何覆盖显式 risk_params: 噪音级有效止损的"回测 edge"撑不过实盘 slippage/noise; 且
+    grid_proposer(14k-148) 已对所有新提议强制同一 sl/lev>=0.8 不变量, 此 floor 只是把不变量
+    补到不满足的存量策略 (非破坏性: 不改 DB risk_params, 只在运行时解析兜底; 方案D迁移仍会
+    把存量 risk_params 修到合理值, 届时 floor 不再触发).
+    """
+    if not leverage or leverage <= 0:
+        return sl_pct, tp_pct
+    min_sl = leverage * min_eff_pct
+    if sl_pct < min_sl:
+        sl_pct = min_sl
+        if tp_pct < sl_pct * 1.2:
+            tp_pct = sl_pct * 1.2
+    return sl_pct, tp_pct
+
+
 def resolve_default_atr_mult(timeframe: str) -> tuple[float, float]:
     """按 timeframe 返回 ATR SL/TP 倍数. 未知 TF fallback 2/3 (4h 老默认)."""
     return TF_DEFAULT_ATR_MULT.get(timeframe or '4h', (2.0, 3.0))
@@ -52,22 +76,38 @@ def resolve_backtest_risk_kwargs(strategy) -> dict:
     实盘是错的. 返回 {leverage, stop_loss_pct, take_profit_pct} 供回测 kwargs.
 
     优先级 (同 _resolve_risk): strategy.params.risk_params > TF-aware 业界标准 > 引擎默认.
-    无 strategy / 无 risk_params → 返回 {} (caller 不传 → run_backtest 用自身默认, 裸回测兼容).
+    无 strategy → 返回 {} (caller 不传 → run_backtest 用自身默认, 裸回测兼容).
+
+    14k-157: 杠杆后有效 SL/TP 必须在"回测完之前"就定下且非噪音级 (user 洞察) — 否则回测验证的
+    edge 建立在实盘撑不住的窄止损上. 故此处:
+      ① 有效杠杆 = 显式 rp.lev OR cfg 全局 lev (同运行时 _resolve_risk), 始终注入 → 回测用的
+         leverage 就是实盘的, "杠杆后 SL" 在回测时即已知 (修 D1 残留: 无显式 lev 时回测/实盘 lev 不一致).
+      ② 对 SL/TP 套同一 leverage_aware_sl_floor → 回测验证的就是 sl/lev>=0.8% 的非噪音止损,
+         与运行时完全同口径. 根因见 feedback_sl_leverage_coupling.
     """
     if strategy is None:
         return {}
     rp = (getattr(strategy, 'params', None) or {}).get('risk_params') or {}
     tf_sl, tf_tp = resolve_default_sl_tp(getattr(strategy, 'timeframe', None))
-    out = {}
-    lev = rp.get('leverage')
-    if lev:
-        out['leverage'] = float(lev)
-    sl = rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl
+    # 有效杠杆: 显式 > cfg 全局 (同 _resolve_risk 的 lev_default)
+    cfg_lev = None
+    try:
+        from app.models import SystemConfig
+        sc = SystemConfig.query.get(1)
+        cfg_lev = sc.leverage if sc else None
+    except Exception:
+        cfg_lev = None
+    lev = float(rp.get('leverage') or cfg_lev or 10)
+    sl = float(rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or 0)
+    tp = float(rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or 0)
+    # 杠杆感知止损下限 — 回测即用运行时真实有效 SL (sl/lev>=0.8%), 抬 SL 同步抬 TP 维持 R:R
     if sl:
-        out['stop_loss_pct'] = float(sl)
-    tp = rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp
+        sl, tp = leverage_aware_sl_floor(sl, tp, lev)
+    out = {'leverage': lev}
+    if sl:
+        out['stop_loss_pct'] = sl
     if tp:
-        out['take_profit_pct'] = float(tp)
+        out['take_profit_pct'] = tp
     return out
 
 

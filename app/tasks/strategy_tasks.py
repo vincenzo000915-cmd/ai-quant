@@ -383,14 +383,19 @@ def _run_signals(strategy_id=None, category_filter=None):
         14k-47: SL/TP fallback 三级 — strategy.params > TF-aware > cfg 全局
         (旧版只到 cfg 5%/8%, 15m scalp 错配 SL 5% 一震荡就爆)
         """
-        from app.services.backtest_engine import resolve_default_sl_tp
+        from app.services.backtest_engine import resolve_default_sl_tp, leverage_aware_sl_floor
         tf_sl, tf_tp = resolve_default_sl_tp(s.timeframe)
         rp = (s.params or {}).get('risk_params') or {}
+        lev = rp.get('leverage') or lev_default
+        sl_pct = rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or sl_pct_default
+        tp_pct = rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or tp_pct_default
+        # 14k-157: 杠杆感知止损下限 (运行时全局, 含显式 risk_params) — 防有效止损 sl/lev<0.8% 被噪音扫
+        sl_pct, tp_pct = leverage_aware_sl_floor(sl_pct, tp_pct, lev)
         return (
             rp.get('position_size_usdt') or trade_size_default,
-            rp.get('leverage') or lev_default,
-            rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or sl_pct_default,
-            rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or tp_pct_default,
+            lev,
+            sl_pct,
+            tp_pct,
             rp.get('order_type') or 'market',
         )
 
@@ -782,12 +787,14 @@ def check_stop_loss():
             if pos.strategy_id:
                 strat = Strategy.query.get(pos.strategy_id)
                 if strat:
-                    from app.services.backtest_engine import resolve_default_sl_tp
+                    from app.services.backtest_engine import resolve_default_sl_tp, leverage_aware_sl_floor
                     tf_sl, tf_tp = resolve_default_sl_tp(strat.timeframe)
                     rp = (strat.params or {}).get('risk_params') or {}
                     lev = rp.get('leverage') or cfg_lev
                     sl_pct = rp.get('stop_loss_pct') or rp.get('sl_pct') or tf_sl or cfg_sl_pct
                     tp_pct = rp.get('take_profit_pct') or rp.get('tp_pct') or tf_tp or cfg_tp_pct
+                    # 14k-157: 杠杆感知止损下限 (运行时全局, 与 _resolve_risk 同口径) — 防 sl/lev<0.8% 噪音扫
+                    sl_pct, tp_pct = leverage_aware_sl_floor(sl_pct, tp_pct, lev)
             pnl_pct, raw_pct = _pnl_pct_for(pos, current, lev)
             close_side = 'buy' if pos.side == 'short' else 'sell'
 
