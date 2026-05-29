@@ -1261,6 +1261,7 @@ def optimize_strategy_params(self, optimization_id: int, max_combos: int = 24):
             opt.baseline_oos_sharpe = out['baseline_oos_sharpe']
             opt.candidate_results = out['candidate_results']
             opt.best_params = out['best_params']
+            opt.best_risk_params = out.get('best_risk_params') or {}   # 14k-147 (D2): 风险维, 供 D4 写回
             opt.best_oos_sharpe = out['best_oos_sharpe']
             opt.combos_total = out['combos_total']
             opt.combos_done = out['combos_done']

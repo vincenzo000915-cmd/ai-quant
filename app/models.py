@@ -802,6 +802,7 @@ class ParamOptimization(db.Model):
     baseline_oos_sharpe = db.Column(db.Float)              # 基線 walk-forward OOS Sharpe
     candidate_results = db.Column(db.JSON, default=[])     # [{params, is_sharpe, oos_sharpe, decay_pct, total_trades, ...}]
     best_params = db.Column(db.JSON)
+    best_risk_params = db.Column(db.JSON)              # 14k-147 (D2): best 的风险维(lev/SL/TP), 供 D4 分离写回
     best_oos_sharpe = db.Column(db.Float)
     combos_total = db.Column(db.Integer, default=0)
     combos_done = db.Column(db.Integer, default=0)

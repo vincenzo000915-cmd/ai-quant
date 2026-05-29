@@ -16,7 +16,7 @@ import itertools
 import time
 from typing import Iterator
 
-from app.services.backtest_engine import run_backtest, run_walkforward_backtest
+from app.services.backtest_engine import run_backtest, run_walkforward_backtest, resolve_backtest_risk_kwargs
 from app.services.exchange_service import fetch_ohlcv_history
 from app.services.config_service import get_config
 
@@ -163,14 +163,52 @@ def iter_combos(grid: dict[str, list]) -> Iterator[dict]:
         yield dict(zip(keys, combo))
 
 
-def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pct, symbol=None):
-    """跑一次 walk-forward，回傳精簡指標。"""
+# Phase 14k-147 (D2): 风险维进网格 — grid 用 _lev/_sl/_tp 前缀键携带风险参数.
+# 前缀 _ 与 grid_proposer 的 `_` 排除约定、get_signal 白名单忽略额外键一致 → 信号侧零干扰.
+RISK_GRID_KEYS = {'_lev': 'leverage', '_sl': 'stop_loss_pct', '_tp': 'take_profit_pct'}
+MIN_TP_OVER_SL = 1.2      # R:R 守门 (同 risk_optimizer)
+MIN_PRICE_SL_PCT = 0.8    # 有效价格止损下限% = sl_pct/leverage, 砍"高杠杆窄SL被噪音扫"的病态格子
+
+
+def split_combo(combo: dict) -> tuple[dict, dict]:
+    """把一个 combo dict 拆成 (signal_params, risk_kwargs).
+    signal_params = 非 RISK_GRID_KEYS 的键 (喂 get_signal);
+    risk_kwargs = {leverage/stop_loss_pct/take_profit_pct: v} (走回测 kwargs)."""
+    sig, risk = {}, {}
+    for k, v in (combo or {}).items():
+        if k in RISK_GRID_KEYS:
+            risk[RISK_GRID_KEYS[k]] = v
+        else:
+            sig[k] = v
+    return sig, risk
+
+
+def _combo_viable(combo: dict, base_risk: dict) -> bool:
+    """剪枝病态风险组合: tp>=sl*1.2 (R:R) + sl/lev>=0.8% (有效价格止损下限).
+    用 combo 搜索的风险维 + base_risk 兜底未搜索维."""
+    _, rk = split_combo(combo)
+    eff = {**(base_risk or {}), **rk}
+    sl = eff.get('stop_loss_pct'); tp = eff.get('take_profit_pct'); lev = eff.get('leverage')
+    if sl and tp and tp < sl * MIN_TP_OVER_SL:
+        return False
+    if sl and lev and (sl / lev) < MIN_PRICE_SL_PCT:
+        return False
+    return True
+
+
+def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pct, symbol=None, base_risk=None):
+    """跑一次 walk-forward，回傳精簡指標。
+    14k-147 (D2): params 可含 _lev/_sl/_tp 风险维 → split 后只把 signal_params 喂回测的
+    params (防 candidate signal_fn 误收脏键), 风险维走 kwargs (combo 覆盖 base_risk)."""
+    sig_params, risk_override = split_combo(params)
+    merged_risk = {**(base_risk or {}), **risk_override}
     wf = run_walkforward_backtest(
-        strategy_type, params, candles,
+        strategy_type, sig_params, candles,
         timeframe=timeframe,
         slippage_pct=slippage_pct,
         fee_pct=fee_pct,
         symbol=symbol,
+        **merged_risk,
     )
     if wf.get('status') == 'error':
         return {'params': params, 'error': wf.get('error_message', 'unknown')}
@@ -196,7 +234,7 @@ def _score_combo(strategy_type, params, candles, timeframe, slippage_pct, fee_pc
     }
 
 
-def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
+def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 48,
              on_progress=None, grid_override: dict | None = None) -> dict:
     """執行 walk-forward 網格搜尋。
 
@@ -248,21 +286,25 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
     slippage = cfg.get('backtest_slippage_pct', 0.05)
     fee = cfg.get('backtest_fee_pct', 0.05)
 
+    # 14k-147 (D2): baseline 用策略实际 lev/SL/TP (与 D1 一致, 修回测固定15假象)
+    base_risk = resolve_backtest_risk_kwargs(strategy)
+
     # 基線：strategy.params 自身
     baseline_params = dict(strategy.params or {})
-    baseline = _score_combo(strategy.type, baseline_params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol)
+    baseline = _score_combo(strategy.type, baseline_params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol, base_risk=base_risk)
     baseline_oos = baseline.get('oos_sharpe')
 
     results = [baseline]
     if on_progress:
         on_progress(1, total + 1)
 
-    combos = list(iter_combos(grid))
+    # 14k-147 (D2): 剪枝病态风险组合 (tp>=sl*1.2 + sl/lev>=0.8%), 砍"高杠杆窄SL被噪音扫"格子
+    combos = [c for c in iter_combos(grid) if _combo_viable(c, base_risk)]
     for i, params in enumerate(combos, start=2):
         # 跳過跟 baseline 完全相同的組合
         if params == baseline_params:
             continue
-        r = _score_combo(strategy.type, params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol)
+        r = _score_combo(strategy.type, params, candles, strategy.timeframe, slippage, fee, symbol=strategy.symbol, base_risk=base_risk)
         results.append(r)
         if on_progress:
             on_progress(i, total + 1)
@@ -275,6 +317,18 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
 
     best = results[0] if results and results[0].get('oos_sharpe') is not None else None
 
+    # 14k-147 (D2): 把 best 拆成信号维 + 风险维, 供 D4 分离写回 (signal→params, risk→risk_params)
+    best_signal_params, best_risk_params = (None, {})
+    if best:
+        _sig, _risk = split_combo(best['params'])
+        best_signal_params = _sig
+        # 只含本次实际搜索的风险维 (grid 无 _lev/_sl/_tp → 空 → 写回时不动 risk_params)
+        best_risk_params = dict(_risk)
+        if 'stop_loss_pct' in best_risk_params:
+            best_risk_params['sl_pct'] = best_risk_params['stop_loss_pct']   # alias 兼容
+        if 'take_profit_pct' in best_risk_params:
+            best_risk_params['tp_pct'] = best_risk_params['take_profit_pct']
+
     return {
         'grid': grid,
         'grid_source': grid_source,
@@ -282,6 +336,8 @@ def optimize(strategy, *, candle_limit: int = 2000, max_combos: int = 24,
         'baseline_oos_sharpe': baseline_oos,
         'candidate_results': results,
         'best_params': best['params'] if best else None,
+        'best_signal_params': best_signal_params,   # 14k-147 (D2): 纯信号维
+        'best_risk_params': best_risk_params,        # 14k-147 (D2): 风险维 (可能空)
         'best_oos_sharpe': best['oos_sharpe'] if best else None,
         'combos_total': total + 1,
         'combos_done': len(results),
