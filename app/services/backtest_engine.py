@@ -150,6 +150,49 @@ def resolve_backtest_risk_kwargs(strategy) -> dict:
     return out
 
 
+def pick_sl_tp_style(strategy, candles, signal_fn=None, *, exchange: str = 'okx',
+                     min_sharpe_margin: float = 0.3) -> dict:
+    """Phase 14k-158: 回测按策略各自选 SL/TP 风格 (回测真理: 数据选, 不强加哲学).
+
+    B0 探针证明盲目全切 ATR 在震荡 breakout 策略上更差 — ATR+高R:R 是趋势哲学, 非万能替代.
+    故让每个策略 walk-forward 跑 flat_pct(现状) 与 atr(高R:R+trailing) 两套, 比 OOS Sharpe,
+    返回更优风格. **保守**: atr 必须 OOS Sharpe 比 flat 优 >= min_sharpe_margin 且 >0 才切,
+    否则留 flat (现状/已验证, 平局不动)。这样守门员门槛完全不用改 — 它判的是胜出风格.
+
+    返回 {style, atr_kwargs(style=atr 时), flat_oos_sharpe, atr_oos_sharpe, reason}.
+    """
+    tf = getattr(strategy, 'timeframe', '4h')
+    stype = strategy.type
+    params = strategy.params or {}
+    base = resolve_backtest_risk_kwargs(strategy)
+    lev = base.get('leverage', 10)
+
+    def _oos_sharpe(wf):
+        return (wf.get('out_sample', {}) or {}).get('sharpe_ratio') or 0.0
+
+    # flat 走当前风险参数 (含 leverage_aware floor); 若 base 已是 atr (策略已采用) 也照跑对比
+    flat_kwargs = {k: v for k, v in base.items() if k != 'sl_mode'}
+    flat_wf = run_walkforward_backtest(stype, params, candles, timeframe=tf,
+                                       signal_fn=signal_fn, exchange=exchange, **flat_kwargs)
+    atr_wf = run_walkforward_backtest(stype, params, candles, timeframe=tf,
+                                      signal_fn=signal_fn, exchange=exchange,
+                                      leverage=lev, sl_mode='atr')
+    f_sh, a_sh = _oos_sharpe(flat_wf), _oos_sharpe(atr_wf)
+
+    if a_sh >= f_sh + min_sharpe_margin and a_sh > 0:
+        return {
+            'style': 'atr',
+            'atr_kwargs': {'sl_mode': 'atr'},   # 用 run_backtest TF-aware/5R 默认; 后续可搜 mult
+            'flat_oos_sharpe': round(f_sh, 2), 'atr_oos_sharpe': round(a_sh, 2),
+            'reason': f'atr OOS Sharpe {a_sh:.2f} 优于 flat {f_sh:.2f} (margin {min_sharpe_margin})',
+        }
+    return {
+        'style': 'flat_pct', 'atr_kwargs': None,
+        'flat_oos_sharpe': round(f_sh, 2), 'atr_oos_sharpe': round(a_sh, 2),
+        'reason': f'flat OOS Sharpe {f_sh:.2f} >= atr {a_sh:.2f} (保守留现状)',
+    }
+
+
 def _calc_drawdown(equity_series):
     """計算最大回撤（金額 + 百分比）"""
     if not equity_series:
