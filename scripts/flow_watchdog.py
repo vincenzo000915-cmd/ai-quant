@@ -235,6 +235,30 @@ def check_llm_errors_recent() -> dict:
     return {'status': OK, 'detail': '近 1 小时无 LLM 错误', 'latency_ms': ms(t)}
 
 
+def check_claude_cli_auth() -> dict:
+    """14k-145: claude CLI auth 健康 — AI moat 命脉. 被动扫近 30m worker log 的 401/auth 失败.
+    背景: /login 中断 / OAuth refresh token 失效 → 401, AI 合成/推荐/chat 全间歇挂.
+    零成本被动检测 (不真跑 claude 占 semaphore). FAIL → watchdog 自动 TG 告警 + 30m dedup.
+    宿主 token 到期需重跑 claude /login (容器只读挂载, 自动 refresh 链断了才需人工)."""
+    t = t0()
+    rc, out, _ = run_cmd(
+        ['docker', 'logs', '--since', '30m', 'quant-celery-worker-1'],
+        timeout=10,
+    )
+    if rc != 0:
+        return {'status': WARN, 'detail': 'docker logs fail', 'latency_ms': ms(t)}
+    auth_fails = out.count('Invalid authentication') + out.count('Not logged in') + out.count('Failed to authenticate')
+    if auth_fails >= 3:
+        return {'status': FAIL,
+                'detail': f'近 30 分钟 claude CLI 认证失败 {auth_fails} 次 — AI 凭证失效! 需在宿主重跑 claude /login (token 过期或 /login 中断)',
+                'latency_ms': ms(t)}
+    if auth_fails > 0:
+        return {'status': WARN,
+                'detail': f'近 30 分钟 claude CLI 认证失败 {auth_fails} 次 (可能 token 刷新瞬态; 持续则需重新 /login)',
+                'latency_ms': ms(t)}
+    return {'status': OK, 'detail': '近 30 分钟 AI 凭证正常', 'latency_ms': ms(t)}
+
+
 def check_pg_pool() -> dict:
     """6. PG connection count（防坑 18 复发）"""
     t = t0()
@@ -469,6 +493,7 @@ CHECKS = [
     ('ai_improve_recent',     check_ai_improve_recent),
     ('translate_pipeline',    check_translate_pipeline),
     ('llm_errors_1h',         check_llm_errors_recent),
+    ('claude_cli_auth',       check_claude_cli_auth),   # 14k-145: AI 凭证健康 → 401 自动 TG 告警
     ('pg_connection_pool',    check_pg_pool),
     ('exchange_connectivity',      check_exchange_connectivity),
     ('reconcile_health',      check_reconcile_recent),
