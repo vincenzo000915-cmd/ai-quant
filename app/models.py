@@ -1026,3 +1026,66 @@ class Subscription(db.Model):
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
             'days_remaining': max(0, (self.expires_at - db.func.now()).days) if self.expires_at else None,
         }
+
+
+# ============================================================
+# Phase 15 P0b: HL 微观数据 — 操盘手盘感输入层 (流动性/拥挤度感知)
+# 这是真新增 edge 数据 (非又一个 TA 指标): 盘口失衡 = 止损猎场地图 + 资金费率 = 拥挤的一边.
+# ⚠️ l2 盘口无历史 API → L2Snapshot 只能前向积累 (为 Phase 4 live P&L 校准铺路, 不能回测);
+#    funding 有历史 API → FundingRate 可回放 5-29 种子日, 进 P2 回测.
+# ============================================================
+
+class FundingRate(db.Model):
+    """资金费率历史 (HL funding_history) — 拥挤度/挤兑燃料探测.
+    正费率高 = 多头拥挤 (付费给空头, 多头是陷阱燃料); 负费率 = 空头拥挤. 可回测."""
+    __tablename__ = 'funding_rates'
+
+    id = db.Column(db.Integer, primary_key=True)
+    exchange = db.Column(db.String(20), nullable=False, default='hyperliquid')
+    symbol = db.Column(db.String(20), nullable=False, index=True)   # 系统口径 'ETH/USDT'
+    timestamp = db.Column(db.BigInteger, nullable=False)            # funding 结算时刻 (秒)
+    funding_rate = db.Column(db.Float)                              # 单期费率 (HL 字符串转 float)
+    premium = db.Column(db.Float)                                   # mark vs index premium
+
+    __table_args__ = (
+        db.UniqueConstraint('exchange', 'symbol', 'timestamp', name='uix_funding'),
+    )
+
+    def to_dict(self):
+        return {
+            'exchange': self.exchange, 'symbol': self.symbol,
+            'timestamp': self.timestamp, 'funding_rate': self.funding_rate,
+            'premium': self.premium,
+        }
+
+
+class L2Snapshot(db.Model):
+    """盘口失衡派生特征 (HL l2_snapshot) — 止损猎场地图.
+    ⚠️ 只存判断层要的派生失衡特征 (不存重的 40 档原始盘口, 瞬时数据存全档无回测价值).
+    无历史 API → 前向积累, 供 Phase 4 校准 (开仓那刻判断层实时调 fetch_l2_features 取活值)."""
+    __tablename__ = 'l2_snapshots'
+
+    id = db.Column(db.Integer, primary_key=True)
+    exchange = db.Column(db.String(20), nullable=False, default='hyperliquid')
+    symbol = db.Column(db.String(20), nullable=False, index=True)
+    timestamp = db.Column(db.BigInteger, nullable=False)           # 采集时刻 (秒)
+    mid = db.Column(db.Float)                                      # (best_bid + best_ask) / 2
+    best_bid = db.Column(db.Float)
+    best_ask = db.Column(db.Float)
+    spread_bps = db.Column(db.Float)                              # (ask-bid)/mid * 1e4
+    imbalance = db.Column(db.Float)        # 近端 (bid_sz-ask_sz)/(bid_sz+ask_sz): 正=买压/负=卖压
+    bid_depth = db.Column(db.Float)        # top-N bid 累计 size
+    ask_depth = db.Column(db.Float)        # top-N ask 累计 size
+
+    __table_args__ = (
+        db.UniqueConstraint('exchange', 'symbol', 'timestamp', name='uix_l2snap'),
+    )
+
+    def to_dict(self):
+        return {
+            'exchange': self.exchange, 'symbol': self.symbol,
+            'timestamp': self.timestamp, 'mid': self.mid,
+            'best_bid': self.best_bid, 'best_ask': self.best_ask,
+            'spread_bps': self.spread_bps, 'imbalance': self.imbalance,
+            'bid_depth': self.bid_depth, 'ask_depth': self.ask_depth,
+        }

@@ -230,6 +230,86 @@ def fetch_market_data_5m():
     return f'已更新 {ok}/{len(symbols)} 個 symbol 的 5m K線'
 
 
+@celery_app.task
+def fetch_funding_rates():
+    """Phase 15 P0b: 采集 HL 资金费率历史 (拥挤度/挤兑燃料探测).
+    funding 有历史 API → 可回放种子日进 P2 回测. 每 1h 拉最近 6h 补齐 (窗口重叠用 upsert 防重)."""
+    from app.models import FundingRate
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    strategies = Strategy.query.filter_by(status='running').all()
+    symbols = sorted(set(s.symbol for s in strategies))
+    ok = 0
+    for symbol in symbols:
+        try:
+            from app.services.hyperliquid_service import fetch_funding
+            rows = fetch_funding(symbol, lookback_hours=6)
+            if not rows:
+                continue
+            data = [{'exchange': 'hyperliquid', 'symbol': symbol,
+                     'timestamp': r['timestamp'], 'funding_rate': r['funding_rate'],
+                     'premium': r['premium']} for r in rows]
+            stmt = pg_insert(FundingRate.__table__).values(data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['exchange', 'symbol', 'timestamp'],
+                set_={'funding_rate': stmt.excluded.funding_rate,
+                      'premium': stmt.excluded.premium})
+            db.session.execute(stmt)
+            db.session.commit()
+            ok += 1
+        except Exception as e:
+            db.session.rollback()
+            print(f'[fetch_funding] {symbol} 失敗: {e}')
+    # cleanup: 保留最近 90 天 (避免无限增长)
+    try:
+        import time
+        cutoff = int(time.time()) - 90 * 86400
+        FundingRate.query.filter(FundingRate.timestamp < cutoff).delete()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return f'已更新 {ok}/{len(symbols)} 個 symbol 的 funding'
+
+
+@celery_app.task
+def fetch_l2_snapshots():
+    """Phase 15 P0b: 采集 HL 盘口失衡派生特征 (止损猎场地图).
+    ⚠️ l2 无历史 API → 前向积累, 为 Phase 4 校准铺路 (判断层开仓那刻另调 fetch_l2_features 取实时活值).
+    每 5min 一行/symbol, 只存派生失衡特征不存原始 40 档."""
+    from app.models import L2Snapshot
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    import time
+    strategies = Strategy.query.filter_by(status='running').all()
+    symbols = sorted(set(s.symbol for s in strategies))
+    now = int(time.time())
+    ok = 0
+    for symbol in symbols:
+        try:
+            from app.services.hyperliquid_service import fetch_l2_features
+            f = fetch_l2_features(symbol, depth=5)
+            if not f.get('ok'):
+                continue
+            stmt = pg_insert(L2Snapshot.__table__).values([{
+                'exchange': 'hyperliquid', 'symbol': symbol, 'timestamp': now,
+                'mid': f['mid'], 'best_bid': f['best_bid'], 'best_ask': f['best_ask'],
+                'spread_bps': f['spread_bps'], 'imbalance': f['imbalance'],
+                'bid_depth': f['bid_depth'], 'ask_depth': f['ask_depth']}])
+            stmt = stmt.on_conflict_do_nothing(index_elements=['exchange', 'symbol', 'timestamp'])
+            db.session.execute(stmt)
+            db.session.commit()
+            ok += 1
+        except Exception as e:
+            db.session.rollback()
+            print(f'[fetch_l2] {symbol} 失敗: {e}')
+    # cleanup: 保留最近 7 天 (l2 前向积累, 7 天足够 Phase 4 校准用样本)
+    try:
+        cutoff = now - 7 * 86400
+        L2Snapshot.query.filter(L2Snapshot.timestamp < cutoff).delete()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return f'已采集 {ok}/{len(symbols)} 個 symbol 的 l2 失衡特征'
+
+
 # Phase 14k-32: promote 后立刻拉单币 K 线, 避免新策略首小时撞 K线不足(0)
 @celery_app.task(bind=True, name='app.tasks.strategy_tasks.fetch_symbol_ohlcv',
                  max_retries=3, default_retry_delay=180)

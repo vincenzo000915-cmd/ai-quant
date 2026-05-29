@@ -50,6 +50,18 @@ beat_schedule = {
         'options': {'expires': 240},   # 4min 没跑就丢, 下个 5min 周期再拉 (细 TF 时效性强)
     },
 
+    # === Phase 15 P0b: HL 微观数据 (盘感输入层) ===
+    'fetch-funding-rates': {
+        'task': 'app.tasks.strategy_tasks.fetch_funding_rates',
+        'schedule': crontab(minute='2'),   # 每小时:02 (funding 1h 结算后)
+        'options': {'expires': 1800},
+    },
+    'fetch-l2-snapshots': {
+        'task': 'app.tasks.strategy_tasks.fetch_l2_snapshots',
+        'schedule': crontab(minute='*/5'),  # 跟 5m candle 同步, 前向积累盘口失衡
+        'options': {'expires': 240},
+    },
+
     # === 持倉價格更新（每5分鐘）===
     'update-positions': {
         'task': 'app.tasks.strategy_tasks.update_positions',

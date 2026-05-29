@@ -102,6 +102,64 @@ def get_ticker(symbol: str, network: str = 'mainnet') -> dict:
     return {'symbol': symbol, 'price': float(px)}
 
 
+# ============================================================
+# Phase 15 P0b: 微观数据 (盘感输入层) — funding 历史(可回测) + l2 盘口失衡(前向)
+# ============================================================
+
+def fetch_funding(symbol: str, lookback_hours: int = 24,
+                  network: str = 'mainnet') -> list:
+    """HL 资金费率历史. 返回 [{timestamp(秒), funding_rate, premium}, ...] 旧→新.
+    info.funding_history(coin, startTimeMs) — 有历史 API, 可回放种子日 (进 P2 回测)."""
+    import time
+    info = _info_client(network)
+    base = hl_base(symbol)
+    start_ms = int(time.time() * 1000) - lookback_hours * 3600 * 1000
+    raw = info.funding_history(base, start_ms) or []
+    out = []
+    for r in raw:
+        try:
+            out.append({
+                'timestamp': int(r['time']) // 1000,
+                'funding_rate': float(r['fundingRate']),
+                'premium': float(r['premium']) if r.get('premium') is not None else None,
+            })
+        except (KeyError, ValueError, TypeError):
+            continue
+    out.sort(key=lambda x: x['timestamp'])
+    return out
+
+
+def fetch_l2_features(symbol: str, depth: int = 5,
+                      network: str = 'mainnet') -> dict:
+    """HL 盘口快照 → 派生失衡特征 (止损猎场地图). 实时, 无历史.
+    info.l2_snapshot(coin) → levels=[bids, asks], 每档 {px, sz, n}.
+
+    返回 {mid, best_bid, best_ask, spread_bps, imbalance, bid_depth, ask_depth, ok}.
+    imbalance = 近 depth 档 (bid_sz - ask_sz)/(bid_sz + ask_sz): 正=买压堆积/负=卖压.
+    判断层用法 (project-edge-ideas): 失衡极端 + 价逼近显眼位 → 翻转默认假设 (放量插破不跟进)."""
+    info = _info_client(network)
+    base = hl_base(symbol)
+    book = info.l2_snapshot(base)
+    levels = (book or {}).get('levels') or []
+    if len(levels) < 2 or not levels[0] or not levels[1]:
+        return {'ok': False, 'reason': 'l2 盘口为空'}
+    bids, asks = levels[0][:depth], levels[1][:depth]
+    best_bid = float(bids[0]['px'])
+    best_ask = float(asks[0]['px'])
+    mid = (best_bid + best_ask) / 2.0
+    bid_depth = sum(float(b['sz']) for b in bids)
+    ask_depth = sum(float(a['sz']) for a in asks)
+    denom = bid_depth + ask_depth
+    imbalance = ((bid_depth - ask_depth) / denom) if denom > 0 else 0.0
+    spread_bps = ((best_ask - best_bid) / mid * 1e4) if mid > 0 else None
+    return {
+        'ok': True, 'mid': mid, 'best_bid': best_bid, 'best_ask': best_ask,
+        'spread_bps': round(spread_bps, 3) if spread_bps is not None else None,
+        'imbalance': round(imbalance, 4),
+        'bid_depth': round(bid_depth, 4), 'ask_depth': round(ask_depth, 4),
+    }
+
+
 _HL_STABLECOINS = ('USDC', 'USDT0', 'USDH', 'USDE')
 
 
