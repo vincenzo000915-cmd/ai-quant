@@ -354,6 +354,11 @@ def run_backtest(
     atr_period: int = 14,
     trailing_atr_mult: float | None = None,   # None → =atr_sl_mult (移动止盈距离); 0/False=关
     trailing_activate_r: float = 1.0,         # 浮盈达 N×初始风险距离后激活 trailing
+    # Phase 15 P1: MTF feed + 判断闸 hook (默认全 None → 行为字节级不变, 向后兼容)
+    aux_candles: list | None = None,    # 辅助细 TF candle 序列 (如 5m); 判断闸读对齐窗口
+    aux_timeframe: str | None = None,   # aux_candles 的 TF (用于对齐计算)
+    entry_gate=None,    # callable(ctx)->{'ok':bool,'reason':str}; ok=False 否决开仓 (Phase2 入场闸)
+    exit_gate=None,     # callable(ctx)->{'lock':bool,'reason':str}; lock=True 提前锁利出场 (Phase2 出场闸)
 ):
     """跑單一策略的完整回測
 
@@ -431,6 +436,35 @@ def run_backtest(
     # 14k-50: signal_fn 异常计数 — 守门员看到 0 trades 时不该误判, 暴露 code error
     signal_fn_error_count = 0
     signal_fn_first_error = None
+
+    # Phase 15 P1: 预计算每根 base bar 对齐的 aux(细TF) 截止索引 (two-pointer, O(n+m), 无前视).
+    # aux bar 须"完全收盘 <= base bar 收盘时刻"才可见 → 判断闸在 base bar i 收盘做决策时,
+    # 只能读到此刻已收盘的 aux bar, 杜绝前视偏差 (lookahead bias).
+    aux_sorted = sorted(aux_candles, key=lambda c: c['timestamp']) if aux_candles else None
+    aux_cut = None
+    if aux_sorted:
+        _base_sec = int(_tf_minutes_map.get(timeframe, 240) * 60)
+        _aux_sec = int(_tf_minutes_map.get(aux_timeframe or '5m', 5) * 60)
+        aux_cut = [0] * len(candles)
+        _j = 0
+        for _i in range(len(candles)):
+            _close_t = candles[_i]['timestamp'] + _base_sec   # base bar i 收盘时刻
+            while _j < len(aux_sorted) and (aux_sorted[_j]['timestamp'] + _aux_sec) <= _close_t:
+                _j += 1
+            aux_cut[_i] = _j
+    entry_gate_blocks = 0
+    exit_gate_locks = 0
+
+    def _gate_ctx(side, _df, idx):
+        """构造判断闸 ctx — aux 切片为 O(1) 引用 (不复制), 无前视."""
+        return {
+            'side': side, 'price': candles[idx]['close'], 'i': idx,
+            'ts': candles[idx]['timestamp'], 'df': _df,
+            'aux': (aux_sorted[:aux_cut[idx]] if aux_cut is not None else None),
+            'aux_tf': aux_timeframe, 'base_tf': timeframe,
+            'params': params, 'strategy_type': strategy_type, 'symbol': symbol,
+            'position': position,
+        }
 
     for i in range(warmup, len(candles)):
         c = candles[i]
@@ -534,6 +568,17 @@ def run_backtest(
             # 開倉
             if is_buy or is_sell:
                 side_open = 'long' if is_buy else 'short'
+                # Phase 15 P1: 入场闸 — 否决逆势/猎杀开仓 (Phase2 judgment_gate 填逻辑). fail-open.
+                if entry_gate is not None:
+                    try:
+                        _g = entry_gate(_gate_ctx(side_open, df, i))
+                        if not _g.get('ok', True):
+                            entry_gate_blocks += 1
+                            equity_curve.append({'ts': ts, 'equity': round(equity, 4),
+                                                 'realized_equity': round(equity, 4)})
+                            continue   # 否决: 不开仓, 进入下一根
+                    except Exception:
+                        pass   # 闸异常不阻断回测 (fail-open, 同 signal_fn 容错)
                 filled_entry = entry_fill(price, side_open, i)
                 size_btc = round(position_size_usdt / filled_entry, 6)
                 position = {
@@ -566,6 +611,17 @@ def run_backtest(
                 (position['side'] == 'short' and is_buy) or
                 signal == 'close'
             )
+            _exit_reason = 'signal'
+            # Phase 15 P1: 出场闸 — 反向信号未触发时, 真反转确认→锁利出场 (Phase2 judgment_gate)
+            if not should_close and exit_gate is not None:
+                try:
+                    _g = exit_gate(_gate_ctx(position['side'], df, i))
+                    if _g.get('lock'):
+                        should_close = True
+                        _exit_reason = 'judgment_exit'
+                        exit_gate_locks += 1
+                except Exception:
+                    pass
             if should_close:
                 filled_exit = exit_fill(price, position['side'], i)
                 if position['side'] == 'short':
@@ -590,7 +646,7 @@ def run_backtest(
                     'funding_cost': round(funding, 4),
                     'pnl': round(pnl_net, 4),
                     'pnl_pct': round(pnl_pct, 4),
-                    'reason': 'signal',
+                    'reason': _exit_reason,
                     'bars_held': i - position['opened_idx'],
                 })
                 date_key = pd.Timestamp(ts, unit='s').date().isoformat()
@@ -694,6 +750,10 @@ def run_backtest(
         # 14k-50: signal_fn 异常 - 让守门员/调用方能区分"策略真烂" vs "code 错误致 0 trades"
         'signal_fn_error_count': signal_fn_error_count,
         'signal_fn_first_error': signal_fn_first_error,
+        # Phase 15 P1: 判断闸活动统计 (硬门对比 on/off 时看拦了多少坏单/锁了多少利)
+        'entry_gate_blocks': entry_gate_blocks,
+        'exit_gate_locks': exit_gate_locks,
+        'aux_bars': (len(aux_sorted) if aux_sorted else 0),
         # 14k-68: EV (期望收益/trade) — user 哲学 "追盈利率不追胜率"
         # 不该看 win_rate 单维, 而是看 EV (per-trade 净盈亏 %)
         # = avg_pnl / initial_capital × 100, 但更直观: total_pnl / total_trades 给 USD/单
