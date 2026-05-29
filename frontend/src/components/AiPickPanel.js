@@ -149,6 +149,9 @@ export default function AiPickPanel() {
     const isApplying = actioning[it.id] === 'apply';
     const isRejecting = actioning[it.id] === 'reject';
     const isExpanded = !!expandedIds[it.id];
+    // 14k-154: full_auto = 守门员(回测+EV+gate)全权裁判, 用户不该越过守门员手动上架 (后门).
+    // 手动"应用+上架"仅 manual/semi_auto 可用; full_auto 下禁用, 合格策略由 AI 自动上架.
+    const isFullAuto = config?.ai_decision_mode === 'full_auto';
 
     return (
       <Card key={it.id} sx={{
@@ -326,13 +329,18 @@ export default function AiPickPanel() {
           )}
 
           {/* Actions */}
+          {isFullAuto && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'info.main', fontSize: 11 }}>
+              🤖 全自动模式:守门员(回测+EV)自动管理上架,合格策略自动上线 — 手动应用已禁用(避免越过守门员)
+            </Typography>
+          )}
           <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', gap: 1 }}>
             <Button
               variant="contained"
               size="small"
               startIcon={isApplying ? <CircularProgress size={14} /> : <RocketLaunchIcon />}
               onClick={() => handleApply(it.id)}
-              disabled={isApplying || isRejecting}
+              disabled={isApplying || isRejecting || isFullAuto}
               sx={{ bgcolor: PURPLE, '&:hover': { bgcolor: '#9472eb' } }}
             >
               直接应用 + 上架
@@ -342,7 +350,7 @@ export default function AiPickPanel() {
               size="small"
               startIcon={<TuneIcon />}
               onClick={() => setAdjustDialog({ ...it, _customRisk: { ...rp } })}
-              disabled={isApplying || isRejecting}
+              disabled={isApplying || isRejecting || isFullAuto}
               sx={{ borderColor: PURPLE, color: PURPLE }}
             >
               调整后应用

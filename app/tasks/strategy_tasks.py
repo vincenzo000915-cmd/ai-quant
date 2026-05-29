@@ -2022,12 +2022,25 @@ def auto_ai_improve_strategies():
                 event_key='ai_improve_daily',
             )
         elif awaiting:
-            _tg(
-                f'🤖 <b>AI 推荐 {len(awaiting)} 个策略等审核 · {len(awaiting)} Recs Awaiting Review</b>（{mode_zh} / {mode}）\n\n'
-                + '\n'.join(lines)
-                + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键启用 / Apply</a>',
-                event_key='ai_improve_daily',
-            )
+            if mode == 'full_auto':
+                # 14k-154: full_auto = 守门员(回测+EV+gate)全权裁判, user 只知情不决策.
+                # 不给"一键启用"后门 (那让 user 越过守门员手动上架, 违背 backtest_is_truth +
+                # dont_override_ai). 合格但被 gate(容量/资金)挡的会在 slot 释放后自动上线.
+                _tg(
+                    f'🤖 <b>{len(awaiting)} 个合格策略排队中 · Queued</b>（全自动 / full_auto）\n'
+                    f'因容量/资金暂未上架, slot 释放后 AI 自动上线, 无需你操作\n\n'
+                    + '\n'.join(lines)
+                    + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">控制台查看 / Console</a>',
+                    event_key='ai_improve_daily',
+                )
+            else:
+                # manual / semi_auto: user 主动要决策权, 保留审核 + 一键启用
+                _tg(
+                    f'🤖 <b>AI 推荐 {len(awaiting)} 个策略等审核 · {len(awaiting)} Recs Awaiting Review</b>（{mode_zh} / {mode}）\n\n'
+                    + '\n'.join(lines)
+                    + f'\n\n<a href="https://ai-quant.medias-ai.cloud/">一键启用 / Apply</a>',
+                    event_key='ai_improve_daily',
+                )
     except Exception:
         pass
 
