@@ -487,6 +487,45 @@ def check_directional_concentration() -> dict:
     return {'status': OK, 'detail': f'方向均衡: 多 {longs} / 空 {shorts}', 'latency_ms': ms(t)}
 
 
+def check_logic_health_risk_params() -> dict:
+    """14k-155: 逻辑健康 (非 infra) — running 策略风险参数自洽性. 抓 watchdog 此前抓不到的
+    逻辑矛盾: ① 有效价格止损 sl/lev 过紧 (<0.8% → 被噪音扫, SL×杠杆耦合) ② 砖策略
+    (size×lev < HL 最小 $10 → 永远开不了仓). 把人工巡查固化成自动监控."""
+    t = t0()
+    rc, out = psql("""
+        SELECT id,
+          COALESCE((params->'risk_params'->>'leverage'),'3')::float,
+          COALESCE((params->'risk_params'->>'stop_loss_pct'),(params->'risk_params'->>'sl_pct'),'5')::float,
+          COALESCE((params->'risk_params'->>'position_size_usdt'),'5')::float,
+          COALESCE(lower(exchange),'okx')
+        FROM strategies WHERE status='running'
+    """)
+    if rc != 0:
+        return {'status': WARN, 'detail': 'pg query fail', 'latency_ms': ms(t)}
+    tight, brick = [], []
+    for line in out.strip().splitlines():
+        parts = [p.strip() for p in line.split('|')]
+        if len(parts) < 5:
+            continue
+        try:
+            sid, lev, sl, size, ex = parts[0], float(parts[1]), float(parts[2]), float(parts[3]), parts[4]
+        except Exception:
+            continue
+        if lev > 0 and (sl / lev) < 0.8:
+            tight.append(f'#{sid}(有效止损{sl/lev:.2f}%)')
+        if ex == 'hyperliquid' and size * lev < 10:
+            brick.append(f'#{sid}(notional${size*lev:.0f})')
+    if brick:
+        return {'status': FAIL,
+                'detail': f'砖策略(永远开不了仓 size×lev<$10): {", ".join(brick)}; 止损过紧: {", ".join(tight) or "无"}',
+                'latency_ms': ms(t)}
+    if tight:
+        return {'status': WARN,
+                'detail': f'{len(tight)} 个策略有效价格止损<0.8% (高杠杆窄SL易被噪音扫): {", ".join(tight[:5])}',
+                'latency_ms': ms(t)}
+    return {'status': OK, 'detail': '风险参数自洽 (无砖/无过紧止损)', 'latency_ms': ms(t)}
+
+
 CHECKS = [
     ('celery_beat_heartbeat', check_celery_beat_heartbeat),
     ('signal_cycle_health',   check_signal_cycle_15m),
@@ -503,6 +542,7 @@ CHECKS = [
     ('signal_watchers',       check_signal_watchers),
     ('dynamic_synth_recent',  check_dynamic_synth_recent),
     ('directional_concentration', check_directional_concentration),   # 14k-140 (B4)
+    ('logic_health_risk_params', check_logic_health_risk_params),     # 14k-155: 逻辑健康(非infra)
 ]
 
 
