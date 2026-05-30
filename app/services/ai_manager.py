@@ -22,10 +22,56 @@ SYSTEM = """你是量化操盘的 AI 经理. 守门员(机械执行层)检测到
 只输出 JSON, 无 markdown."""
 
 
+# 各交易所 taker 费率% (单边). HL DEX 低, OKX swap 高. EV/TP 判断必须含费率否则贴近TP被吃光.
+EXCHANGE_FEE_PCT = {'hyperliquid': 0.035, 'okx': 0.05}
+
+
+def exchange_fee_pct(exchange: str) -> float:
+    return EXCHANGE_FEE_PCT.get((exchange or '').lower(), 0.05)
+
+
+def instrument_constraints(exchange: str, symbol: str, lev: float) -> dict:
+    """本单路由所的合约规格 + 成本 (喂给 AI 经理). 让经理在 [可行下限, 权益上限] 真实区间挑参数,
+    且知道最小颗数 → 把仓位切得能干净退出 (防灰尘仓: 颗数太粗的币如 DOGE 不能细分).
+    拉取失败 → 保守回退 HL $10 默认. lev 仅用于换算 min_margin。"""
+    ex = (exchange or 'hyperliquid').lower()
+    base_ccy = symbol.split('/')[0]
+    out = {'exchange': ex, 'fee_pct': exchange_fee_pct(ex), 'min_notional': 10.0,
+           'lot_desc': '未知(按保守处理)', 'price': 0.0, 'ok': False}
+    try:
+        from app.services.exchange_service import get_ticker
+        out['price'] = float(get_ticker(symbol)['price'])
+    except Exception:
+        pass
+    try:
+        if ex == 'okx':
+            from app.services.okx_meta import get_okx_instrument
+            inst = get_okx_instrument(symbol)
+            if inst and out['price'] > 0:
+                ctval = float(inst['contract_size']); minsz = float(inst['min_size']); lotsz = float(inst['lot_size'])
+                out.update({'min_notional': round(minsz * ctval * out['price'], 2),
+                            'lot_step_base': lotsz * ctval,
+                            'lot_desc': f'最小{minsz:g}张(每张{ctval:g}{base_ccy})→最小{round(minsz*ctval,6):g}{base_ccy}, 每跳{round(lotsz*ctval,6):g}{base_ccy}',
+                            'ok': True})
+        else:  # hyperliquid: 全币最小 $10 名义; 颗数精度 = szDecimals
+            from app.services.hl_meta import get_hl_entry
+            entry = get_hl_entry(symbol)
+            sz_dec = int(entry.get('szDecimals')) if entry else 6
+            out.update({'min_notional': 10.0, 'lot_step_base': 10 ** (-sz_dec),
+                        'lot_desc': f'最小名义$10, 颗数精度{sz_dec}位(最小增量{10**(-sz_dec):g}{base_ccy})',
+                        'ok': True})
+    except Exception:
+        pass
+    out['min_margin'] = round(out['min_notional'] / lev, 2) if lev else out['min_notional']
+    return out
+
+
 def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile: dict,
-                      target_pct: float, days_remaining: int, user_id: int = 1) -> dict:
+                      target_pct: float, days_remaining: int, user_id: int = 1,
+                      exchange: str = 'hyperliquid') -> dict:
     """守门员问 AI 经理要参数. 返回 {ok, skip, leverage, init_sl_pct, tp1_r, tp2_r, tp3_r,
-    position_size_usdt, reason_zh}. 失败/异常 → ok=False (守门员回退机械参数)。"""
+    position_size_usdt, reason_zh}. 失败/异常 → ok=False (守门员回退机械参数)。
+    exchange: 本单路由的交易所 (规格/费率/最小单都按它喂给经理)。"""
     from app.services.llm_provider import call_llm
     from app.services.profit_difficulty import difficulty_guidance_block, profit_difficulty, monthly_equiv
 
@@ -33,6 +79,10 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
     lev_cap = diff.get('leverage_cap') or 5
     if diff.get('blocked'):
         return {'ok': True, 'skip': True, 'reason_zh': '盈利目标超系统上限, 经理拒绝开仓'}
+
+    # 经理的眼睛之三: 本单交易所的合约规格 + 费率. 没有 → 经理给的保证金可能 <最小名义被静默跳过,
+    # 或切到 <最小颗数留灰尘仓 (user 2026-05-30 指出灰尘仓根因); 没费率 → 贴近TP被手续费吃光算不准EV.
+    con = instrument_constraints(exchange, symbol, lev_cap)
 
     # 经理的眼睛之二: 账户真实可用资金 (统一账户 spot+perp). 没有这个 → 经理凭空挑本金,
     # 会挑出 > 账户净值的保证金一仓吃光账户 (2026-05-30 AVAX $80 砸 $68 账户事故根因).
@@ -56,6 +106,12 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
 - 这是**单仓**保证金, 守门员会同时持多个币的仓 → 单仓别吃光账户, 给别的仓留余地.
 - 铁律: 单仓保证金**绝不超过可用权益**; 难度激进也最多占可用的一部分(如 1/3 ~ 1/2), 保守更小.
   小账户($50~$100)更要克制, 一仓占满=没有容错, 一根反向针就逼近强平.
+
+## 本单交易所规格 + 成本 (硬约束 — 算 EV / 切仓位必看)
+- 路由交易所: {con['exchange']} · taker 手续费 {con['fee_pct']}%/单边 (开+平+每次分批都收, 贴近的TP1会被吃掉一截)
+- 最小名义: ${con['min_notional']} → 你给的 (保证金 × 杠杆) **必须 ≥ 此值**, 否则下不出去被跳过
+- 颗数规格: {con['lot_desc']} — 仓位要能按这精度**干净切成 TP1/2/3 + 末段全平, 别留 <最小单的零头(灰尘仓平不掉)**
+- 据此最小保证金 ≈ ${con['min_margin']}(=最小名义÷你选的杠杆); 在 [${con['min_margin']}, 可用权益] 之间挑
 
 ## 当前市场富感知 (你的眼睛)
 - regime={perception.get('regime')} 方向={perception.get('direction')} 波动={perception.get('volatility')} 量={perception.get('volume')}
@@ -93,10 +149,14 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
         # 验证/夹紧在难度信封内 (经理判断 + 硬约束双保险)
         lev = _clamp(float(p.get('leverage', lev_cap)), 1, lev_cap)
         sl = _clamp(float(p.get('init_sl_pct', 0.8)), 0.3, 5.0)
-        # 保证金硬天花板 = 可用权益 (统一账户总额; 经理判断比例, 这里只挡"超过账户总额"的不可能值,
-        # 与 leverage clamp 到 lev_cap 同性质的双保险). equity 拉取失败 → 保守 $20 上限.
+        # 保证金双边硬约束: 上限=可用权益(别超账户总额); 下限=最小名义÷杠杆(否则<最小单被静默跳过).
+        # equity 拉取失败 → 保守 $20 上限. 与 leverage clamp 到 lev_cap 同性质.
         max_margin = equity if equity > 0 else 20.0
-        default_margin = min(10.0, max_margin)
+        min_margin = round(con['min_notional'] / lev, 2) if lev else con['min_notional']
+        if min_margin > max_margin + 1e-9:   # 资金连此所最小单都开不起 → 不开 (别硬塞超额)
+            return {'ok': True, 'skip': True,
+                    'reason_zh': f'可用资金 ${max_margin:.0f} 不足以开 {con["exchange"]} 最小单(需保证金≥${min_margin:.0f})'}
+        default_margin = _clamp(10.0, min_margin, max_margin)
         out = {
             'ok': True, 'skip': False,
             'leverage': lev,
@@ -104,8 +164,9 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
             'tp1_r': _clamp(float(p.get('tp1_r', 0.5)), 0.2, 3),
             'tp2_r': _clamp(float(p.get('tp2_r', 1.2)), 0.4, 5),
             'tp3_r': _clamp(float(p.get('tp3_r', 2.0)), 0.6, 8),
-            'position_size_usdt': _clamp(float(p.get('position_size_usdt', default_margin)), 1, max_margin),
+            'position_size_usdt': _clamp(float(p.get('position_size_usdt', default_margin)), min_margin, max_margin),
             'reason_zh': p.get('reason_zh', ''),
+            'fee_pct': con['fee_pct'],   # 本单路由所费率 → 守门员 EV 回测 + 出场用对
         }
         return out
     except Exception as e:

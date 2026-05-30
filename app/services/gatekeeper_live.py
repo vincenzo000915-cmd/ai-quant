@@ -73,6 +73,7 @@ def gatekeeper_live_cycle() -> dict:
 
     target_pct, days_remaining = _target_and_days()
     lev_cap = profit_difficulty(monthly_equiv(target_pct, days_remaining)).get('leverage_cap') or 5
+    route_ex = _primary_exchange(1)   # 本轮路由所 → 规格/费率/最小单按它喂给 AI 经理
     decisions = []
     for sym in WATCHED_SYMBOLS:
         try:
@@ -85,7 +86,8 @@ def gatekeeper_live_cycle() -> dict:
             base = [c for c in base if c['timestamp'] >= aux[0]['timestamp']]
             d = gatekeeper_decide(sym, base, aux, BASE_TF,
                                   target_pct=target_pct, days_remaining=days_remaining,
-                                  lev=float(lev_cap), record=True, record_source='live')
+                                  lev=float(lev_cap), record=True, record_source='live',
+                                  exchange=route_ex)
             d['symbol'] = sym
             decisions.append({k: d.get(k) for k in
                               ('symbol', 'action', 'regime', 'direction', 'strategy',
@@ -217,6 +219,8 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
         # 用请求量会让 orig_size 虚高 → 出场对账全错(误判已平14%/全平判定/真盈亏). 真钱铁律.
         base_size = float(order.get('amount') or 0) or (size_usdt * lev / fill)
     exit_params = dict(ENGINE_EXIT_PARAMS); exit_params['init_sl_pct'] = init_sl
+    from app.services.ai_manager import exchange_fee_pct
+    exit_params['fee_pct'] = exchange_fee_pct(exchange)   # 出场/估算用路由所真实费率 (HL 0.035 / OKX 0.05)
     for _k in ('tp1_r', 'tp2_r', 'tp3_r'):   # AI 经理给的盈亏比 R 也用上 (出场台阶随经理判断)
         if mparams.get(_k):
             exit_params[_k] = float(mparams[_k])
