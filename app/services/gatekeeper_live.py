@@ -77,6 +77,29 @@ def _target_and_days(user_id: int = 1) -> tuple[float, int]:
     return 5.0, 30
 
 
+def gatekeeper_enrolled_users() -> list[int]:
+    """③ Stage 3 (2026-05-30): 枚举要跑守门员的用户 — admin-safe 构造。
+      · admin/全局: 全局 system row gatekeeper_live_mode != off → user 1 (admin 永远走全局行, 行为完全不变)。
+      · 非 admin: UserConfig.overrides **显式** gatekeeper_live_mode != off (per-user opt-in, 不继承全局 →
+        全局的 live 不会泄漏成所有人的默认)。
+    只有 admin 开着时 → 返回 [1] → 与改动前 gatekeeper_live_cycle() 完全等价。"""
+    from app.services.config_service import get_config
+    uids = []
+    if (get_config().get('gatekeeper_live_mode') or 'off') != 'off':
+        uids.append(1)
+    try:
+        from app.models import UserConfig
+        for uc in UserConfig.query.all():
+            if uc.user_id == 1:
+                continue   # admin 走全局行, 不重复
+            m = (uc.overrides or {}).get('gatekeeper_live_mode')
+            if m and m != 'off':
+                uids.append(uc.user_id)
+    except Exception:
+        pass
+    return uids
+
+
 def gatekeeper_live_cycle(user_id: int = 1) -> dict:
     """守门员一轮 live 扫描 (beat */15 调). 返回 {mode, scanned, decisions:[...]}。
     ③ (2026-05-30): user_id 参数化 — 默认 1=admin 行为完全不变; per-user 枚举调用方逐人传 (Stage 3)。

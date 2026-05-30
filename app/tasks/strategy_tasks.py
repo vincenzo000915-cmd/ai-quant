@@ -354,10 +354,19 @@ def gatekeeper_live_scan():
     """Phase 15 学习飞轮②: 守门员 live 扫描 (beat */15).
     灰度 off/shadow/live (config gatekeeper_live_mode); 受 halted(kill switch) 管.
     shadow=记录实时决策+TG通知不下单; live=真下单(第二段). 见 gatekeeper_live.py。"""
-    from app.services.gatekeeper_live import gatekeeper_live_cycle
-    r = gatekeeper_live_cycle()
-    enters = [d for d in r.get('decisions', []) if d.get('action') == 'enter']
-    return f"gatekeeper_live[{r.get('mode')}] scanned={r.get('scanned')} enter={len(enters)}"
+    # ③ Stage 3 (2026-05-30): per-user 枚举 — 每个开了守门员的用户各跑各的 (admin 走全局行行为不变).
+    from app.services.gatekeeper_live import gatekeeper_live_cycle, gatekeeper_enrolled_users
+    uids = gatekeeper_enrolled_users()
+    parts = []; total_enter = 0
+    for uid in uids:
+        try:
+            r = gatekeeper_live_cycle(uid)
+            enters = [d for d in r.get('decisions', []) if d.get('action') == 'enter']
+            total_enter += len(enters)
+            parts.append(f"u{uid}[{r.get('mode')}]e{len(enters)}")
+        except Exception as e:
+            parts.append(f"u{uid}ERR:{type(e).__name__}")
+    return f"gatekeeper_live users={len(uids)} enter={total_enter} | " + ' '.join(parts)
 
 
 @celery_app.task

@@ -113,6 +113,10 @@ USER_SCOPED_KEYS = {
     'auto_apply_max_per_day', 'ai_decision_mode', 'auto_promote_max_per_day',
     'auto_promote_min_oos_sharpe', 'fan_out_auto_start', 'fan_out_min_oos_sharpe',
     'auto_apply_max_running',
+    # ③ Stage 3 (2026-05-30): 守门员开关 per-user — 非 admin 写自己 UserConfig.overrides;
+    # admin 仍走全局行 (PUT 对 admin user_id=None). 也含对齐参数 (Pro 守门员/手动单各自的参数源).
+    'gatekeeper_live_mode',
+    'sl_price_pct', 'tp1_r', 'tp2_r', 'tp3_r', 'tp1_frac', 'tp2_frac',
 }
 
 

@@ -1901,7 +1901,11 @@ def update_system_config():
         patch['take_profit_pct'] = round(min(200.0, max(0.1, _tp1 * _slp * _lev)), 4)
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
-    new_cfg = update(patch)
+    # ③ Stage 3 (2026-05-30): 多租户 config 写入 — admin 写全局行 (行为不变, 纸面策略/check_stop_loss 读全局);
+    # 非 admin 写自己 UserConfig.overrides (user-scoped 键), 不再污染全局。system 键(trading_mode/halted)仍全局。
+    from app.services.user_scope import is_admin_actor
+    _scope_uid = None if is_admin_actor() else (current_user_id() or None)
+    new_cfg = update(patch, user_id=_scope_uid)
     audit(
         'live_mode_flip' if is_live_flip else 'config_change',
         actor='user',
