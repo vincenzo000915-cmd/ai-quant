@@ -96,7 +96,8 @@ def _manager_params_and_ev(symbol, stype, perception, base_is, aux, base_tf,
     fee = exchange_fee_pct(exchange)
     prof_row = StrategyProfile.query.filter_by(strategy_type=stype).first()
     prof = prof_row.profile if prof_row else {}
-    mp = ai_manager_params(symbol, stype, perception, prof, target_pct, days_remaining, exchange=exchange)
+    mp = ai_manager_params(symbol, stype, perception, prof, target_pct, days_remaining,
+                           exchange=exchange, base_tf=base_tf)
     if mp.get('ok') and mp.get('skip'):
         return {'skip': True, 'manager': {'used': True, 'reason': mp.get('reason_zh')}}
     if mp.get('ok'):

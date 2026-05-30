@@ -68,7 +68,7 @@ def instrument_constraints(exchange: str, symbol: str, lev: float) -> dict:
 
 def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile: dict,
                       target_pct: float, days_remaining: int, user_id: int = 1,
-                      exchange: str = 'hyperliquid') -> dict:
+                      exchange: str = 'hyperliquid', base_tf: str = '15m') -> dict:
     """守门员问 AI 经理要参数. 返回 {ok, skip, leverage, init_sl_pct, tp1_r, tp2_r, tp3_r,
     position_size_usdt, reason_zh}. 失败/异常 → ok=False (守门员回退机械参数)。
     exchange: 本单路由的交易所 (规格/费率/最小单都按它喂给经理)。"""
@@ -97,6 +97,8 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
     pa = perception.get('price_action') or {}
     prof = profile or {}
     equity_txt = (f"约 ${equity:.2f}" if equity > 0 else "暂时拉取失败(按保守小仓处理)")
+    track_record = _manager_track_record(strategy_type, perception.get('regime'),
+                                         perception.get('direction'), base_tf)
     prompt = f"""## 盈利目标难度 (你的约束信封)
 {difficulty_guidance_block(target_pct, days_remaining)}
 
@@ -125,6 +127,8 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
 - edge来源: {prof.get('edge_source')}
 - 弱点(什么环境失效): {prof.get('weakness')}
 - 适配: regime_fit={prof.get('regime_fit')} · timeframe_fit={prof.get('timeframe_fit')} · 方向={prof.get('direction')}
+
+{track_record}
 
 ## 任务: 给这一单的参数 (JSON)
 {{
@@ -171,6 +175,39 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
         return out
     except Exception as e:
         return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+
+
+def _manager_track_record(strategy_type: str, regime: str, direction: str, base_tf: str) -> str:
+    """缺口①修 (user 2026-05-30): 从学习飞轮取'本策略×当前市场格子'的历史实测 → 喂给经理自我校准,
+    闭合飞轮 (此前 experience_block 只喂给合成AI, 没喂给控制EV的经理 = 经理对战绩失忆).
+    含 ev_bias = 实测−预期 (负=经理/守门员以往高估了EV → 这次该收敛). 无样本→空串(诚实)。"""
+    try:
+        from app.services.gatekeeper_learning import summarize_experience
+        exp = summarize_experience(timeframe=base_tf, min_samples=2)
+    except Exception:
+        return ''
+    if not exp:
+        return ''
+    exact = [e for e in exp if e['strategy'] == strategy_type
+             and e['regime'] == regime and e['direction'] == direction]
+    same_strat = [e for e in exp if e['strategy'] == strategy_type
+                  and (e['regime'], e['direction']) != (regime, direction)]
+    lines = []
+    if exact:
+        e = exact[0]; bias = e.get('ev_bias')
+        bias_txt = ''
+        if bias is not None and e.get('avg_expected_ev') is not None:
+            bias_txt = (f", 你以往预期EV均{e['avg_expected_ev']:+.3f}→实测偏差{bias:+.3f}"
+                        f"({'⚠️你高估了EV' if bias < 0 else '实测好于预期'})")
+        lines.append(f"- **当前格子 {strategy_type}@{regime}/{direction}/{base_tf}**: "
+                     f"历史{e['samples']}笔, 实测均pnl {e['avg_realized_pnl']:+.3f}, 胜率{e['win_rate']*100:.0f}%{bias_txt}")
+    for e in same_strat[:2]:
+        lines.append(f"- 同策略其它格子 @{e['regime']}/{e['direction']}: "
+                     f"实测均pnl {e['avg_realized_pnl']:+.3f}, 胜率{e['win_rate']*100:.0f}% (n={e['samples']})")
+    if not lines:
+        return ''
+    return ("## 你的历史战绩 (学习飞轮回填 — 校准这次判断, 不是稳赚保证)\n" + '\n'.join(lines)
+            + "\n→ 当前格子历史亏 / 你以往高估EV → 这次更保守(缩R/缩仓)甚至skip; 历史稳赚可适度自信.")
 
 
 def _clamp(v, lo, hi):
