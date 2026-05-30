@@ -25,8 +25,12 @@ user 定 (2026-05-30): 先只 ETH+AVAX (已 offline 验证), 15m base + 5m aux (
 """
 from __future__ import annotations
 
-# user 2026-05-30: 先只 ETH+AVAX (offline 滚动验证过), 坐实后扩
-WATCHED_SYMBOLS = ['ETH/USDT', 'AVAX/USDT']
+# user 2026-05-30: 先只 ETH+AVAX offline 验证, 坐实后扩 → 现扩到系统推荐种子全集 (user 要求打开).
+# = RECOMMENDED_SYMBOLS (BTC/ETH/SOL/AVAX/DOGE/XRP/LINK/SUI, 主流+catalog覆盖全, 均 HL 可交易).
+# 安全: cycle 自带「数据不足/不支持自动 skip」护栏 + 组合层预算闸限实际开仓数 + EV回测闸把关 →
+# 多扫=多机会不是多风险 (账户钱就那么多, 预算闸决定真开几个). 数据走 OKX REST 实时, 全主流币都有.
+from app.services.symbols import RECOMMENDED_SYMBOLS
+WATCHED_SYMBOLS = list(RECOMMENDED_SYMBOLS.keys())
 BASE_TF = '15m'   # 策略决策维度 (画像配 15m)
 AUX_TF = '5m'     # 更细市场维度 (富感知读 5m 算微观/猎杀/动能/MTF)
 RESERVE_PCT = 0.2  # 资金安全垫 (user 2026-05-30): 永远留 20% 不动, 防强平/留手; 与常规策略 _venue_open_slots 一致
