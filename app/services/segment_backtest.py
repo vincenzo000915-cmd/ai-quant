@@ -81,45 +81,25 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         return True, 'ok'
 
     # ③ 出场层: 在一根 aux(5m) bar 上跑保本/分批/尾部走/SL. 返回是否全平.
-    def manage_exit(pos, ac, bwin):
-        side = pos['side']; E = pos['entry']
-        adverse = ac['high'] if side == 'short' else ac['low']
-        fav_ext = _favorable(side, ac['low'] if side == 'short' else ac['high'], E) / E * 100
-        # R = 初始风险 = entry→init_sl 的价格距离% (TP/保本都按 R 倍数, 自动随止损/波动缩放)
-        R = init_sl_pct
+    # Phase 15: 决策逻辑外移到 segment_exit.exit_step (回测↔live 单一真相源, 防漂移);
+    # 这里只保留 close_part 的滑点/pnl 计算 + 喂 tail 动能 (回测特有的 bwin 窗口).
+    _exit_params = {
+        'init_sl_pct': init_sl_pct, 'fee_pct': fee_pct,
+        'use_breakeven': use_breakeven, 'be_activate_r': be_activate_r, 'be_lock_pct': be_lock_pct,
+        'use_partial_tp': use_partial_tp, 'tp1_r': tp1_r, 'tp1_frac': tp1_frac,
+        'tp2_r': tp2_r, 'tp2_frac': tp2_frac, 'tp3_r': tp3_r, 'tp1_lock_r': tp1_lock_r,
+        'use_tail_exit': use_tail_exit,
+    }
 
-        # 第一次移动止损=保本: 方向对了(浮盈达 be_activate_r 倍R=走出确认段) → SL移保本位(entry+手续费, 不亏)
-        # 触发阈值(be_activate_r) ≠ 保本位(entry+fee): 阈值要够大避免刚动就被回调扫, 保本位贴entry保不亏
-        if use_breakeven and not pos['be'] and fav_ext >= be_activate_r * R:
-            lk = FEE_RT * 100 + be_lock_pct
-            pos['sl'] = E * (1 + lk / 100) if side == 'long' else E * (1 - lk / 100)
-            pos['be'] = True
-        # SL (保守先判) — 平剩余 (be 后 pos['sl'] 是保本位; tp1 后是锁利位)
-        hit = (adverse <= pos['sl']) if side == 'long' else (adverse >= pos['sl'])
-        if hit:
-            close_part(pos, pos['rem'], pos['sl'], 'breakeven' if pos['be'] else 'stop_loss', ac['timestamp'])
-            pos['rem'] = 0.0; return True
-        # 分批 TP1/TP2 (盈亏比: TP_n 距离 = tp_n_r × R, 硬性设定不看动能)
-        if use_partial_tp:
-            if not pos['tp1'] and fav_ext >= tp1_r * R:
-                d = tp1_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
-                close_part(pos, tp1_frac, px, 'tp1', ac['timestamp']); pos['rem'] -= tp1_frac; pos['tp1'] = True
-                # 第二次移动止损: TP1触发 → SL再上移到 TP1利润之上(锁 tp1_lock_r 倍R), 剩余仓在锁利位之上跑
-                lr = tp1_lock_r * R
-                pos['sl'] = E * (1 + lr / 100) if side == 'long' else E * (1 - lr / 100)
-            if not pos['tp2'] and fav_ext >= tp2_r * R:
-                d = tp2_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
-                close_part(pos, tp2_frac, px, 'tp2', ac['timestamp']); pos['rem'] -= tp2_frac; pos['tp2'] = True
-        # 尾部走: 已过保本(浮盈)且**动能衰竭**(MACD柱崩塌) → 不贪尾, 平剩余
-        # (user 2026-05-29 定: 尾部走只用动能衰竭, 不用乖离 — 动能衰竭是更直接的"段结束"信号)
-        if use_tail_exit and pos['be'] and pos['rem'] > 1e-9:
-            if cp.momentum_state(bwin).get('state') == 'collapsing':
-                close_part(pos, pos['rem'], ac['close'], 'tail_exit', ac['timestamp']); pos['rem'] = 0.0; return True
-        # TP3 (吃到 tp3_r 倍 R, 剩余全平; "让它跑"=tp3_r 给较远, 中途动能衰竭则尾部走先出)
-        if use_partial_tp and pos['rem'] > 1e-9 and fav_ext >= tp3_r * R:
-            d = tp3_r * R; px = E * (1 + d / 100) if side == 'long' else E * (1 - d / 100)
-            close_part(pos, pos['rem'], px, 'tp3', ac['timestamp']); pos['rem'] = 0.0; return True
-        return False
+    def manage_exit(pos, ac, bwin):
+        from app.services.segment_exit import exit_step
+        # 只在尾部走开启时算动能 (省成本); be/rem 门控交给 exit_step 内部 (与原 manage_exit 同序)
+        tail_collapsing = (use_tail_exit
+                           and cp.momentum_state(bwin).get('state') == 'collapsing')
+        r = exit_step(pos, ac, _exit_params, tail_collapsing=tail_collapsing)
+        for c in r['closes']:
+            close_part(pos, c['frac'], c['price'], c['reason'], ac['timestamp'])
+        return r['fully_closed']
 
     for i in range(warmup, len(base)):
         bar = base[i]; bclose_t = bar['timestamp'] + base_sec
