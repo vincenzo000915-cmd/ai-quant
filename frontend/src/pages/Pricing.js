@@ -45,7 +45,7 @@ const PLANS = [
       '✓ 策略库浏览 + 一键上架 + 自动回测筛选',
       '✓ 自动策略池维护（表现差自动退役 / 回暖自动复用）',
       '✓ Telegram 通知（开平仓 + 风控 / kill switch）',
-      '✓ 每日 08:00 UTC PnL 早报',
+      '✓ 每日 PnL 早报（Telegram 推送）',
     ],
     cta: '选择 Basic',
     accent: false,

@@ -814,6 +814,12 @@ export default function Dashboard() {
           </Typography>
         </Box>
 
+        {positions.length === 0 ? (
+          /* 空仓收起 2026-05-30 (user): 不再撑满 8 列表格 + py5 空块, 只留一行 */
+          <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontFamily: 'JetBrains Mono', fontSize: '0.72rem', py: 0.5 }}>
+            無持倉 · AWAITING SIGNAL<Box component="span" className="caret" sx={{ height: '0.8em', display: 'inline-block', width: 6, ml: 0.5 }} />
+          </Typography>
+        ) : (
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -889,6 +895,7 @@ export default function Dashboard() {
             </TableBody>
           </Table>
         </TableContainer>
+        )}
       </Box>
     </Box>
   );
