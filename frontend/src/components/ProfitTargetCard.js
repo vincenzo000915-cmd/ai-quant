@@ -14,8 +14,16 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { useNavigate } from 'react-router-dom';
+import { getUser } from '../auth';
 
 const PURPLE = '#a78bfa';
+const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
+// HERO 卖点: 谁在替你驱动向目标 (tier 自适应)
+function driverMeta(tier) {
+  if (tier >= TIER_RANK.team) return { icon: '🧠', who: 'AI 经理', desc: 'AI 看行情+懂策略临场给参,守门员执行 · 实时判断见下方「AI 经理」台' };
+  if (tier >= TIER_RANK.pro) return { icon: '🛡️', who: '守门员', desc: '按你在「系统设定」的参数自动扫描→回测→下单 · 控制见下方「守门员台」' };
+  return { icon: '📡', who: '你自己', desc: '看下方「信号预告」手动跟单 (升级 Pro 解锁守门员自动)' };
+}
 
 export default function ProfitTargetCard() {
   const navigate = useNavigate();
@@ -190,10 +198,10 @@ export default function ProfitTargetCard() {
     <>
       <Card sx={{ mb: 2, border: `1px solid ${PURPLE}33`, bgcolor: 'rgba(167,139,250,0.04)' }}>
         <CardContent sx={{ py: 1.5 }}>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
             <TrackChangesIcon sx={{ color: PURPLE, fontSize: 20 }} />
             <Typography variant="subtitle1" fontWeight={700}>
-              AI 自动托管中
+              🎯 目标驱动
             </Typography>
             <Chip
               label={`+${target.target_pct}% / ${target.days_elapsed + target.days_remaining}天`}
@@ -206,13 +214,25 @@ export default function ProfitTargetCard() {
                 <EditIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            <Tooltip title="暂停 AI 托管 (停止监控 / DD / 周轮换, 现有 running 策略不受影响)">
+            <Tooltip title="暂停目标托管 (停止监控 / DD 保护 / 周轮换; 守门员/AI经理的实时交易在下方台单独控制)">
               <IconButton size="small" color="warning" onClick={handlePause} disabled={busy}>
                 <PauseCircleIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           </Stack>
 
+          {/* HERO 卖点: 谁在替你驱动向目标 (tier 自适应) */}
+          {(() => {
+            const drv = driverMeta(TIER_RANK[(getUser() || {}).subscription_tier] ?? 0);
+            return (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1.25, p: 0.75, borderRadius: 1, bgcolor: `${PURPLE}10` }}>
+                <Typography sx={{ fontSize: 18 }}>{drv.icon}</Typography>
+                <Typography variant="caption" sx={{ flex: 1 }}>
+                  <b style={{ color: PURPLE }}>{drv.who}</b> 在替你开向目标 · <span style={{ color: 'text.secondary' }}>{drv.desc}</span>
+                </Typography>
+              </Box>
+            );
+          })()}
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1.5, alignItems: { sm: 'baseline' } }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
