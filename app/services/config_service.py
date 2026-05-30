@@ -38,7 +38,7 @@ DEFAULTS = {
     # Phase 10.8: 智能托管（自動套用 advisor 建議）
     'auto_apply_enabled': False,
     'auto_apply_actions': [],
-    'auto_apply_max_per_day': 5,
+    'auto_apply_max_per_day': 0,
     'fan_out_auto_start': False,
     'fan_out_min_oos_sharpe': 1.0,
     'auto_promote_max_per_day': 2,

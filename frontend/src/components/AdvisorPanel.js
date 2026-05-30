@@ -117,7 +117,7 @@ function AdvisorPanelInner() {
         setSnackbar({
           open: true,
           severity: body.applied_count > 0 ? 'success' : 'info',
-          message: `掃描完成：套用 ${body.applied_count} 項，今日 ${body.today_count_after}/${body.daily_cap}`,
+          message: `掃描完成：套用 ${body.applied_count} 項${body.daily_cap > 0 ? `，今日 ${body.today_count_after}/${body.daily_cap}` : '（每日次数不限）'}`,
         });
         await fetchAll();
       }

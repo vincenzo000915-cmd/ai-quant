@@ -483,7 +483,7 @@ def run_auto_apply() -> dict:
     if not allowed:
         return {'skipped': True, 'reason': 'auto_apply_actions 為空'}
 
-    daily_cap = int(cfg.get('auto_apply_max_per_day') or 5)
+    daily_cap = int(cfg.get('auto_apply_max_per_day') or 0)   # 0=不限 (user 2026-05-30 拿掉过时的每日次数限制)
     promote_cap = int(cfg.get('auto_promote_max_per_day') or 2)
     already_today = _today_count()
     promote_today = _today_count_action('promote_candidate')
@@ -491,7 +491,7 @@ def run_auto_apply() -> dict:
     # 14k-71: cap 满时不再早 return — 让 invent / propose_grid 等 async dispatch 仍可跑
     # daily cap 只限 mutating actions (改 strategy 本身), invent 是创新策略不该被卡
     # 14k-43 _today_count 已只算 mutating, 但 run_auto_apply 顶层 cap 检查太粗暴
-    cap_full = (remaining == 0)
+    cap_full = (daily_cap > 0 and remaining == 0)
 
     recs = build_recommendations()
     items = recs.get('items', [])
@@ -518,7 +518,7 @@ def run_auto_apply() -> dict:
             skipped.append({'item': item, 'why': f'{action} not in allowed actions'})
             continue
         # 14k-71: 只对 mutating actions 检 cap, 非 mutating (invent 等) 跳过此 check
-        if action in MUTATING_ACTIONS and (mutating_applied >= remaining):
+        if daily_cap > 0 and action in MUTATING_ACTIONS and (mutating_applied >= remaining):
             skipped.append({'item': item, 'why': f'mutating cap {daily_cap}/day 已達 (invent 等不受限)'})
             continue
         # 14k-72: heavy async task 一轮限 3 个 (防 worker backlog)
@@ -586,7 +586,7 @@ def run_auto_apply() -> dict:
                 lines.append(f"• {label}: #{r['strategy_id']} {r['strategy_name'][:30]} — {r['message']}")
             if async_dispatched:
                 lines.append(f'\n另派 {len(async_dispatched)} 项重测任务, 跑完通过门槛才会上线 (no_lift 时静默不打扰)')
-            if already_today + mutating_applied >= daily_cap:
+            if daily_cap > 0 and already_today + mutating_applied >= daily_cap:
                 lines.append(f'今日已达上限 {daily_cap} 项, 剩下时间不会再自动操作.')
             _telegram_safe('\n'.join(lines))
         # else: 全是 async dispatch, 不发 TG (等任务跑完独立通知)

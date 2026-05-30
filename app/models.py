@@ -648,7 +648,7 @@ class SystemConfig(db.Model):
     auto_apply_enabled = db.Column(db.Boolean, default=False)
     # 允許自動套用的 action 類型清單（subset of: apply_params / pause / retire / fan_out）
     auto_apply_actions = db.Column(db.JSON, default=list)
-    auto_apply_max_per_day = db.Column(db.Integer, default=5)
+    auto_apply_max_per_day = db.Column(db.Integer, default=0)
     # Phase 10.9: fan_out 兄弟跑完回測且 OOS Sharpe >= 阈值才自動 start
     fan_out_auto_start = db.Column(db.Boolean, default=False)
     fan_out_min_oos_sharpe = db.Column(db.Float, default=1.0)
@@ -691,7 +691,7 @@ class SystemConfig(db.Model):
             'disable_okx_for_admin': bool(self.disable_okx_for_admin),
             'auto_apply_enabled': bool(self.auto_apply_enabled),
             'auto_apply_actions': list(self.auto_apply_actions or []),
-            'auto_apply_max_per_day': self.auto_apply_max_per_day or 5,
+            'auto_apply_max_per_day': self.auto_apply_max_per_day if self.auto_apply_max_per_day is not None else 0,
             'fan_out_auto_start': bool(self.fan_out_auto_start),
             'fan_out_min_oos_sharpe': self.fan_out_min_oos_sharpe or 1.0,
             'auto_promote_max_per_day': self.auto_promote_max_per_day or 2,
