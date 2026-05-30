@@ -33,7 +33,7 @@ const DRAWER_COLLAPSED = 64;
 // 主导航 (所有 user 可见)
 const NAV_MAIN = [
   { label: '儀表板', icon: <DashboardIcon />, path: '/dashboard' },
-  { label: '策略管理', icon: <AutoGraphIcon />, path: '/strategies' },
+  { label: '策略库', icon: <AutoGraphIcon />, path: '/strategies' },
   { label: '候選池', icon: <HubIcon />, path: '/candidates' },
   { label: '交易紀錄', icon: <ReceiptLongIcon />, path: '/trades' },
   { label: '系統設定', icon: <SettingsIcon />, path: '/settings' },

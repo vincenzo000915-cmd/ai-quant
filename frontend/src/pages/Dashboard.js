@@ -431,7 +431,8 @@ export default function Dashboard() {
   const todayPnl = pnlSummary?.today_pnl ?? 0;
   const todayTrades = pnlSummary?.today_trades ?? 0;
   const openPositions = pnlSummary?.open_positions ?? 0;
-  const runningStrats = pnlSummary?.running_strategies ?? 0;
+  // Phase 15: 守门员唯一范式 — 老"运行策略数"无意义(守门员从库动态选), 改显策略库大小
+  const librarySize = pnlSummary?.library_size ?? 0;
 
   return (
     <Box sx={{ position: 'relative', zIndex: 1 }}>
@@ -541,9 +542,9 @@ export default function Dashboard() {
             badge={pnlSummary ? { text: `${pnlSummary.total_trades}笔`, color: '#94a3b8' } : null} />
         </Grid>
         <Grid item xs={6} sm={4} md={2}>
-          <KpiCell size="compact" label="持仓 / 运行"
-            value={`${openPositions} / ${runningStrats}`}
-            sub={openPositions > 0 ? `${openPositions} 开仓中` : '无开仓'}
+          <KpiCell size="compact" label="持仓 / 策略库"
+            value={`${openPositions} / ${librarySize}`}
+            sub={openPositions > 0 ? `${openPositions} 开仓中` : `守门员选用库`}
             accent={openPositions > 0 ? 'accent' : null} loading={!pnlSummary}
             badge={openPositions > 0 ? { text: 'LIVE', color: '#00d4aa', bg: 'rgba(0,212,170,0.15)' } : null} />
         </Grid>

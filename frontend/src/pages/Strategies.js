@@ -13,8 +13,6 @@ import ParamOptimizeDialog from '../components/ParamOptimizeDialog';
 import ExplainStrategyDialog from '../components/ExplainStrategyDialog';
 import GenerateStrategyDialog from '../components/GenerateStrategyDialog';
 import ImproveStrategiesDialog from '../components/ImproveStrategiesDialog';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import StopIcon from '@mui/icons-material/Stop';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
@@ -307,16 +305,6 @@ export default function Strategies() {
     }
   };
 
-  const handleToggleActive = async (strategy) => {
-    try {
-      const res = await fetch(`${API}/api/strategies/${strategy.id}/${strategy.active ? 'stop' : 'start'}`, { method: 'POST' });
-      if (res.ok) {
-        setSnackbar({ open: true, message: strategy.active ? '策略已停止' : '策略已啟動', severity: 'success' });
-        fetchStrategies();
-      }
-    } catch {}
-  };
-
   const handleDelete = async (strategy) => {
     try {
       await fetch(`${API}/api/strategies/${strategy.id}`, { method: 'DELETE' });
@@ -401,7 +389,7 @@ export default function Strategies() {
                     </TableCell>
                     <TableCell>
                       {strategy.status === 'retired' ? (
-                        <Tooltip title={strategy.retire_reason || '已自動退役'}>
+                        <Tooltip title={`已退役 (守门员不再选用): ${strategy.retire_reason || '自動退役'}`}>
                           <Chip
                             label="🪦 已退役"
                             size="small"
@@ -410,12 +398,13 @@ export default function Strategies() {
                           />
                         </Tooltip>
                       ) : (
-                        <Chip
-                          label={strategy.active ? '運行中' : '已停止'}
-                          size="small"
-                          color={strategy.active ? 'success' : 'default'}
-                          sx={{ fontWeight: 600, fontSize: 10 }}
-                        />
+                        <Tooltip title="在库待命 — 守门员按行情即时选用 (无需手动启停)">
+                          <Chip
+                            label="📚 在库"
+                            size="small"
+                            sx={{ fontWeight: 600, fontSize: 10, bgcolor: 'rgba(0,212,170,0.15)', color: '#00d4aa' }}
+                          />
+                        </Tooltip>
                       )}
                     </TableCell>
                     <TableCell align="right">
@@ -439,13 +428,7 @@ export default function Strategies() {
                               <RefreshIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                        ) : (
-                          <Tooltip title={strategy.active ? '停止' : '啟動'}>
-                            <IconButton size="small" color={strategy.active ? 'error' : 'success'} onClick={() => handleToggleActive(strategy)}>
-                              {strategy.active ? <StopIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
-                            </IconButton>
-                          </Tooltip>
-                        )}
+                        ) : null}
                         <Tooltip title="查看 / 跑回測">
                           <span>
                             <IconButton
@@ -512,8 +495,8 @@ export default function Strategies() {
     <Box>
       {/* === Phase 12.15.5: 統一 PageHeader === */}
       <PageHeader
-        title="策略管理"
-        subtitle={`${strategies.filter(s => s.status === 'running').length} 运行中 · ${strategies.length} 总策略 · OOS 门槛 1.5`}
+        title="策略库"
+        subtitle={`${strategies.filter(s => s.status !== 'retired').length} 个模版在库 · 守门员按行情动态选用 · OOS 门槛 1.5`}
         actions={[
           <Button key="ai-improve" variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setImproveOpen(true)} size="small"
             sx={{ color: palette.warmAccent, borderColor: `${palette.warmAccent}55`, textTransform: 'none', '&:hover': { borderColor: palette.warmAccent, bgcolor: `${palette.warmAccent}11` } }}>
@@ -533,7 +516,7 @@ export default function Strategies() {
             size="small"
             sx={{ color: palette.textMuted, borderColor: palette.border, textTransform: 'none', '&:hover': { borderColor: palette.borderHot } }}
             onClick={async () => {
-              if (!window.confirm('立即跑健康檢查？對每個運行中的策略做新 walk-forward 回測（~5s/策略，可能 30-60s）。')) return;
+              if (!window.confirm('立即跑健康檢查？對庫裡的策略做新 walk-forward 回測（~5s/策略，可能 30-60s）。')) return;
               try {
                 setLoading(true);
                 const r = await fetch(`${API}/api/strategies/health/check`, { method: 'POST' });
@@ -562,6 +545,12 @@ export default function Strategies() {
       {/* Loading */}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
+      {/* Phase 15: 守门员唯一范式 — 说明这页是守门员的策略库, 不是手动启停的运行名单 */}
+      <Alert severity="info" icon={false} sx={{ mb: 2.5, bgcolor: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.25)', '& .MuiAlert-message': { fontSize: 13 } }}>
+        🛡️ <b>这是守门员的策略库</b> — 守门员每次扫描市场,从这些模版里<b>按当下行情即时回测、动态选用</b>最匹配的来下单。
+        所以策略<b>没有"启动/停止"之分</b>:全部都在库里随时待命,守门员自己决定何时用哪个。这里你可以新增模版、跑回测看表现、查看画像。
+      </Alert>
+
       {/* 模擬盤摘要 */}
       <Card sx={{ mb: 2.5, bgcolor: 'background.paper', border: '1px solid #334155' }}>
         <CardContent sx={{ px: 2, py: 1.5 }}>
@@ -586,8 +575,8 @@ export default function Strategies() {
               </Typography>
             </Grid>
             <Grid item xs={6} sm={3}>
-              <Typography variant="caption" color="text.secondary">運行策略</Typography>
-              <Typography variant="h6" fontWeight={700}>{strategies.filter(s => s.active).length} / {strategies.length}</Typography>
+              <Typography variant="caption" color="text.secondary">策略库</Typography>
+              <Typography variant="h6" fontWeight={700}>{strategies.filter(s => s.status !== 'retired').length} <Typography component="span" variant="caption" color="text.secondary">模版</Typography></Typography>
             </Grid>
           </Grid>
         </CardContent>

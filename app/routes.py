@@ -1097,6 +1097,12 @@ def pnl_summary():
 
     win_rate = (winning / total_trades * 100) if total_trades > 0 else 0
 
+    # Phase 15: 守门员唯一范式 — 策略库大小(守门员选用的模版库, 取代老"运行策略数"概念)
+    from app.models import StrategyProfile
+    from app.services.config_service import get_config as _gc
+    library_size = StrategyProfile.query.count()
+    gatekeeper_mode = _gc().get('gatekeeper_live_mode', 'off')
+
     # 最大回撤（從每日累積 PnL 算）
     from datetime import datetime, timedelta
     from sqlalchemy import cast, Date
@@ -1135,6 +1141,8 @@ def pnl_summary():
         'win_rate': round(win_rate, 1),
         'open_positions': open_positions,
         'running_strategies': running_strategies,
+        'library_size': library_size,
+        'gatekeeper_mode': gatekeeper_mode,
         'max_drawdown': round(max_dd, 2),
         'today_pnl': round(float(today_pnl), 2),
         'today_trades': int(today_trades),
