@@ -218,10 +218,50 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
         gatekeeper_decision_id=d.get('decision_id'),
         gk_exit={'state': state, 'params': exit_params, 'last_ts': _entry_ts,
                  'orig_size': base_size, 'margin': size_usdt, 'order_mode': order_mode,
-                 'pnl': 0.0, 'strategy': stype, 'lev': lev, 'slippage_pct': 0.03},
+                 'pnl': 0.0, 'strategy': stype, 'lev': lev, 'slippage_pct': 0.03,
+                 'native': order_mode == 'live' and exchange == 'hyperliquid', 'oids': {}},
     )
     db.session.add(pos); db.session.commit()
+    # live 真钱: 挂原生 SL + TP1/2/3 trigger 单 (服务端执行); paper 走轮询出场管理器(模拟)
+    if pos.gk_exit.get('native'):
+        _place_native_brackets(pos, side, fill, base_size, exit_params)
     _notify_live_enter(symbol, d, fill, lev, order_mode, pos.id)
+
+
+def _native_tp_price(side, entry, r, R):
+    d = r * R / 100.0
+    return entry * (1 + d) if side == 'long' else entry * (1 - d)
+
+
+def _place_native_brackets(pos, side, entry, base_size, exit_params):
+    """开仓后挂原生 reduce-only 止损/分批止盈 trigger 单 (HL 服务端执行)。
+    SL 全仓 @ init_sl; TP1/2/3 各按 frac @ 对应R价位。oid 存 gk_exit['oids'] 供棍轮撤换。"""
+    from app.models import db
+    from app.services.hyperliquid_creds import get_decrypted_for_user
+    from app.services.hyperliquid_service import place_hl_trigger
+    from sqlalchemy.orm.attributes import flag_modified
+    creds = get_decrypted_for_user(pos.user_id)
+    if not creds:
+        print(f'[gatekeeper_live] {pos.symbol} 无HL creds, 不挂原生trigger'); return
+    R = exit_params['init_sl_pct']
+    oids = {}
+    # SL (全仓)
+    sl_px = entry * (1 - R / 100) if side == 'long' else entry * (1 + R / 100)
+    r_sl = place_hl_trigger(pos.symbol, side, sl_px, base_size, 'sl', creds)
+    oids['sl'] = r_sl.get('oid'); oids['sl_px'] = r_sl.get('trigger_px')
+    if not r_sl.get('ok'):
+        print(f"[gatekeeper_live] {pos.symbol} SL trigger 失败: {r_sl.get('reject_reason')}")
+    # TP1/2/3 (分批)
+    for key, r_mult, frac in (('tp1', exit_params['tp1_r'], exit_params['tp1_frac']),
+                              ('tp2', exit_params['tp2_r'], exit_params['tp2_frac']),
+                              ('tp3', exit_params['tp3_r'], 1 - exit_params['tp1_frac'] - exit_params['tp2_frac'])):
+        tp_px = _native_tp_price(side, entry, r_mult, R)
+        rr = place_hl_trigger(pos.symbol, side, tp_px, base_size * frac, 'tp', creds)
+        oids[key] = rr.get('oid')
+        if not rr.get('ok'):
+            print(f"[gatekeeper_live] {pos.symbol} {key} trigger 失败: {rr.get('reject_reason')}")
+    pos.gk_exit['oids'] = oids
+    flag_modified(pos, 'gk_exit'); db.session.commit()
 
 
 def _notify_live_enter(symbol, d, fill, lev, order_mode, pos_id):
@@ -276,6 +316,14 @@ def gatekeeper_exit_manage() -> dict:
         margin = gk.get('margin', 10.0); lev = gk.get('lev', 5.0)
         slip = gk.get('slippage_pct', 0.03) / 100.0; fee_pct = params.get('fee_pct', 0.035)
         order_mode = gk.get('order_mode', 'paper')
+        # live 原生 trigger 仓 → fill驱动棍轮 (服务端执行); paper → 轮询模拟 (下面)
+        if gk.get('native'):
+            try:
+                res = _manage_native_position(pos, gk)
+                managed += res.get('managed', 0); closed += res.get('closed', 0)
+            except Exception as e:
+                print(f'[gatekeeper_live] native manage {pos.symbol} error: {type(e).__name__}: {e}')
+            continue
         last_ts = gk.get('last_ts', 0)
         try:
             rows = fetch_ohlcv(pos.symbol, AUX_TF, limit=200) or []
@@ -296,7 +344,7 @@ def gatekeeper_exit_manage() -> dict:
                            quantity=gk.get('orig_size', pos.size) * c['frac'], pnl=round(pnl, 4),
                            pnl_percent=round(_favorable(side, fill, entry) / entry * 100 * lev, 3),
                            entry_time=pos.opened_at, exit_time=_dt.datetime.utcnow(),
-                           reason='gk_' + c['reason'])
+                           reason=('gkpaper_' if order_mode == 'paper' else 'gk_') + c['reason'])
                 db.session.add(tr)
                 gk['pnl'] = round(gk.get('pnl', 0.0) + pnl, 4)
                 pos.size = max(0.0, gk.get('orig_size', pos.size) * state['rem'])
@@ -340,3 +388,117 @@ def _notify_gk_close(pos, gk):
             f"实现盈亏 <b>{gk['pnl']:+.3f}</b> USDT → 已回填校准飞轮", force=True)
     except Exception as e:
         print(f'[gatekeeper_live] notify close error: {type(e).__name__}: {e}')
+
+
+# ============================================================
+# live 原生 trigger 仓的 fill 驱动棍轮 (user 2026-05-30 定):
+# exit_step 当大脑算 SL 该在哪 (保本/锁TP台阶/trail, 价格驱动); 原生 trigger 当手服务端执行.
+# 探 HL 持仓 size: 变小=某TP成交→TG通知+撤旧SL挂新SL到锁定位; size≈0=SL/TP3成交→record_outcome平仓.
+# ⚠️ 交易所服务端行为(触发成交/撤单时序/真盈亏)无法paper验证, 第一笔真单必须盯.
+# ============================================================
+
+def _manage_native_position(pos, gk) -> dict:
+    from app.models import db
+    from app.services.exchange_service import fetch_ohlcv
+    from app.services.segment_exit import exit_step
+    from app.services.gatekeeper_learning import record_outcome
+    from app.services.hyperliquid_creds import get_decrypted_for_user
+    from app.services.hyperliquid_service import get_hl_position_size, cancel_hl_order
+    from sqlalchemy.orm.attributes import flag_modified
+    import datetime as _dt
+
+    state = gk['state']; params = gk['params']; side = state['side']; entry = state['entry']
+    orig = gk.get('orig_size', pos.size) or pos.size
+    creds = get_decrypted_for_user(pos.user_id)
+    if not creds:
+        return {'managed': 0, 'closed': 0}
+    cur_size = abs(get_hl_position_size(pos.symbol, creds))
+
+    # 全平 (SL 或 TP3 成交 → HL 上已无仓)
+    if orig > 0 and cur_size <= orig * 0.02:
+        pnl = _native_realized_pnl(pos, gk, creds)
+        for k in ('sl', 'tp1', 'tp2', 'tp3'):
+            oid = (gk.get('oids') or {}).get(k)
+            if oid:
+                cancel_hl_order(pos.symbol, oid, creds)
+        pos.status = 'closed'; pos.closed_at = _dt.datetime.utcnow()
+        pos.realized_pnl = pnl; pos.size = 0.0; gk['pnl'] = pnl
+        pos.gk_exit = gk; flag_modified(pos, 'gk_exit')
+        if pos.gatekeeper_decision_id:
+            record_outcome(pos.gatekeeper_decision_id, pnl)
+        _notify_gk_close(pos, gk); db.session.commit()
+        return {'managed': 1, 'closed': 1}
+
+    # 推进 exit_step 算 SL 该在哪 (喂新 5m bars); 忽略其 closes — 原生 trigger 执行 TP/SL
+    last_ts = gk.get('last_ts', 0)
+    try:
+        rows = fetch_ohlcv(pos.symbol, AUX_TF, limit=200) or []
+    except Exception:
+        return {'managed': 1, 'closed': 0}
+    new_bars = [r for r in rows if r['timestamp'] > last_ts]
+    old_sl = state['sl']; newly = []
+    for bar in new_bars:
+        b1, b2 = state['tp1'], state['tp2']
+        exit_step(state, bar, params)
+        if state['tp1'] and not b1:
+            newly.append('TP1')
+        if state['tp2'] and not b2:
+            newly.append('TP2')
+        gk['last_ts'] = bar['timestamp']
+
+    # SL 该上移 (保本/锁TP台阶/trail 算出新位) → 撤旧 SL 挂新 (按当前剩余 size)
+    if abs(state['sl'] - old_sl) > entry * 1e-6:
+        _resync_native_sl(pos, gk, state, cur_size, creds)
+    for tp in newly:
+        _notify_tp_fill(pos, tp, state['sl'])
+
+    gk['state'] = state; pos.gk_exit = gk; flag_modified(pos, 'gk_exit'); db.session.commit()
+    return {'managed': 1, 'closed': 0}
+
+
+def _resync_native_sl(pos, gk, state, cur_size, creds):
+    """撤旧 SL trigger, 按当前剩余 size 在 state['sl'] 价位挂新 SL (棍轮上移)。"""
+    from app.services.hyperliquid_service import cancel_hl_order, place_hl_trigger
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.models import db
+    oids = gk.get('oids') or {}
+    if oids.get('sl'):
+        cancel_hl_order(pos.symbol, oids['sl'], creds)
+    sz = cur_size if cur_size > 0 else gk.get('orig_size', pos.size)
+    r = place_hl_trigger(pos.symbol, state['side'], state['sl'], sz, 'sl', creds)
+    oids['sl'] = r.get('oid'); oids['sl_px'] = r.get('trigger_px')
+    gk['oids'] = oids; pos.gk_exit = gk; flag_modified(pos, 'gk_exit'); db.session.commit()
+    if not r.get('ok'):
+        print(f"[gatekeeper_live] {pos.symbol} 重挂SL失败: {r.get('reject_reason')}")
+
+
+def _native_realized_pnl(pos, gk, creds):
+    """平仓后真盈亏: 优先拉 HL 最近 fills 的 closedPnl 累加; 失败回退引擎估算。"""
+    try:
+        from app.services.hyperliquid_service import _exchange_client, hl_base
+        _, info = _exchange_client(creds)
+        addr = creds.get('account_address') or creds.get('wallet_address')
+        fills = info.user_fills(addr) or []
+        base = hl_base(pos.symbol)
+        opened = pos.opened_at.timestamp() * 1000 if pos.opened_at else 0
+        tot = 0.0; hit = False
+        for f in fills:
+            if f.get('coin') == base and float(f.get('time', 0)) >= opened:
+                cp = f.get('closedPnl')
+                if cp is not None:
+                    tot += float(cp); hit = True
+        if hit:
+            return round(tot, 4)
+    except Exception as e:
+        print(f'[gatekeeper_live] native real_pnl fetch fail: {type(e).__name__}: {e}')
+    return round(gk.get('pnl', 0.0), 4)   # 回退: 引擎累计估算
+
+
+def _notify_tp_fill(pos, tp_label, new_sl):
+    try:
+        from app.services import telegram_service
+        telegram_service.send(
+            f"✅ <b>守门员 {tp_label} 成交</b> ({pos.symbol.split('/')[0]} {pos.side})\n"
+            f"移动止损已上移到 <b>{round(new_sl, 4)}</b> (锁定利润)", force=True)
+    except Exception:
+        pass

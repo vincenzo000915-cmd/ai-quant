@@ -25,6 +25,7 @@ export default function ProfitTargetCard() {
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState({ target_pct: 20, days: 30, max_dd_pct: 15, daily_loss_halt_pct: 5 });
   const [busy, setBusy] = useState(false);
+  const [gkMode, setGkMode] = useState('off');   // Phase 15: 守门员 live 档 off/shadow/paper/live
 
   const refresh = useCallback(async () => {
     try {
@@ -37,6 +38,9 @@ export default function ProfitTargetCard() {
       setNeedsTeam(false);
       const d = await r.json();
       setTarget(d.target);
+      // Phase 15: 守门员 live 档
+      const cfg = await fetch('/api/config').then(x => x.json()).catch(() => ({}));
+      if (cfg && cfg.gatekeeper_live_mode) setGkMode(cfg.gatekeeper_live_mode);
       // 2. check exchange bound
       if (!d.target) {
         const bind = await fetch('/api/me/exchange-binding').then(x => x.json()).catch(() => ({}));
@@ -71,6 +75,23 @@ export default function ProfitTargetCard() {
     try {
       await fetch(`/api/me/profit-target/${target.id}`, { method: 'DELETE' });
       await refresh();
+    } finally { setBusy(false); }
+  };
+
+  // Phase 15: 切守门员 live 档 (off/影子/纸面/真钱)
+  const handleGkMode = async (mode) => {
+    if (mode === 'live' && !window.confirm(
+      '守门员真下单 (真钱)?\n\n• 实时扫描 ETH/AVAX, 信号触发→引擎回测达标→真下单 (原生 TP/SL)\n'
+      + '• 现有策略让路 (守门员独占), 资金全给守门员\n• 首页 KILL SWITCH 可一键停\n\n确定?')) return;
+    setBusy(true);
+    try {
+      const body = { gatekeeper_live_mode: mode };
+      if (mode === 'live') body.confirm_gatekeeper_live = true;
+      const r = await fetch('/api/config', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (r.ok) setGkMode(mode);
+      else { const e = await r.json().catch(() => ({})); alert(e.error || '切换失败'); }
     } finally { setBusy(false); }
   };
 
@@ -191,6 +212,31 @@ export default function ProfitTargetCard() {
               </IconButton>
             </Tooltip>
           </Stack>
+
+          {/* Phase 15: 守门员实时托管 (全自动托管的进化版 — 实时扫描+信号驱动+引擎回测+真下单) */}
+          <Box sx={{ mb: 1.5, p: 1, borderRadius: 1, bgcolor: 'rgba(167,139,250,0.06)', border: `1px solid ${PURPLE}22` }}>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.6 }}>
+              <Typography variant="caption" fontWeight={700} sx={{ color: PURPLE }}>
+                🤖 守门员实时托管
+              </Typography>
+              <Tooltip title="守门员 = 全自动托管的进化版: 实时扫描 ETH/AVAX, 信号触发→引擎回测达标→下单, 原生分批 TP/SL + 移动止损锁台阶. 影子=只记录决策不下单 / 纸面=模拟成交真价格 / 真钱=真下单(独占, 现有策略让路)">
+                <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>ⓘ</Typography>
+              </Tooltip>
+              <Box sx={{ flex: 1 }} />
+              {gkMode === 'live' && <Chip label="真钱运行中" size="small" color="error" sx={{ height: 18, fontSize: 10 }} />}
+            </Stack>
+            <Stack direction="row" spacing={0.5}>
+              {[['off', '关'], ['shadow', '影子'], ['paper', '纸面'], ['live', '真钱']].map(([m, label]) => (
+                <Button key={m} size="small" variant={gkMode === m ? 'contained' : 'outlined'}
+                  disabled={busy} onClick={() => handleGkMode(m)}
+                  sx={{ minWidth: 0, px: 1, py: 0.1, fontSize: 11,
+                    ...(gkMode === m && m === 'live' ? { bgcolor: '#f87171' } : {}),
+                    ...(gkMode === m && m !== 'live' ? { bgcolor: PURPLE } : {}) }}>
+                  {label}
+                </Button>
+              ))}
+            </Stack>
+          </Box>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1.5, alignItems: { sm: 'baseline' } }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>

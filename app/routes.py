@@ -1858,6 +1858,22 @@ def update_system_config():
         if prev_mode == 'manual' and mode in ('semi_auto', 'full_auto'):
             mode_changed_to_auto = True
 
+    # Phase 15: 守门员 live 模式守卫 (off/shadow/paper/live)
+    if 'gatekeeper_live_mode' in patch:
+        gm = patch['gatekeeper_live_mode']
+        if gm not in ('off', 'shadow', 'paper', 'live'):
+            return jsonify({'error': 'gatekeeper_live_mode 必须是 off / shadow / paper / live'}), 400
+        if gm == 'live' and not data.get('confirm_gatekeeper_live'):
+            return jsonify({
+                'error': '守门员真下单(live)需 confirm_gatekeeper_live=true',
+                'hint': '两段确认防误触真钱; live 时现有策略让路(守门员独占), 资金全给守门员决策循环',
+            }), 400
+        if gm == 'live':
+            from app.services.telegram_service import send as _tg
+            _tg('🤖 <b>守门员真下单已启动 · Gatekeeper LIVE</b>\n'
+                '守门员实时扫描 ETH/AVAX, 信号触发→引擎回测达标→真下单(原生TP/SL).\n'
+                '现有策略让路(独占), 资金全给守门员. 首页 kill switch 可一键停.', force=True)
+
     # 範圍守衛
     if 'leverage' in patch and not (1 <= patch['leverage'] <= 100):
         return jsonify({'error': 'leverage out of range [1,100]'}), 400

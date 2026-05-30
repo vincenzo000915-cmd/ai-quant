@@ -544,7 +544,10 @@ def _run_signals(strategy_id=None, category_filter=None):
     # 新逻辑: 开仓前先给"要开新仓"的策略按 regime 调整后 EV 排序, 用资金感知预算
     #   N=floor(权益×80%/单仓保证金) 选出本轮可开的, 其余优雅跳过(不全停). 平仓不排队(只降风险).
     allowed_open = {}        # s.id -> ev_adj (本轮 EV 排序+预算选中、可开新仓的)
-    if not halted:
+    # Phase 15: 守门员独占 — gatekeeper_live_mode=live 时现有策略让路(不开新仓),
+    # 资金全给守门员决策循环, 归因干净 (user 选独占). 现有持仓仍正常平仓.
+    gk_exclusive = cfg.get('gatekeeper_live_mode') == 'live'
+    if not halted and not gk_exclusive:
         open_candidates = []   # [(ev_adj, s)]
         for s in strategies:
             try:
