@@ -395,6 +395,27 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
     hint_block = f"\n## Trigger 提示\n{hint}\n" if hint else ''
     from app.services.profit_difficulty import difficulty_guidance_block
     diff_block = '\n' + difficulty_guidance_block(target_pct, days_remaining)
+    # 策略池覆盖+缺口 (让AI知道补哪个regime×周期格子, 不重复造)
+    cov_block = ''
+    try:
+        from app.services.llm_prompts.strategy_profile import coverage_block
+        cov_block = '\n' + coverage_block() + '\n→ 优先补空缺格子, 别重复已饱和的格子.\n'
+    except Exception:
+        pass
+    # 当前市场富感知 (针对当前市场合成)
+    perc_block = ''
+    try:
+        from app.services.market_perception import perceive_market
+        _p = perceive_market(symbol, candles, None, timeframe)
+        if _p.get('ok'):
+            _i = _p.get('indicators') or {}
+            perc_block = ('\n## 当前市场富感知\n- regime=%s 方向=%s 波动=%s 量=%s | '
+                          'stoch=%s cci=%s ichimoku=%s donchian=%s\n' % (
+                _p['regime'], _p['direction'], _p['volatility'], _p['volume'],
+                (_i.get('stochastic') or {}).get('state'), (_i.get('cci') or {}).get('state'),
+                (_i.get('ichimoku') or {}).get('state'), (_i.get('donchian') or {}).get('state')))
+    except Exception:
+        pass
 
     # K 线最近 60 根 (OHLC 简化)
     candle_block = '\n'.join(
@@ -413,7 +434,8 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
 {fs_block}
 {hint_block}
 {diff_block}
-请输出符合上述难度基调的 structured hypothesis JSON (盈亏比/进场严格度需匹配基调).
+{cov_block}{perc_block}
+请输出符合上述难度基调的 structured hypothesis JSON (盈亏比/进场严格度匹配基调; **优先补空缺格子, 结合当前市场富感知**).
 """
 
     r = call_llm(

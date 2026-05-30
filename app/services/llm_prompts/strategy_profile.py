@@ -93,3 +93,37 @@ def get_builtin_signal_source(strategy_type: str) -> str | None:
         return inspect.getsource(getattr(se, fn_name))
     except Exception:
         return None
+
+
+def coverage_summary() -> dict:
+    """策略池覆盖摘要: regime×周期 格子哪些有策略/哪些空 (供合成AI知道该补哪个缺口, 不重复造)。
+    返回 {grid: {regime: {tf: [strategies]}}, gaps: [(regime,tf)], filled: [(regime,tf,n)]}."""
+    from app.models import StrategyProfile
+    TFS = ['5m', '15m', '1h', '4h']
+    grid = {'trend': {tf: [] for tf in TFS}, 'range': {tf: [] for tf in TFS}}
+    for p in StrategyProfile.query.all():
+        prof = p.profile or {}
+        rf = prof.get('regime_fit', {})
+        tff = ' '.join(str(x) for x in (prof.get('timeframe_fit') or []))
+        for regime in ('trend', 'range'):
+            if rf.get(regime) == 'good':
+                for tf in TFS:
+                    if tf in tff:
+                        grid[regime][tf].append(p.strategy_type)
+    gaps = [(r, tf) for r in grid for tf in TFS if not grid[r][tf]]
+    filled = [(r, tf, len(grid[r][tf])) for r in grid for tf in TFS if grid[r][tf]]
+    return {'grid': grid, 'gaps': gaps, 'filled': filled}
+
+
+def coverage_block() -> str:
+    """生成注入合成 prompt 的"策略池覆盖+缺口"文本块。"""
+    c = coverage_summary()
+    lines = ['## 策略池覆盖 (regime×周期格子)']
+    for r in ('trend', 'range'):
+        for tf in ['5m', '15m', '1h', '4h']:
+            ss = c['grid'][r][tf]
+            mark = f"{len(ss)}个: {','.join(ss[:4])}" if ss else '⚠空缺'
+            lines.append(f"  {r}/{tf}: {mark}")
+    if c['gaps']:
+        lines.append(f"**空缺格子(优先补): {', '.join(f'{r}/{tf}' for r, tf in c['gaps'])}**")
+    return '\n'.join(lines)
