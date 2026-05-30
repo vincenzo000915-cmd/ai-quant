@@ -35,10 +35,16 @@ export function getToken() { return _token; }
 export function getUser() { return _user; }
 
 // Phase 15: tier 等级 (0 free / 1 basic / 2 pro / 3 team). admin / system token = 最高 team.
+const _TIER_MAP = { free: 0, basic: 1, pro: 2, team: 3 };
 export function tierRank() {
+  // admin 预览覆盖: localStorage.setItem('quant_tier_preview','pro') 即可用 Pro 视角看页面 (basic/pro/team/free)
+  try {
+    const ov = typeof localStorage !== 'undefined' ? localStorage.getItem('quant_tier_preview') : null;
+    if (ov && ov in _TIER_MAP) return _TIER_MAP[ov];
+  } catch {/* */}
   const u = _user || {};
   if (u.role === 'admin' || u._is_system) return 3;
-  return ({ free: 0, basic: 1, pro: 2, team: 3 })[u.subscription_tier] ?? 0;
+  return _TIER_MAP[u.subscription_tier] ?? 0;
 }
 
 export function setToken(t) {

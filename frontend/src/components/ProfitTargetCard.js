@@ -20,7 +20,7 @@ const PURPLE = '#a78bfa';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
 // HERO 卖点: 谁在替你驱动向目标 (tier 自适应)
 function driverMeta(tier) {
-  if (tier >= TIER_RANK.team) return { icon: '🧠', who: 'AI 经理', desc: 'AI 看行情+懂策略临场给参,守门员执行 (实时判断 ↓ 见下方)' };
+  if (tier >= TIER_RANK.team) return { icon: '🧠', who: 'AI 经理', desc: 'AI 全自动盯盘择机操盘,向你的目标推进 (实时动态 ↓ 见下方)' };
   if (tier >= TIER_RANK.pro) return { icon: '🛡️', who: '守门员', desc: '按你在「系统设定」的参数自动扫描→回测→下单 · 控制见下方「守门员台」' };
   return { icon: '📡', who: '你自己', desc: '看下方「信号预告」手动跟单 (升级 Pro 解锁守门员自动)' };
 }
@@ -302,7 +302,7 @@ export default function ProfitTargetCard() {
                 {m.outcome && <Chip size="small" label={m.outcome === 'win' ? '赢' : m.outcome === 'loss' ? '亏' : '平'}
                   sx={{ height: 16, fontSize: 9, bgcolor: m.outcome === 'win' ? 'rgba(52,211,153,0.18)' : m.outcome === 'loss' ? 'rgba(248,113,113,0.18)' : 'transparent' }} />}
               </Box>
-            )) : <Typography variant="caption" color="text.secondary">守门员每来信号,经理带[难度+行情+策略画像]判断给参或 skip — 等信号触发。</Typography>}
+            )) : <Typography variant="caption" color="text.secondary">AI 经理正实时盯盘 — 机会合适才出手,不合适就观望,等下一个入场点。</Typography>}
           </Box>
         </CardContent>
       </Card>

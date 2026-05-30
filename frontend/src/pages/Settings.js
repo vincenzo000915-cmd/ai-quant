@@ -15,7 +15,7 @@ import ExchangeBindingSection from '../components/ExchangeBindingSection';
 const _TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
 // 参数文案随 tier: Team→AI经理覆盖 / Pro→守门员用你设的 / Basic→手动下单默认
 function paramTierNote(tier) {
-  if (tier >= _TIER_RANK.team) return { sev: 'info', text: '🧠 你是 Team — 这些参数是默认底线,AI 经理会按每单的行情+策略画像临场覆盖(在难度信封内)。' };
+  if (tier >= _TIER_RANK.team) return { sev: 'info', text: '🧠 你是 Team — 这些参数是默认底线,AI 经理会按行情自动优化每一单(在你设的难度信封内)。' };
   if (tier >= _TIER_RANK.pro) return { sev: 'success', text: '🛡️ 你是 Pro — 这些就是守门员下单用的参数,守门员按你这里设的杠杆/止损/仓位自动执行。' };
   return { sev: 'warning', text: '📡 你是 Basic — 这些是你手动下单的默认值。升级 Pro 让守门员按这些自动执行。' };
 }
