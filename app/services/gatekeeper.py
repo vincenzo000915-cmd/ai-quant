@@ -56,7 +56,7 @@ def match_strategies(regime: str, timeframe: str) -> list:
 
 
 def _optimize_params(stype, base_is, aux, base_tf, lev=10.0):
-    """对一个策略, IS 段扫 SL 宽度找最优 EV (=测最优参数; 完整版扫更多维+难度基调)。
+    """[机械回退] 对一个策略 IS 段扫 SL 宽度找最优 EV。AI 经理失败时守门员回退用这个。
     返回 {sl, ev, fills} 最优。"""
     from app.services.strategy_engine import get_signal
     from app.services.segment_backtest import segment_backtest
@@ -71,6 +71,45 @@ def _optimize_params(stype, base_is, aux, base_tf, lev=10.0):
         if ev > best['ev']:
             best = {'sl': sl, 'ev': ev, 'fills': r['fills']}
     return best
+
+
+def _ev_for_params(stype, base_is, aux, base_tf, lev, init_sl, tp1_r, tp2_r, tp3_r, size_usdt=10.0):
+    """用 AI 经理给的具体参数回测 EV (守门员把关经理的判断)。返回 {ev, fills}。"""
+    from app.services.strategy_engine import get_signal
+    from app.services.segment_backtest import segment_backtest
+    sig = lambda df, p: get_signal(stype, df, p)
+    r = segment_backtest(base_is, aux, strategy_type=stype, signal_fn=sig,
+                         base_tf=base_tf, aux_tf='5m', leverage=lev, position_size_usdt=size_usdt,
+                         init_sl_pct=init_sl, tp1_r=tp1_r, tp2_r=tp2_r, tp3_r=tp3_r,
+                         use_position_filter=False, lock_at_tp=True, trail_r=0.5)
+    ev = r['ev_per_fill_usdt'] if r['fills'] >= 5 else -9
+    return {'ev': ev, 'fills': r['fills']}
+
+
+def _manager_params_and_ev(symbol, stype, perception, base_is, aux, base_tf,
+                           target_pct, days_remaining, fallback_lev):
+    """钥匙: 守门员问 AI 经理要参数 → 回测EV把关。返回 {skip, params, ev, fills, manager} 或 None(skip)。
+    经理失败 → 回退机械 _optimize_params (不阻断守门员)。"""
+    from app.models import StrategyProfile
+    from app.services.ai_manager import ai_manager_params
+    prof_row = StrategyProfile.query.filter_by(strategy_type=stype).first()
+    prof = prof_row.profile if prof_row else {}
+    mp = ai_manager_params(symbol, stype, perception, prof, target_pct, days_remaining)
+    if mp.get('ok') and mp.get('skip'):
+        return {'skip': True, 'manager': {'used': True, 'reason': mp.get('reason_zh')}}
+    if mp.get('ok'):
+        r = _ev_for_params(stype, base_is, aux, base_tf, mp['leverage'], mp['init_sl_pct'],
+                           mp['tp1_r'], mp['tp2_r'], mp['tp3_r'], mp['position_size_usdt'])
+        return {'skip': False, 'ev': r['ev'], 'fills': r['fills'],
+                'params': {'init_sl_pct': mp['init_sl_pct'], 'leverage': mp['leverage'],
+                           'tp1_r': mp['tp1_r'], 'tp2_r': mp['tp2_r'], 'tp3_r': mp['tp3_r'],
+                           'position_size_usdt': mp['position_size_usdt']},
+                'manager': {'used': True, 'reason': mp.get('reason_zh'), 'leverage': mp['leverage']}}
+    # 经理失败 → 机械回退
+    opt = _optimize_params(stype, base_is, aux, base_tf, fallback_lev)
+    return {'skip': False, 'ev': opt['ev'], 'fills': opt['fills'],
+            'params': {'init_sl_pct': opt['sl']},
+            'manager': {'used': False, 'reason': '经理失败,机械回退: ' + str(mp.get('error'))[:60]}}
 
 
 def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
@@ -131,20 +170,25 @@ def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
         return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
                 'reason': '匹配策略均未触发信号', 'top_match': scored[:3], 'perception': perc}
 
-    # ④ 参数优化 + ⑤ 选最优EV (触发的高分策略里)
-    best = None
+    # ④ 钥匙: 守门员问 AI 经理要参数 (带难度+富感知+策略画像) → ⑤ 回测EV把关选最优
+    best = None; skipped = []
     for s in triggered:
-        opt = _optimize_params(s['strategy'], base_candles, aux_candles, base_tf, lev)
-        if opt['ev'] >= MIN_EV and (best is None or opt['ev'] > best['expected_ev']):
+        m = _manager_params_and_ev(symbol, s['strategy'], perc, base_candles, aux_candles,
+                                   base_tf, target_pct, days_remaining, lev)
+        if m.get('skip'):
+            skipped.append({'strategy': s['strategy'], 'reason': (m.get('manager') or {}).get('reason')})
+            continue   # AI 经理判断这单不该开 (行情踩中策略弱点)
+        if m['ev'] >= MIN_EV and (best is None or m['ev'] > best['expected_ev']):
             best = {'strategy': s['strategy'], 'side': s.get('side'),
                     'match_score': s['score'], 'match_reasons': s['reasons'],
-                    'params': {'init_sl_pct': opt['sl']}, 'expected_ev': opt['ev'], 'fills': opt['fills']}
+                    'params': m['params'], 'expected_ev': m['ev'], 'fills': m['fills'],
+                    'manager': m['manager']}
     if best:
         return {'action': 'enter', 'regime': perc['regime'], 'direction': perc['direction'],
                 'triggered': [t['strategy'] for t in triggered], 'perception': perc, **best}
     return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
-            'reason': '触发策略均未达标 EV',
-            'triggered': [t['strategy'] for t in triggered], 'perception': perc}
+            'reason': 'AI经理skip或回测均未达标EV',
+            'triggered': [t['strategy'] for t in triggered], 'manager_skipped': skipped, 'perception': perc}
 
 
 def match_with_perception(perception: dict, timeframe: str) -> list:

@@ -189,10 +189,13 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
     exists = Position.query.filter_by(symbol=symbol, status='open').first()
     if exists:
         return
-    stype = d['strategy']; init_sl = float(d['params']['init_sl_pct'])
-    # 参数分层: Team→AI参数最优先 / Pro→用户自设参数
+    stype = d['strategy']
+    mparams = d.get('params') or {}
+    init_sl = float(mparams['init_sl_pct'])
+    # AI 经理给的参数优先 (钥匙: 经理带难度+感知+画像临场判断的 lev/仓位/TP); 经理没给则 tier 回退
     gp = _resolve_gk_params(user_id, lev, cfg)
-    lev = gp['leverage']; size_usdt = gp['size_usdt']
+    lev = float(mparams.get('leverage') or gp['leverage'])
+    size_usdt = float(mparams.get('position_size_usdt') or gp['size_usdt'])
     exchange = _primary_exchange(user_id)
     # HL 最小 $10 notional 闸
     if exchange == 'hyperliquid' and size_usdt * lev < 10:
@@ -209,6 +212,9 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
     fill = float(order.get('price') or price)
     base_size = size_usdt * lev / fill
     exit_params = dict(ENGINE_EXIT_PARAMS); exit_params['init_sl_pct'] = init_sl
+    for _k in ('tp1_r', 'tp2_r', 'tp3_r'):   # AI 经理给的盈亏比 R 也用上 (出场台阶随经理判断)
+        if mparams.get(_k):
+            exit_params[_k] = float(mparams[_k])
     state = new_exit_state(side, fill, init_sl)
     import time as _t
     _entry_ts = int(_t.time())   # 出场管理器只处理入场后新 5m bar (防回放入场前K线)
