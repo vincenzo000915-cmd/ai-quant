@@ -1112,3 +1112,51 @@ class StrategyProfile(db.Model):
     def to_dict(self):
         return {'strategy_type': self.strategy_type, 'profile': self.profile,
                 'source': self.source}
+
+
+# ============================================================
+# Phase 15 学习飞轮: 守门员决策记录 (策略×市场×参数→预期EV→实测pnl)
+# 蓝图 project-phase15-blueprint 九.6: 守门员每次决策结果记录→经验积累→整合写新策略
+# (基于学到的"什么work", 非盲合成). offline 先积累回测决策经验, 接 live 后回填真盈亏校准.
+# ============================================================
+
+class GatekeeperDecision(db.Model):
+    """守门员一次决策的留痕 (offline 回测/live 实盘共用)。
+    经验 = 聚合这些记录看 "什么策略×什么市场×什么参数 → 正EV", 喂回合成 AI。"""
+    __tablename__ = 'gatekeeper_decisions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    symbol = db.Column(db.String(40), index=True)
+    timeframe = db.Column(db.String(10), index=True)
+    # 市场上下文 (决策时的富感知快照关键维度, 便于按格子聚合)
+    regime = db.Column(db.String(20), index=True)        # trend | range | unknown
+    direction = db.Column(db.String(10))                  # up | down | flat
+    volatility = db.Column(db.String(10))                 # high | normal | low
+    volume = db.Column(db.String(10))                     # surge | normal | dry
+    mtf_aligned = db.Column(db.Boolean)
+    hunt = db.Column(db.Boolean)                           # 决策时是否有猎杀针
+    # 决策
+    action = db.Column(db.String(10), index=True)         # enter | wait
+    strategy = db.Column(db.String(100), index=True)      # 选中的策略 (wait=None)
+    match_score = db.Column(db.Float)
+    params = db.Column(db.JSON)                            # {init_sl_pct: ...}
+    expected_ev = db.Column(db.Float)                     # 守门员回测预期 EV (USDT/fill)
+    # 结果 (offline 段回测实测 / live 平仓后回填)
+    realized_pnl = db.Column(db.Float)                    # 实测段/实盘单笔 pnl
+    outcome = db.Column(db.String(10))                    # win | loss | flat | None(未结)
+    source = db.Column(db.String(12), default='offline', index=True)  # offline | live
+    context = db.Column(db.JSON)                          # 完整感知快照 (富学习用)
+    created_at = db.Column(db.DateTime, default=db.func.now(), index=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'symbol': self.symbol, 'timeframe': self.timeframe,
+            'regime': self.regime, 'direction': self.direction,
+            'volatility': self.volatility, 'volume': self.volume,
+            'mtf_aligned': self.mtf_aligned, 'hunt': self.hunt,
+            'action': self.action, 'strategy': self.strategy,
+            'match_score': self.match_score, 'params': self.params,
+            'expected_ev': self.expected_ev, 'realized_pnl': self.realized_pnl,
+            'outcome': self.outcome, 'source': self.source,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

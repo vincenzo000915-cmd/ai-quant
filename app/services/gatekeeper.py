@@ -74,12 +74,33 @@ def _optimize_params(stype, base_is, aux, base_tf, lev=10.0):
 
 def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
                       base_tf: str = '15m', target_pct: float = 5.0,
-                      days_remaining: int = 30, lev: float = 10.0) -> dict:
+                      days_remaining: int = 30, lev: float = 10.0,
+                      record: bool = False, record_source: str = 'offline') -> dict:
     """守门员一次决策 (offline). 返回 {action: 'enter'|'wait', ...}。
 
     enter: {action, regime, strategy, params, expected_ev, candidates_n, triggered}
     wait:  {action, regime, reason, candidates}
+
+    record=True 时把这次决策留痕进 gatekeeper_decisions (学习飞轮), decision 里带回
+    decision_id; 实测/实盘结果后续用 gatekeeper_learning.record_outcome(id, pnl) 回填。
     """
+    decision = _gatekeeper_decide_inner(symbol, base_candles, aux_candles,
+                                        base_tf, target_pct, days_remaining, lev)
+    if record:
+        try:
+            from app.services.gatekeeper_learning import record_decision
+            did = record_decision(decision, symbol, base_tf,
+                                  perception=decision.get('perception'),
+                                  source=record_source)
+            if did:
+                decision['decision_id'] = did
+        except Exception:
+            pass
+    return decision
+
+
+def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
+                             target_pct, days_remaining, lev):
     # ① 富市场感知 (regime+方向+波动+量+MTF+形态动能+funding+指标状态)
     from app.services.market_perception import perceive_market
     perc = perceive_market(symbol, base_candles, aux_candles, base_tf)
@@ -90,7 +111,8 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
     scored = match_with_perception(perc, base_tf)
     if not scored:
         return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
-                'reason': f"无适配 {perc['regime']}/{perc['direction']}/{base_tf} 的策略"}
+                'reason': f"无适配 {perc['regime']}/{perc['direction']}/{base_tf} 的策略",
+                'perception': perc}
 
     # ③ 信号检测: 高分候选里哪个此刻触发
     from app.services.strategy_engine import get_signal, get_candle_df
@@ -103,8 +125,8 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
         except Exception:
             continue
     if not triggered:
-        return {'action': 'wait', 'regime': perc['regime'], 'reason': '匹配策略均未触发信号',
-                'top_match': scored[:3]}
+        return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
+                'reason': '匹配策略均未触发信号', 'top_match': scored[:3], 'perception': perc}
 
     # ④ 参数优化 + ⑤ 选最优EV (触发的高分策略里)
     best = None
@@ -115,9 +137,10 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
                     'params': {'init_sl_pct': opt['sl']}, 'expected_ev': opt['ev'], 'fills': opt['fills']}
     if best:
         return {'action': 'enter', 'regime': perc['regime'], 'direction': perc['direction'],
-                'triggered': [t['strategy'] for t in triggered], **best}
-    return {'action': 'wait', 'regime': perc['regime'], 'reason': '触发策略均未达标 EV',
-            'triggered': [t['strategy'] for t in triggered]}
+                'triggered': [t['strategy'] for t in triggered], 'perception': perc, **best}
+    return {'action': 'wait', 'regime': perc['regime'], 'direction': perc['direction'],
+            'reason': '触发策略均未达标 EV',
+            'triggered': [t['strategy'] for t in triggered], 'perception': perc}
 
 
 def match_with_perception(perception: dict, timeframe: str) -> list:

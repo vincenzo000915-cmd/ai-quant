@@ -402,6 +402,15 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
         cov_block = '\n' + coverage_block() + '\n→ 优先补空缺格子, 别重复已饱和的格子.\n'
     except Exception:
         pass
+    # 守门员实测经验 (学习飞轮: 基于历史决策回测/实盘"什么work"写新策略, 非盲合成)
+    exp_block = ''
+    try:
+        from app.services.gatekeeper_learning import experience_block
+        _eb = experience_block(timeframe=timeframe)
+        if _eb:
+            exp_block = '\n' + _eb + '\n'
+    except Exception:
+        pass
     # 当前市场富感知 (针对当前市场合成)
     perc_block = ''
     try:
@@ -434,7 +443,7 @@ def _step1_propose_hypothesis(symbol: str, timeframe: str, candles: list,
 {fs_block}
 {hint_block}
 {diff_block}
-{cov_block}{perc_block}
+{cov_block}{exp_block}{perc_block}
 请输出符合上述难度基调的 structured hypothesis JSON (盈亏比/进场严格度匹配基调; **优先补空缺格子, 结合当前市场富感知**).
 """
 
