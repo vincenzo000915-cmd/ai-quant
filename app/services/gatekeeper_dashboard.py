@@ -51,6 +51,63 @@ def _signal_preview(symbols, base_tf='15m'):
     return out
 
 
+def _tp_levels_from_gk(entry, side, params, state):
+    """从 gk_exit 的 R 倍数 + 初始止损% 反算 TP1/2/3 绝对价位 (台阶线)。
+    1R 价距 = entry × init_sl_pct%; long 往上, short 往下。"""
+    try:
+        sl_pct = float(params.get('init_sl_pct') or 1.2) or 1.2
+        e = float(entry)
+    except Exception:
+        return []
+    r_dist = e * sl_pct / 100.0
+    sgn = 1.0 if side in ('long', 'buy') else -1.0
+    out = []
+    for label, rk, hitkey in (('TP1', 'tp1_r', 'tp1'), ('TP2', 'tp2_r', 'tp2'), ('TP3', 'tp3_r', None)):
+        r = params.get(rk)
+        if not r:
+            continue
+        out.append({'label': label, 'price': round(e + sgn * float(r) * r_dist, 6),
+                    'r': float(r), 'hit': bool(state.get(hitkey)) if hitkey else False})
+    return out
+
+
+def trade_view_payload(positions, trades, display_name) -> dict:
+    """交易视图数据: 开仓(entry/SL/TP台阶 — 守门员/AI经理真实操作) + 近期成交(进出场标记)。
+    纯函数 (接 ORM 对象), 多租户隔离由调用方 scoped_query 保证。"""
+    open_positions = []
+    for p in positions:
+        gk = p.gk_exit or {}
+        state = gk.get('state') or {}
+        params = gk.get('params') or {}
+        is_gk = bool(getattr(p, 'gatekeeper_decision_id', None))
+        entry = state.get('entry') or p.entry_price
+        if is_gk and params:
+            sl = state.get('sl') or p.sl_price
+            tps = _tp_levels_from_gk(entry, p.side, params, state)
+            strat = display_name(gk.get('strategy')) if gk.get('strategy') else '守门员'
+            source = 'gatekeeper'
+        else:
+            sl = p.sl_price
+            tps = [{'label': 'TP', 'price': p.tp_price, 'hit': False}] if p.tp_price else []
+            strat = '手动'
+            source = 'manual'
+        open_positions.append({
+            'id': p.id, 'side': p.side, 'entry': entry,
+            'opened_at': int(p.opened_at.timestamp()) if p.opened_at else None,
+            'sl': sl, 'tp_levels': tps,
+            'unrealized_pnl': p.unrealized_pnl, 'strategy': strat, 'source': source,
+        })
+    trade_markers = []
+    for t in trades:
+        trade_markers.append({
+            'side': t.side, 'entry_price': t.entry_price, 'exit_price': t.exit_price,
+            'entry_time': int(t.entry_time.timestamp()) if t.entry_time else None,
+            'exit_time': int(t.exit_time.timestamp()) if t.exit_time else None,
+            'pnl': t.pnl, 'reason': t.reason,
+        })
+    return {'open_positions': open_positions, 'trades': trade_markers}
+
+
 def gatekeeper_dashboard_data(user_id: int = 1) -> dict:
     """新 Dashboard 一次 fetch 全部块数据。"""
     from app.services.config_service import get_config

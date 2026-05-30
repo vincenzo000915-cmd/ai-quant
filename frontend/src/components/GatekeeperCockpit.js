@@ -59,6 +59,16 @@ export default function GatekeeperCockpit() {
     } finally { setBusy(false); }
   };
 
+  const [synthMsg, setSynthMsg] = useState(null);
+  const synthesize = async () => {
+    setBusy(true); setSynthMsg(null);
+    try {
+      const r = await fetch(`${API}/api/gatekeeper/synthesize`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json().catch(() => ({}));
+      setSynthMsg(r.ok ? { ok: true, text: j.message || '已派发合成任务' } : { ok: false, text: j.error || '触发失败' });
+    } finally { setBusy(false); }
+  };
+
   const submitOrder = async () => {
     setBusy(true);
     try {
@@ -141,8 +151,15 @@ export default function GatekeeperCockpit() {
       {/* AI 经理判断流已并入顶部「目标驱动」卡 (同一个 AI 经理, 不拆两块). Pro 升级提示见守门员台. */}
 
       {/* === 📦 策略库 + 覆盖 === */}
-      <Section icon={<InventoryIcon sx={{ color: palette.accent }} />} title={`策略库 · ${data.library?.count} 个模版`}>
+      <Section icon={<InventoryIcon sx={{ color: palette.accent }} />} title={`策略库 · ${data.library?.count} 个模版`}
+        chip={hasGatekeeper ? (
+          <Button size="small" variant="outlined" disabled={busy} onClick={synthesize}
+            sx={{ minWidth: 0, px: 1.25, py: 0.1, fontSize: 11, ml: 'auto' }}>
+            🧬 合成补库
+          </Button>
+        ) : null}>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>守门员从这个库按行情匹配策略 (regime×周期覆盖):</Typography>
+        {synthMsg && <Typography variant="caption" sx={{ display: 'block', mb: 1, color: synthMsg.ok ? palette.success : palette.error }}>{synthMsg.text}</Typography>}
         <Grid container spacing={0.5}>
           {['trend', 'range'].map((reg) => ['5m', '15m', '1h', '4h'].map((tf) => {
             const n = (data.library?.coverage?.[reg]?.[tf] || []).length;

@@ -21,6 +21,8 @@ import {
 // Phase 12.19: TradingView Widget 替代 lightweight-charts (BTCChart)
 //   + TradesTimeline 替代 K 线 markers (策略动作独立面板)
 import TradingViewWidget from '../components/TradingViewWidget';
+// Phase 15 UI: 交易视图 (lightweight-charts + AI操作标记 + 手动面板)
+import TradeView from '../components/TradeView';
 import TradesTimeline from '../components/TradesTimeline';
 // Phase 12.15.2: secondary panel lazy load — 減小 main bundle，首屏加快
 const RegimePanel = lazy(() => import('../components/RegimePanel'));
@@ -209,6 +211,8 @@ export default function Dashboard() {
   const [tfBtc, setTfBtc] = useState('1h');
   const [chartSymbol, setChartSymbol] = useState('BTC/USDT');
   const [supportedSymbols, setSupportedSymbols] = useState([]);
+  // Phase 15 UI: 图表视图切换 — 'trade'=交易视图(AI操作标记+手动面板) / 'pro'=专业指标图(TV widget)
+  const [chartView, setChartView] = useState('trade');
   // Phase 12.19: indicators state 已删除（TV widget 自带指标 dropdown，前端不再控制）
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -637,7 +641,7 @@ export default function Dashboard() {
               )}
             </Box>
 
-            {/* === Timeframe 切換器（指標 chips 已删 — TV widget 自带）=== */}
+            {/* === Timeframe 切換器 + 视图切换 === */}
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1, alignItems: 'center' }}>
               <Typography variant="caption" sx={{ color: 'text.secondary', mr: 0.5, fontSize: '0.65rem' }}>TF:</Typography>
               {['15m', '30m', '1h', '4h', '1d', '1w'].map(tf => (
@@ -660,14 +664,39 @@ export default function Dashboard() {
                   {tf}
                 </Box>
               ))}
+              {/* Phase 15 UI: 交易视图(AI标记+手动) / 专业指标图 切换 */}
+              <Box sx={{ ml: 'auto', display: 'flex', gap: 0.5 }}>
+                {[['trade', '交易视图'], ['pro', '专业图']].map(([v, label]) => (
+                  <Box
+                    key={v}
+                    component="button"
+                    onClick={() => setChartView(v)}
+                    sx={{
+                      cursor: 'pointer', px: 1, py: 0.2,
+                      border: '1px solid',
+                      borderColor: chartView === v ? C.gold : 'rgba(255,255,255,0.12)',
+                      color: chartView === v ? C.gold : C.textDim,
+                      bgcolor: chartView === v ? 'rgba(251,191,36,0.1)' : 'transparent',
+                      fontSize: '0.65rem', fontWeight: 700, borderRadius: 0.5,
+                    }}
+                  >
+                    {label}
+                  </Box>
+                ))}
+              </Box>
             </Box>
 
-            {/* Phase 12.19: TradingView Widget — 替代 lightweight-charts，自带专业指标 + auto-scale + 倒计时 */}
-            <TradingViewWidget
-              symbol={chartSymbol}
-              timeframe={tfBtc}
-              height={720}
-            />
+            {chartView === 'trade' ? (
+              /* Phase 15 UI: 交易视图 — K线 + 守门员/AI经理操作标记(开仓▲平仓▼/SL/TP台阶) + 手动交易面板 */
+              <TradeView symbol={chartSymbol} timeframe={tfBtc} />
+            ) : (
+              /* Phase 12.19: TradingView Widget — 专业指标 (MACD/RSI) + auto-scale + 倒计时 */
+              <TradingViewWidget
+                symbol={chartSymbol}
+                timeframe={tfBtc}
+                height={720}
+              />
+            )}
 
             {btcPrice && (
               <Box sx={{

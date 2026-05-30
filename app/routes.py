@@ -1792,6 +1792,45 @@ def manual_order():
                     'simulated': bool(order.get('simulated'))}), 200
 
 
+@api_bp.route('/trade-view/<path:symbol>', methods=['GET'])
+@require_actor
+def trade_view(symbol):
+    """Phase 15 UI: 交易视图数据 — 守门员/AI经理在该 symbol 上的真实操作 (开仓 entry/SL/TP台阶线)
+    + 近期成交进出场标记。前端 lightweight-charts 叠加到 K 线。多租户隔离 (scoped_query)。"""
+    from app.services.gatekeeper_dashboard import trade_view_payload
+    from app.services.llm_prompts.strategy_profile import strategy_display_name
+    positions = scoped_query(Position).filter_by(status='open', symbol=symbol).all()
+    tq = scoped_query(Trade).filter(Trade.symbol == symbol, Trade.exit_time.isnot(None))
+    tq = _real_trades_filter(tq)   # 14k-100: 排除 orphan 虚拟 trades
+    trades = tq.order_by(Trade.exit_time.desc()).limit(20).all()
+    return jsonify(trade_view_payload(positions, trades, strategy_display_name))
+
+
+@api_bp.route('/gatekeeper/synthesize', methods=['POST'])
+@rate_limit('6/hour')
+@require_tier('pro')
+def gatekeeper_synthesize():
+    """Phase 15 UI: 手动触发合成补库 — AI 看行情 + 难度基调合成新策略进守门员库, 优先补核心薄弱维度。
+    异步 (Celery), 走与 cron 同一条 walk-forward 过门槛链路。优先补 core_thin 的 TF。"""
+    from app.tasks.strategy_tasks import synthesize_dynamic_strategy
+    from app.services.llm_prompts.strategy_profile import coverage_summary
+    from app.services.gatekeeper_live import WATCHED_SYMBOLS
+    data = request.get_json() or {}
+    uid = current_user_id() or 1
+    target_tf = data.get('target_timeframe')
+    if not target_tf:
+        # 没指定 → 自动挑核心最薄弱 TF
+        try:
+            ct = coverage_summary().get('core_thin') or []
+            target_tf = ct[0][1] if ct else '15m'
+        except Exception:
+            target_tf = '15m'
+    symbol = data.get('symbol') or (WATCHED_SYMBOLS[0] if WATCHED_SYMBOLS else 'BTC/USDT')
+    synthesize_dynamic_strategy.delay(user_id=uid, symbol=symbol, hint='tf_gap', target_timeframe=target_tf)
+    return jsonify({'ok': True, 'target_timeframe': target_tf, 'symbol': symbol,
+                    'message': f'已派发合成任务 (补 {target_tf} 维度) — 回测过门槛后自动进库'}), 202
+
+
 @api_bp.route('/audit', methods=['GET'])
 @require_admin
 def list_audit():
