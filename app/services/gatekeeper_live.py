@@ -59,12 +59,14 @@ def _to_candles(rows) -> list:
             for x in rows]
 
 
-def _target_and_days() -> tuple[float, int]:
-    """从 active ProfitTarget 取 目标% + 剩余天 (AI 难度基调的输入)。无则给保守默认。"""
+def _target_and_days(user_id: int = 1) -> tuple[float, int]:
+    """从该 user 的 active ProfitTarget 取 目标% + 剩余天 (AI 难度基调的输入)。无则给保守默认。
+    ③ (2026-05-30): 按 user_id 取目标 (per-user 守门员各自的难度信封); 默认 1 = admin, 行为不变。"""
     try:
         from app.models import ProfitTarget
         import datetime as _dt
-        pt = ProfitTarget.query.filter_by(status='active').order_by(ProfitTarget.id.desc()).first()
+        pt = (ProfitTarget.query.filter_by(status='active', user_id=user_id)
+              .order_by(ProfitTarget.id.desc()).first())
         if pt:
             days = 30
             if pt.deadline:
@@ -75,10 +77,12 @@ def _target_and_days() -> tuple[float, int]:
     return 5.0, 30
 
 
-def gatekeeper_live_cycle() -> dict:
-    """守门员一轮 live 扫描 (beat */15 调). 返回 {mode, scanned, decisions:[...]}。"""
+def gatekeeper_live_cycle(user_id: int = 1) -> dict:
+    """守门员一轮 live 扫描 (beat */15 调). 返回 {mode, scanned, decisions:[...]}。
+    ③ (2026-05-30): user_id 参数化 — 默认 1=admin 行为完全不变; per-user 枚举调用方逐人传 (Stage 3)。
+    cfg 用 user-scoped (get_config(user_id)); user 1 无 UserConfig override → == 全局, admin 不变。"""
     from app.services.config_service import get_config
-    cfg = get_config()
+    cfg = get_config(user_id=user_id)
     mode = cfg.get('gatekeeper_live_mode', 'off')
     if mode == 'off':
         return {'mode': 'off', 'scanned': 0, 'decisions': []}
@@ -91,16 +95,16 @@ def gatekeeper_live_cycle() -> dict:
     from app.services.gatekeeper import gatekeeper_decide
     from app.services.profit_difficulty import profit_difficulty, monthly_equiv
 
-    target_pct, days_remaining = _target_and_days()
+    target_pct, days_remaining = _target_and_days(user_id)
     lev_cap = profit_difficulty(monthly_equiv(target_pct, days_remaining)).get('leverage_cap') or 5
-    route_ex = _primary_exchange(1)   # 本轮路由所 → 规格/费率/最小单按它喂给 AI 经理
+    route_ex = _primary_exchange(user_id)   # 本轮路由所 → 规格/费率/最小单按它喂给 AI 经理
     min_feasible = 10.0 / max(float(lev_cap), 1.0)   # 能开的最小保证金 (HL最小$10 ÷ 最大杠杆)
     decisions = []
     for sym in WATCHED_SYMBOLS:
         try:
             # 组合层资金闸 (user 2026-05-30): 先算账户还剩多少子弹 — 没子弹直接跳过, 不问经理 (省 LLM,
             # 也不当子弹无限). 有则把可用额度传给经理在剩余内下注 (逐币重算 → 前一个币开了这个就看到减少).
-            avail = _free_budget(1, route_ex, RESERVE_PCT)
+            avail = _free_budget(user_id, route_ex, RESERVE_PCT)
             if avail < min_feasible:
                 decisions.append({'symbol': sym, 'action': 'skip',
                                   'reason': f'资金闸: 可用额度 ${avail:.1f} 不足开新仓 (留{int(RESERVE_PCT*100)}%安全垫)'})
@@ -115,7 +119,7 @@ def gatekeeper_live_cycle() -> dict:
             d = gatekeeper_decide(sym, base, aux, BASE_TF,
                                   target_pct=target_pct, days_remaining=days_remaining,
                                   lev=float(lev_cap), record=True, record_source='live',
-                                  exchange=route_ex, available_usdt=avail)
+                                  exchange=route_ex, available_usdt=avail, user_id=user_id)
             d['symbol'] = sym
             decisions.append({k: d.get(k) for k in
                               ('symbol', 'action', 'regime', 'direction', 'strategy',
@@ -125,7 +129,7 @@ def gatekeeper_live_cycle() -> dict:
                     _notify_shadow_enter(sym, d, target_pct)
                 elif mode in ('paper', 'live'):
                     order_mode = 'paper' if mode == 'paper' else cfg.get('trading_mode', 'paper')
-                    _execute_live_enter(sym, d, lev_cap, cfg, order_mode)
+                    _execute_live_enter(sym, d, lev_cap, cfg, order_mode, user_id=user_id)
         except Exception as e:
             decisions.append({'symbol': sym, 'action': 'error',
                               'reason': f'{type(e).__name__}: {e}'})
@@ -202,9 +206,10 @@ def _resolve_gk_params(user_id: int, ai_lev: float, cfg: dict) -> dict:
             'size_usdt': float(ucfg.get('trade_size_usdt') or 10.0), 'source': 'user(pro)'}
 
 
-def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode: str):
+def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode: str, user_id: int = 1):
     """守门员开仓 (paper=模拟成交真价格 / live=真下单). 仓位杠杆=AI难度基调(lev传入),
-    size=cfg trade_size; 建仓后由 gatekeeper_exit_manage 跑引擎分批出场。"""
+    size=cfg trade_size; 建仓后由 gatekeeper_exit_manage 跑引擎分批出场。
+    ③ (2026-05-30): user_id 参数化 (默认 1=admin 不变) — 账户/creds/host策略/持仓都按本 user。"""
     from app.models import Position, db
     from app.services.exchange_service import get_ticker
     from app.services.segment_exit import new_exit_state
@@ -213,7 +218,6 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
     side = d.get('side')
     if side not in ('long', 'short'):
         return
-    user_id = 1
     # 独占 first-mover: 该 symbol 有任何 open 持仓(守门员或现有策略)→ 跳过, 等平了再开.
     # 防 HL cross-margin 同币 netting 把仓合并 → PnL 归属混乱 (12.35.1 first-mover 同理).
     exists = Position.query.filter_by(symbol=symbol, status='open').first()

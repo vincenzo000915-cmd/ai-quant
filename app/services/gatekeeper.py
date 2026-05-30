@@ -105,7 +105,7 @@ def _ev_for_params(stype, base_is, aux, base_tf, lev, init_sl, tp1_r, tp2_r, tp3
 
 def _manager_params_and_ev(symbol, stype, perception, base_is, aux, base_tf,
                            target_pct, days_remaining, fallback_lev, exchange='hyperliquid',
-                           available_usdt=None):
+                           available_usdt=None, user_id: int = 1):
     """钥匙: 守门员问 AI 经理要参数 → 回测EV把关。返回 {skip, params, ev, ev_r, fills, manager}。
     经理失败 → 回退机械 _optimize_params (不阻断守门员)。
     EV 回测用本单路由所的真实费率 (HL 0.035 / OKX 0.05) — 否则 EV 与实盘成本脱节。
@@ -115,8 +115,10 @@ def _manager_params_and_ev(symbol, stype, perception, base_is, aux, base_tf,
     fee = exchange_fee_pct(exchange)
     prof_row = StrategyProfile.query.filter_by(strategy_type=stype).first()
     prof = prof_row.profile if prof_row else {}
+    # ③ 成本铁律 (2026-05-30): 穿真实 user_id → call_llm 用该 user 自己绑的 key (没绑→ok=False→机械回退),
+    # 绝不让非 admin 用户 billing 到 admin 的 claude_cli。见 [[project-tier-architecture-skills-shell]].
     mp = ai_manager_params(symbol, stype, perception, prof, target_pct, days_remaining,
-                           exchange=exchange, base_tf=base_tf, available_usdt=available_usdt)
+                           user_id=user_id, exchange=exchange, base_tf=base_tf, available_usdt=available_usdt)
     if mp.get('ok') and mp.get('skip'):
         return {'skip': True, 'manager': {'used': True, 'reason': mp.get('reason_zh')}}
     if mp.get('ok'):
@@ -144,7 +146,7 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
                       base_tf: str = '15m', target_pct: float = 5.0,
                       days_remaining: int = 30, lev: float = 10.0,
                       record: bool = False, record_source: str = 'offline',
-                      exchange: str = 'hyperliquid', available_usdt=None) -> dict:
+                      exchange: str = 'hyperliquid', available_usdt=None, user_id: int = 1) -> dict:
     """守门员一次决策 (offline). 返回 {action: 'enter'|'wait', ...}。
 
     enter: {action, regime, strategy, params, expected_ev, candidates_n, triggered}
@@ -155,7 +157,7 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
     available_usdt: 守门员组合层资金闸算好的可用额度 (live 传; offline=None→经理拉总权益)。
     """
     decision = _gatekeeper_decide_inner(symbol, base_candles, aux_candles,
-                                        base_tf, target_pct, days_remaining, lev, exchange, available_usdt)
+                                        base_tf, target_pct, days_remaining, lev, exchange, available_usdt, user_id)
     if record:
         try:
             from app.services.gatekeeper_learning import record_decision
@@ -170,7 +172,8 @@ def gatekeeper_decide(symbol: str, base_candles: list, aux_candles: list,
 
 
 def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
-                             target_pct, days_remaining, lev, exchange='hyperliquid', available_usdt=None):
+                             target_pct, days_remaining, lev, exchange='hyperliquid', available_usdt=None,
+                             user_id: int = 1):
     # ① 富市场感知 (regime+方向+波动+量+MTF+形态动能+funding+指标状态)
     from app.services.market_perception import perceive_market
     perc = perceive_market(symbol, base_candles, aux_candles, base_tf)
@@ -204,7 +207,7 @@ def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
     best = None; skipped = []
     for s in triggered:
         m = _manager_params_and_ev(symbol, s['strategy'], perc, base_candles, aux_candles,
-                                   base_tf, target_pct, days_remaining, lev, exchange, available_usdt)
+                                   base_tf, target_pct, days_remaining, lev, exchange, available_usdt, user_id)
         if m.get('skip'):
             skipped.append({'strategy': s['strategy'], 'reason': (m.get('manager') or {}).get('reason')})
             continue   # AI 经理判断这单不该开 (行情踩中策略弱点)
