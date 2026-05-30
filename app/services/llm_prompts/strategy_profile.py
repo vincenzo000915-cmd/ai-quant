@@ -95,6 +95,116 @@ def get_builtin_signal_source(strategy_type: str) -> str | None:
         return None
 
 
+_BUILTIN_NAMES = {
+    'macd': 'MACD 动能', 'rsi': 'RSI 超买超卖', 'bollinger': '布林带', 'stochastic': '随机指标',
+    'ma_crossover': '均线交叉', 'trend_following': '趋势跟随', 'volatility_breakout': '波动率突破',
+    'mean_reversion': '均值回归', 'supertrend': 'SuperTrend', 'vwap_reversion': 'VWAP 回归',
+    'keltner_channel': '肯特纳通道', 'cci_reversal': 'CCI 反转', 'atr_breakout': 'ATR 突破',
+    'heikin_ashi': '平均 K 线', 'ichimoku': '一目均衡', 'tema': 'TEMA 均线', 'psar': '抛物线 SAR',
+    'golden_cross': '黄金交叉', 'macd_trend_filter': 'MACD 趋势', 'weekly_pivot': '周枢轴点',
+}
+
+
+def strategy_display_name(strategy_type: str) -> str:
+    """type → 用户可读策略名 (TG/UI 用; 不暴露 cand_cat_X_u1_timestamp 这种丑函数名)。
+    内置→中文名表; cand_*→从 Strategy.name 中段 或 candidate.source_name 取干净名; 兜底美化 type。"""
+    if not strategy_type:
+        return '策略'
+    if strategy_type in _BUILTIN_NAMES:
+        return _BUILTIN_NAMES[strategy_type]
+    try:
+        from app.models import Strategy, StrategyCandidate
+        s = Strategy.query.filter_by(type=strategy_type).first()
+        if s and s.name and ' · ' in s.name:
+            mid = s.name.split(' · ')
+            if len(mid) >= 2 and mid[1].strip():
+                return mid[1].strip()        # "SUI/USDT · 经典枢轴点突破 · #132" → "经典枢轴点突破"
+        ctype = strategy_type[len('cand_'):] if strategy_type.startswith('cand_') else strategy_type
+        c = StrategyCandidate.query.filter_by(candidate_type=ctype).order_by(StrategyCandidate.updated_at.desc()).first()
+        if c and c.source_name:
+            nm = c.source_name.replace('AI 推荐', '').replace('·', '').strip()
+            nm = nm.split('(')[0].strip()
+            if nm and not nm.startswith('cat_'):
+                return nm                    # "AI 推荐 · 经典枢轴点突破" → "经典枢轴点突破"
+    except Exception:
+        pass
+    # 兜底: 去前缀/后缀美化 (cand_cat_pivot_classic_break_u1_2026.. → "Pivot Classic Break")
+    base = strategy_type
+    if base.startswith('cand_cat_'):
+        base = base[len('cand_cat_'):]
+    elif base.startswith('cand_'):
+        base = base[len('cand_'):]
+    import re
+    base = re.sub(r'_u\d+_\d+$', '', base)
+    return base.replace('_', ' ').title() or strategy_type
+
+
+def get_candidate_signal_source(strategy_type: str) -> str | None:
+    """候选/合成策略 (cand_*) 的信号源码 — 存 StrategyCandidate.parsed_signal (动态编译, inspect 取不到)。"""
+    try:
+        from app.models import StrategyCandidate
+        keys = [strategy_type]
+        if strategy_type.startswith('cand_'):
+            keys.append(strategy_type[len('cand_'):])
+        for k in keys:
+            c = (StrategyCandidate.query.filter_by(candidate_type=k, status='promoted')
+                 .order_by(StrategyCandidate.updated_at.desc()).first())
+            if c and c.parsed_signal:
+                return c.parsed_signal
+    except Exception:
+        pass
+    return None
+
+
+def get_any_signal_source(strategy_type: str) -> str | None:
+    """统一取信号源码: 内置 type 走 builtin, cand_* 走 candidate.parsed_signal。"""
+    return get_builtin_signal_source(strategy_type) or get_candidate_signal_source(strategy_type)
+
+
+def backfill_pool_profiles(types: list | None = None, limit: int | None = None,
+                           user_id: int = 1) -> dict:
+    """给「策略池」(非退役 managed 策略 + 候选) 里缺画像的 type 批量补画像 → 进守门员选择库。
+    user 2026-05-30: 20内置=基础 + 策略池也补画像 = AI学习库, 越多守门员选择越多. 飞轮合成产出也走这里。
+    **按源码去重** (多个 cand_cat_X 时间戳克隆同逻辑 → 只 LLM 一次, 复制给同源的)。返回 {profiled, skipped, errors}。"""
+    import hashlib
+    from app.models import db, Strategy, StrategyProfile
+    if types is None:
+        types = sorted({s.type for s in Strategy.query.filter(Strategy.status != 'retired').all()})
+    have = {p.strategy_type for p in StrategyProfile.query.all()}
+    todo = [t for t in types if t not in have]
+    if limit:
+        todo = todo[:limit]
+    src_cache = {}   # source_hash -> profile dict (去重)
+    profiled = 0; skipped = 0; errors = []
+    for t in todo:
+        src = get_any_signal_source(t)
+        if not src:
+            skipped += 1; continue
+        h = hashlib.sha256(src.encode()).hexdigest()[:16]
+        prof = src_cache.get(h)
+        if prof is None:
+            r = generate_strategy_profile(t, src, user_id=user_id)
+            if not r.get('ok'):
+                errors.append(f'{t}: {r.get("error")}'); continue
+            prof = {k: r.get(k) for k in ('indicators', 'entry_logic', 'direction',
+                    'regime_fit', 'timeframe_fit', 'edge_source', 'weakness', 'summary_zh')}
+            src_cache[h] = prof
+        try:
+            row = StrategyProfile.query.filter_by(strategy_type=t).first()
+            if row is None:
+                row = StrategyProfile(strategy_type=t, profile=prof,
+                                      source='catalog' if t.startswith('cand_') else 'builtin')
+                db.session.add(row)
+            else:
+                row.profile = prof
+            db.session.commit()
+            profiled += 1
+        except Exception as e:
+            db.session.rollback(); errors.append(f'{t}: persist {e}')
+    return {'profiled': profiled, 'skipped': skipped, 'errors': errors,
+            'unique_sources': len(src_cache), 'todo': len(todo)}
+
+
 def coverage_summary() -> dict:
     """策略池覆盖摘要: regime×周期 格子哪些有策略/哪些空 (供合成AI知道该补哪个缺口, 不重复造)。
     返回 {grid: {regime: {tf: [strategies]}}, gaps: [(regime,tf)], filled: [(regime,tf,n)]}."""

@@ -309,10 +309,11 @@ def _notify_live_enter(symbol, d, fill, lev, order_mode, pos_id):
         regime_zh = {'trend': '趋势', 'range': '震荡'}.get(d.get('regime'), d.get('regime') or '')
         dir_read = {'up': '偏多', 'down': '偏空', 'flat': '横盘'}.get(d.get('direction'), '')
         reasons = '、'.join((d.get('match_reasons') or [])[:2]) if d.get('match_reasons') else ''
+        from app.services.llm_prompts.strategy_profile import strategy_display_name
         telegram_service.send(
             f"🎯 <b>守门员开仓</b>{tag}\n"
             f"<b>{s} · {dir_zh}</b>\n"
-            f"选用策略：<b>{(d.get('strategy') or '').upper()}</b>"
+            f"选用策略：<b>{strategy_display_name(d.get('strategy'))}</b>"
             + (f"（配对分 {d.get('match_score')}）" if d.get('match_score') else "") + "\n"
             f"市场判读：{regime_zh}{('/' + dir_read) if dir_read else ''}"
             + (f" · {reasons}" if reasons else "") + "\n"
@@ -478,7 +479,8 @@ def _notify_gk_close(pos, gk):
         pnl = gk.get('pnl', 0.0)
         emo = '🟢' if pnl >= 0 else '🔴'
         label, r_mult = _exit_summary(pos, gk)
-        stype = (gk.get('strategy') or '').upper()
+        from app.services.llm_prompts.strategy_profile import strategy_display_name
+        stype = strategy_display_name(gk.get('strategy')) if gk.get('strategy') else ''
         telegram_service.send(
             f"{emo} <b>守门员平仓</b>{tag}\n"
             f"<b>{s} · {dir_zh}</b>" + (f" · 策略 {stype}" if stype else "") + "\n"
