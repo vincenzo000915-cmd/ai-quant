@@ -30,6 +30,13 @@ beat_schedule = {
         'options': {'expires': 1800},   # 14k-80: 30min, 下次 1h 再派
     },
 
+    # === Phase 15 学习飞轮②: 守门员 live 扫描 (每15分; off/shadow/live 灰度, 受 halted 管) ===
+    'gatekeeper-live-scan': {
+        'task': 'app.tasks.strategy_tasks.gatekeeper_live_scan',
+        'schedule': crontab(minute='*/15'),
+        'options': {'expires': 600},   # 10min 内没跑就丢, 下个15分周期再派
+    },
+
     # === 波段/長線策略（4h）===
     'run-long-strategies': {
         'task': 'app.tasks.strategy_tasks.run_strategy_signals',

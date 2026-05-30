@@ -436,6 +436,9 @@ class Position(db.Model):
     # Phase 14k-158: 移动止盈状态 — 持仓期最有利价 (long=最高/short=最低), trailing 棘轮基准.
     # NULL = 非 atr 仓/未初始化, trailing 不生效 (flat_pct 仓不受影响).
     peak_price = db.Column(db.Float, nullable=True)
+    # Phase 15 学习飞轮: 该仓由守门员 live 决策开的 → 关联 gatekeeper_decisions.id,
+    # 平仓时回填 realized_pnl 完成真盈亏校准环 (gatekeeper_learning.record_outcome).
+    gatekeeper_decision_id = db.Column(db.Integer, nullable=True, index=True)
     opened_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     closed_at = db.Column(db.DateTime)
 
@@ -663,6 +666,10 @@ class SystemConfig(db.Model):
     ai_decision_mode = db.Column(db.String(20), default='manual')
     auto_apply_max_running = db.Column(db.Integer, default=8)
 
+    # Phase 15 学习飞轮: 守门员 live 模式总开关 (off=不动 / shadow=记录实时决策不下单 / live=真下单)
+    # 接 live 入场路径的灰度闸; 受 halted(kill switch) 管. 蓝图 project-phase15-blueprint 九.6.
+    gatekeeper_live_mode = db.Column(db.String(10), default='off')
+
     updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     def to_dict(self):
@@ -698,6 +705,7 @@ class SystemConfig(db.Model):
             'auto_promote_min_oos_sharpe': self.auto_promote_min_oos_sharpe or 1.5,
             'ai_decision_mode': self.ai_decision_mode or 'manual',
             'auto_apply_max_running': self.auto_apply_max_running or 8,
+            'gatekeeper_live_mode': self.gatekeeper_live_mode or 'off',
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 

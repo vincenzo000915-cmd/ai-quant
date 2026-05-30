@@ -46,6 +46,8 @@ DEFAULTS = {
     # Phase 14c
     'ai_decision_mode': 'manual',
     'auto_apply_max_running': 8,
+    # Phase 15 学习飞轮: 守门员 live 总开关 (off | shadow | live)
+    'gatekeeper_live_mode': 'off',
 }
 
 

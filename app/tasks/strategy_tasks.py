@@ -348,6 +348,17 @@ def run_strategy_signals_ultra():
     return _run_signals(None, category_filter='ultra')
 
 
+@celery_app.task
+def gatekeeper_live_scan():
+    """Phase 15 学习飞轮②: 守门员 live 扫描 (beat */15).
+    灰度 off/shadow/live (config gatekeeper_live_mode); 受 halted(kill switch) 管.
+    shadow=记录实时决策+TG通知不下单; live=真下单(第二段). 见 gatekeeper_live.py。"""
+    from app.services.gatekeeper_live import gatekeeper_live_cycle
+    r = gatekeeper_live_cycle()
+    enters = [d for d in r.get('decisions', []) if d.get('action') == 'enter']
+    return f"gatekeeper_live[{r.get('mode')}] scanned={r.get('scanned')} enter={len(enters)}"
+
+
 def _strategy_ev(strategy) -> float:
     """Phase 14k-131: 单笔期望值 EV = p_win×avg_win − (1−p_win)×|avg_loss|.
     读最近一条缓存 BacktestResult (不现算回测, 避开 14k-79 CPU 雪崩).
