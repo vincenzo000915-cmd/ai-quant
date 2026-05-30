@@ -233,9 +233,30 @@ def _native_tp_price(side, entry, r, R):
     return entry * (1 + d) if side == 'long' else entry * (1 - d)
 
 
+HL_MIN_NOTIONAL = 10.5   # HL 单笔最低 $10 (留 0.5 buffer 防触发时价格波动跌破)
+
+
+def _feasible_tp_plan(base_size, entry, side, exit_params):
+    """按 HL $10 最低单笔自适应分批: 贪心累加 frac 到 chunk≥$10 才成一笔 TP, 挂在该组**最远**R
+    (让先该出的也跟到更远=不亏); 剩余零头(<$10)不挂、让 trailing SL 收. 返回 [(level_r, frac, key)].
+    大仓位→正常50/30/20; 小仓位(如$20)→自动退化成1-2笔, 不再 minTradeNtlRejected."""
+    R = exit_params['init_sl_pct']
+    tps = [(exit_params['tp1_r'], exit_params['tp1_frac']),
+           (exit_params['tp2_r'], exit_params['tp2_frac']),
+           (exit_params['tp3_r'], round(1 - exit_params['tp1_frac'] - exit_params['tp2_frac'], 4))]
+    plan = []; acc = 0.0
+    for i, (r, frac) in enumerate(tps):
+        acc += frac
+        px = _native_tp_price(side, entry, r, R)
+        if base_size * acc * px >= HL_MIN_NOTIONAL:
+            plan.append((r, round(acc, 4), f'tp{len(plan)+1}')); acc = 0.0
+    # 剩余零头 acc>0 且 <$10: 不挂(由 trailing SL 收); 若整仓一笔都凑不够则 plan 空(纯靠SL/trailing)
+    return plan
+
+
 def _place_native_brackets(pos, side, entry, base_size, exit_params):
     """开仓后挂原生 reduce-only 止损/分批止盈 trigger 单 (HL 服务端执行)。
-    SL 全仓 @ init_sl; TP1/2/3 各按 frac @ 对应R价位。oid 存 gk_exit['oids'] 供棍轮撤换。"""
+    SL 全仓 @ init_sl; TP 按 _feasible_tp_plan 自适应(过 $10 最低). oid 存 gk_exit['oids']。"""
     from app.models import db
     from app.services.hyperliquid_creds import get_decrypted_for_user
     from app.services.hyperliquid_service import place_hl_trigger
@@ -251,15 +272,18 @@ def _place_native_brackets(pos, side, entry, base_size, exit_params):
     oids['sl'] = r_sl.get('oid'); oids['sl_px'] = r_sl.get('trigger_px')
     if not r_sl.get('ok'):
         print(f"[gatekeeper_live] {pos.symbol} SL trigger 失败: {r_sl.get('reject_reason')}")
-    # TP1/2/3 (分批)
-    for key, r_mult, frac in (('tp1', exit_params['tp1_r'], exit_params['tp1_frac']),
-                              ('tp2', exit_params['tp2_r'], exit_params['tp2_frac']),
-                              ('tp3', exit_params['tp3_r'], 1 - exit_params['tp1_frac'] - exit_params['tp2_frac'])):
+    # 分批 TP — 自适应 $10 最低 (小仓位自动合并, 不再被拒)
+    plan = _feasible_tp_plan(base_size, entry, side, exit_params)
+    oids['tp_plan'] = []   # [(level_r, frac, oid)] 实际挂上的
+    for r_mult, frac, key in plan:
         tp_px = _native_tp_price(side, entry, r_mult, R)
         rr = place_hl_trigger(pos.symbol, side, tp_px, base_size * frac, 'tp', creds)
         oids[key] = rr.get('oid')
+        oids['tp_plan'].append({'r': r_mult, 'frac': frac, 'oid': rr.get('oid'), 'notional': round(base_size*frac*tp_px,2)})
         if not rr.get('ok'):
-            print(f"[gatekeeper_live] {pos.symbol} {key} trigger 失败: {rr.get('reject_reason')}")
+            print(f"[gatekeeper_live] {pos.symbol} {key}(${round(base_size*frac*tp_px,1)}) trigger 失败: {rr.get('reject_reason')}")
+    if not plan:
+        print(f"[gatekeeper_live] {pos.symbol} 仓位太小凑不出$10分批, 纯靠 SL+trailing 出场")
     pos.gk_exit['oids'] = oids
     flag_modified(pos, 'gk_exit'); db.session.commit()
 
@@ -397,13 +421,42 @@ def _notify_gk_close(pos, gk):
 # ⚠️ 交易所服务端行为(触发成交/撤单时序/真盈亏)无法paper验证, 第一笔真单必须盯.
 # ============================================================
 
+def _compute_native_sl(side, entry, p, closed_frac, tp_plan, peak_px, cur_px):
+    """按**真实状态**算 SL 该在的价位 (棍轮取最有利). 不依赖价格猜成交:
+      ① 初始 SL ② 保本(价到 be_activate_r → 移 entry+fee) ③ 锁TP台阶(按**真实已平比例**, 平到哪个
+      已挂TP的累计frac就锁到那个TP价位) ④ trailing(峰值 ∓ trail_r×R)。"""
+    R = p['init_sl_pct']
+    def at_r(r):
+        d = r * R / 100.0
+        return entry * (1 + d) if side == 'long' else entry * (1 - d)
+    cands = [entry * (1 - R / 100) if side == 'long' else entry * (1 + R / 100)]   # ① init
+    favR = ((cur_px - entry) if side == 'long' else (entry - cur_px)) / entry * 100
+    # ② 保本
+    if p.get('use_breakeven', True) and favR >= p.get('be_activate_r', 0.3) * R:
+        fee_rt = p.get('fee_pct', 0.035) / 100.0 * 2
+        cands.append(entry * (1 + fee_rt) if side == 'long' else entry * (1 - fee_rt))
+    # ③ 锁TP台阶 (真实已平比例)
+    if p.get('lock_at_tp') and tp_plan:
+        cum = 0.0
+        for t in tp_plan:
+            cum += t.get('frac', 0)
+            if closed_frac >= cum - 0.02:
+                cands.append(at_r(t['r']))
+    # ④ trailing
+    tr = p.get('trail_r')
+    if tr is not None and peak_px:
+        td = tr * R / 100.0
+        cands.append(peak_px * (1 - td) if side == 'long' else peak_px * (1 + td))
+    return max(cands) if side == 'long' else min(cands)
+
+
 def _manage_native_position(pos, gk) -> dict:
+    """真·fill驱动: 按 HL 真实持仓 size 减少判定成交(非价格猜) → 才TG通知、才棍轮SL。"""
     from app.models import db
-    from app.services.exchange_service import fetch_ohlcv
-    from app.services.segment_exit import exit_step
     from app.services.gatekeeper_learning import record_outcome
     from app.services.hyperliquid_creds import get_decrypted_for_user
     from app.services.hyperliquid_service import get_hl_position_size, cancel_hl_order
+    from app.services.exchange_service import get_ticker
     from sqlalchemy.orm.attributes import flag_modified
     import datetime as _dt
 
@@ -413,8 +466,10 @@ def _manage_native_position(pos, gk) -> dict:
     if not creds:
         return {'managed': 0, 'closed': 0}
     cur_size = abs(get_hl_position_size(pos.symbol, creds))
+    cur_px = get_ticker(pos.symbol)['price']
+    tp_plan = (gk.get('oids') or {}).get('tp_plan') or []
 
-    # 全平 (SL 或 TP3 成交 → HL 上已无仓)
+    # 全平 (SL 或最后 TP 成交 → HL 已无仓)
     if orig > 0 and cur_size <= orig * 0.02:
         pnl = _native_realized_pnl(pos, gk, creds)
         for k in ('sl', 'tp1', 'tp2', 'tp3'):
@@ -429,30 +484,38 @@ def _manage_native_position(pos, gk) -> dict:
         _notify_gk_close(pos, gk); db.session.commit()
         return {'managed': 1, 'closed': 1}
 
-    # 推进 exit_step 算 SL 该在哪 (喂新 5m bars); 忽略其 closes — 原生 trigger 执行 TP/SL
-    last_ts = gk.get('last_ts', 0)
-    try:
-        rows = fetch_ohlcv(pos.symbol, AUX_TF, limit=200) or []
-    except Exception:
-        return {'managed': 1, 'closed': 0}
-    new_bars = [r for r in rows if r['timestamp'] > last_ts]
-    old_sl = state['sl']; newly = []
-    for bar in new_bars:
-        b1, b2 = state['tp1'], state['tp2']
-        exit_step(state, bar, params)
-        if state['tp1'] and not b1:
-            newly.append('TP1')
-        if state['tp2'] and not b2:
-            newly.append('TP2')
-        gk['last_ts'] = bar['timestamp']
+    # 真实已平比例 (HL 持仓减少 = 真成交; minTradeNtl 被拒不会减 → 不会误判)
+    closed_frac = max(0.0, 1 - cur_size / orig) if orig > 0 else 0.0
+    last_frac = gk.get('last_closed_frac', 0.0)
+    # 峰值 (棍轮 trailing 基准)
+    pk = gk.get('peak')
+    gk['peak'] = (max(pk, cur_px) if pk else cur_px) if side == 'long' else (min(pk, cur_px) if pk else cur_px)
 
-    # SL 该上移 (保本/锁TP台阶/trail 算出新位) → 撤旧 SL 挂新 (按当前剩余 size)
-    if abs(state['sl'] - old_sl) > entry * 1e-6:
+    # 有**真成交**(持仓真减少) → TG 通知
+    if closed_frac > last_frac + 0.02:
+        _notify_tp_fill_real(pos, closed_frac, cur_px)
+        gk['last_closed_frac'] = closed_frac
+
+    # 算目标 SL (真实状态驱动) → 变了就撤旧挂新 (按当前剩余 size)
+    target_sl = _compute_native_sl(side, entry, params, closed_frac, tp_plan, gk['peak'], cur_px)
+    cur_sl = (gk.get('oids') or {}).get('sl_px') or state['sl']
+    moved = (side == 'long' and target_sl > cur_sl * 1.0001) or (side == 'short' and target_sl < cur_sl * 0.9999)
+    if moved:
+        state['sl'] = target_sl
         _resync_native_sl(pos, gk, state, cur_size, creds)
-    for tp in newly:
-        _notify_tp_fill(pos, tp, state['sl'])
 
     gk['state'] = state; pos.gk_exit = gk; flag_modified(pos, 'gk_exit'); db.session.commit()
+    return {'managed': 1, 'closed': 0}
+
+
+def _notify_tp_fill_real(pos, closed_frac, cur_px):
+    try:
+        from app.services import telegram_service
+        telegram_service.send(
+            f"✅ <b>守门员分批止盈成交</b> ({pos.symbol.split('/')[0]} {pos.side})\n"
+            f"已平 <b>{closed_frac*100:.0f}%</b> @ ~{round(cur_px,4)} · 移动止损跟进锁利", force=True)
+    except Exception:
+        pass
     return {'managed': 1, 'closed': 0}
 
 
