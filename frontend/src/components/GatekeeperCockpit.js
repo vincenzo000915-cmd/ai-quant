@@ -11,6 +11,7 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import InventoryIcon from '@mui/icons-material/Inventory2';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import LockIcon from '@mui/icons-material/Lock';
+import TouchAppIcon from '@mui/icons-material/TouchApp';
 import { palette } from '../theme';
 import { tierRank } from '../auth';
 
@@ -33,6 +34,7 @@ function Section({ icon, title, accent, chip, children, sx }) {
 
 export default function GatekeeperCockpit() {
   const [data, setData] = useState(null);
+  const [cfg, setCfg] = useState(null);   // 系统设定 (手动执行用这套对齐参数)
   const [busy, setBusy] = useState(false);
   const [orderDlg, setOrderDlg] = useState(null);   // {symbol, side, size_usdt, leverage}
   const tier = tierRank();
@@ -41,11 +43,22 @@ export default function GatekeeperCockpit() {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/api/gatekeeper/dashboard`);
+      const [r, rc] = await Promise.all([
+        fetch(`${API}/api/gatekeeper/dashboard`),
+        fetch(`${API}/api/config`),
+      ]);
       if (r.ok) setData(await r.json());
+      if (rc.ok) setCfg(await rc.json());
     } catch {}
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]);
+
+  // 用系统设定预填手动单 (杠杆/保证金来自「系统设定」, 不再写死 10/5)
+  const openManual = (symbol, side) => setOrderDlg({
+    symbol, side,
+    size_usdt: cfg?.trade_size_usdt ?? 10,
+    leverage: cfg?.leverage ?? 5,
+  });
 
   const setGkMode = async (mode) => {
     if (mode === 'live' && !window.confirm('守门员真下单 (真钱)?\n实时扫描→引擎回测达标→真下单 (原生 TP/SL).\n现有策略让路, KILL 可一键停.\n确定?')) return;
@@ -107,9 +120,9 @@ export default function GatekeeperCockpit() {
                     <Typography variant="caption" sx={{ flex: 1 }}>
                       <b>{m.name}</b> {m.triggering ? <span style={{ color: palette.success }}>· 即将触发 {m.side}</span> : <span style={{ color: palette.textMuted }}>· 配对分 {m.score}</span>}
                     </Typography>
-                    {m.triggering && !hasGatekeeper && (
+                    {m.triggering && gkMode === 'off' && (
                       <Button size="small" variant="outlined" sx={{ minWidth: 0, px: 1, py: 0, fontSize: 10 }}
-                        onClick={() => setOrderDlg({ symbol: s.symbol, side: m.side === '做多' ? 'long' : 'short', size_usdt: 10, leverage: 5 })}>手动跟单</Button>
+                        onClick={() => openManual(s.symbol, m.side === '做多' ? 'long' : 'short')}>手动跟单</Button>
                     )}
                   </Stack>
                 ))}
@@ -120,6 +133,51 @@ export default function GatekeeperCockpit() {
         </Grid>
         {!hasGatekeeper && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>💡 你是 Basic — 看到"即将触发"可手动跟单。升级 Pro 解锁守门员自动执行。</Typography>}
       </Section>
+
+      {/* === ✋ 手动执行 · 用你的设定下单 (守门员一开就锁) === */}
+      {(() => {
+        const locked = gkMode !== 'off';   // 守门员运行中 → 手动锁定
+        const slp = Number(cfg?.sl_price_pct ?? 1);
+        const tp1pct = (Number(cfg?.tp1_r ?? 0.5) * slp);
+        const triggers = [];
+        (data.signal_preview || []).forEach((s) => s.ok && (s.matched || []).forEach((m) => {
+          if (m.triggering) triggers.push({ symbol: s.symbol, name: m.name, side: m.side });
+        }));
+        return (
+          <Section icon={<TouchAppIcon sx={{ color: palette.accent }} />} title="手动执行 · 用你的设定下单"
+            chip={locked ? <Chip size="small" icon={<LockIcon sx={{ fontSize: 12 }} />} label="守门员托管中" sx={{ height: 18, fontSize: 10, bgcolor: '#00d4aa22', color: '#00d4aa' }} />
+              : <Chip size="small" label="可手动" sx={{ height: 18, fontSize: 10, bgcolor: `${palette.accent}22`, color: palette.accent }} />}>
+            {/* 这一单会用到的参数 (来自系统设定, 对齐 AI 经理那套) */}
+            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
+              <Chip size="small" variant="outlined" label={`杠杆 ${cfg?.leverage ?? '—'}x`} />
+              <Chip size="small" variant="outlined" label={`保证金 $${cfg?.trade_size_usdt ?? '—'}`} />
+              <Chip size="small" variant="outlined" label={`止损 -${slp}% 价距`} sx={{ color: palette.error, borderColor: palette.error }} />
+              <Chip size="small" variant="outlined" label={`止盈 +${tp1pct.toFixed(2)}% (TP1)`} />
+              <Tooltip title="在「系统设定 → 交易参数」改这套默认值"><Chip size="small" label="改参数" onClick={() => { window.location.href = '/settings'; }} sx={{ height: 22, fontSize: 11, cursor: 'pointer', bgcolor: `${palette.accent}18`, color: palette.accent }} /></Tooltip>
+            </Stack>
+            {locked ? (
+              <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: 'rgba(0,212,170,0.06)', border: '1px dashed rgba(0,212,170,0.4)' }}>
+                <Typography variant="caption" sx={{ color: '#00d4aa' }}>
+                  🛡️ 守门员托管中,手动执行已锁定 —— 避免你和守门员同时对同一账户下单打架。把守门员切到「关」即可恢复手动。
+                </Typography>
+              </Box>
+            ) : triggers.length > 0 ? (
+              <Stack spacing={0.75}>
+                {triggers.map((t, i) => (
+                  <Stack key={i} direction="row" alignItems="center" spacing={1} sx={{ p: 0.75, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${palette.border}` }}>
+                    <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: palette.success, boxShadow: `0 0 6px ${palette.success}` }} />
+                    <Typography variant="caption" sx={{ flex: 1 }}><b>{t.symbol?.split('/')[0]}</b> · {t.name} · <span style={{ color: t.side === '做多' ? palette.success : palette.error }}>{t.side}</span></Typography>
+                    <Button size="small" variant="contained" sx={{ minWidth: 0, px: 1.25, py: 0.2, fontSize: 11 }}
+                      onClick={() => openManual(t.symbol, t.side === '做多' ? 'long' : 'short')}>执行</Button>
+                  </Stack>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary">当前无触发信号 — 空仓等机会。也可在上方「信号预告」看配对进度。</Typography>
+            )}
+          </Section>
+        );
+      })()}
 
       {/* === 🛡️ 守门员实时托管 (Pro+) === */}
       {hasGatekeeper && (
@@ -211,6 +269,10 @@ export default function GatekeeperCockpit() {
             <Typography variant="body2"><b>{orderDlg?.symbol}</b> · {orderDlg?.side === 'long' ? '做多 🔺' : '做空 🔻'}</Typography>
             <TextField label="仓位 (USDT 保证金)" type="number" size="small" value={orderDlg?.size_usdt || ''} onChange={(e) => setOrderDlg({ ...orderDlg, size_usdt: parseFloat(e.target.value) })} />
             <TextField label="杠杆" type="number" size="small" value={orderDlg?.leverage || ''} onChange={(e) => setOrderDlg({ ...orderDlg, leverage: parseFloat(e.target.value) })} />
+            <Typography variant="caption" color="text.secondary">
+              止损 / 止盈按「系统设定」自动挂:止损 -{Number(cfg?.sl_price_pct ?? 1)}% 价距 · 止盈 +{(Number(cfg?.tp1_r ?? 0.5) * Number(cfg?.sl_price_pct ?? 1)).toFixed(2)}% (TP1 先落袋)。
+              名义 ≈ ${((orderDlg?.size_usdt || 0) * (orderDlg?.leverage || 0)).toFixed(0)}。
+            </Typography>
           </Stack>
         </DialogContent>
         <DialogActions>

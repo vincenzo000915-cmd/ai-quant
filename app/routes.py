@@ -1625,14 +1625,16 @@ def manual_order():
     from app.models import Position, Strategy, db
     data = request.get_json() or {}
     symbol = data.get('symbol'); side = data.get('side')
+    uid = current_user_id() or 1
+    cfg = get_config()
+    # Phase 15 (2026-05-30): 缺省取系统设定 (手动单也吃这套对齐参数), body 显式传则覆盖.
     try:
-        size_usdt = float(data.get('size_usdt') or 0); leverage = float(data.get('leverage') or 5)
+        size_usdt = float(data.get('size_usdt') or cfg.get('trade_size_usdt') or 10)
+        leverage = float(data.get('leverage') or cfg.get('leverage') or 5)
     except Exception:
         return jsonify({'error': 'size_usdt/leverage 数字'}), 400
     if not symbol or side not in ('long', 'short') or size_usdt <= 0:
         return jsonify({'error': 'symbol / side(long|short) / size_usdt 必填'}), 400
-    uid = current_user_id() or 1
-    cfg = get_config()
     px = float(get_ticker(symbol)['price'])
     ex = (routable_exchanges(uid) or ['hyperliquid'])[0]
     okx_side = 'buy' if side == 'long' else 'sell'
@@ -1641,7 +1643,16 @@ def manual_order():
     if not order:
         return jsonify({'error': '下单失败'}), 500
     fill = float(order.get('price') or px)
+    # atr 模式 → compute_sl_tp 给绝对价; flat_pct → (None,None), 用系统设定的「价格距离% + TP1 R」算手动单括号
+    # (与 AI 经理 init_sl_pct / tp1_r 同口径; 手动单单仓只挂 SL + TP1 先落袋, 见 user 2026-05-30 拍板).
     sl_price, tp_price, _ = compute_sl_tp(symbol=symbol, timeframe='15m', side=side, entry_price=fill, cfg=cfg)
+    if sl_price is None:
+        slp = float(cfg.get('sl_price_pct') or 1.0)
+        tp1r = float(cfg.get('tp1_r') or 0.5)
+        if side == 'long':
+            sl_price = fill * (1 - slp / 100); tp_price = fill * (1 + tp1r * slp / 100)
+        else:
+            sl_price = fill * (1 + slp / 100); tp_price = fill * (1 - tp1r * slp / 100)
     pos = Position(user_id=uid, exchange=ex, symbol=symbol, side=side,
                    size=size_usdt * leverage / fill, entry_price=fill, current_price=fill,
                    status='open', sl_price=sl_price, tp_price=tp_price)
@@ -1876,6 +1887,18 @@ def update_system_config():
         return jsonify({'error': 'auto_promote_max_per_day 必須 [0, 20]'}), 400
     if 'auto_promote_min_oos_sharpe' in patch and not (-5 <= patch['auto_promote_min_oos_sharpe'] <= 10):
         return jsonify({'error': 'auto_promote_min_oos_sharpe 必須 [-5, 10]'}), 400
+    # Phase 15 (2026-05-30) ②: 把 legacy stop_loss_pct/take_profit_pct 当成新对齐参数的「派生投影」.
+    # 用户改 sl_price_pct/tp1_r/leverage → 自动重算 杠杆后PnL% 口径的旧字段, 让所有仍消费旧字段的
+    # 路径(check_stop_loss Tier-3 兜底 / 回测 paranoid fallback)自动反映新设定, 0 改动消费代码 = 最安全.
+    #   stop_loss_pct(杠杆后PnL%) = sl_price_pct(价距) × leverage
+    #   take_profit_pct           = tp1_r × sl_price_pct × leverage  (兜底单值TP取TP1, 与手动单同口径)
+    if any(k in patch for k in ('sl_price_pct', 'tp1_r', 'leverage')):
+        from app.services.config_service import get as _cfg_get
+        _slp = float(patch.get('sl_price_pct', _cfg_get('sl_price_pct', 1.0)) or 1.0)
+        _tp1 = float(patch.get('tp1_r', _cfg_get('tp1_r', 0.5)) or 0.5)
+        _lev = float(patch.get('leverage', _cfg_get('leverage', 10.0)) or 10.0)
+        patch['stop_loss_pct'] = round(min(50.0, max(0.1, _slp * _lev)), 4)
+        patch['take_profit_pct'] = round(min(200.0, max(0.1, _tp1 * _slp * _lev)), 4)
     from app.services.audit import log as audit
     is_live_flip = patch.get('trading_mode') == 'live'
     new_cfg = update(patch)

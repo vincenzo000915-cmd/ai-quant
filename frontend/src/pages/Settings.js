@@ -29,10 +29,18 @@ const API = process.env.REACT_APP_API_URL || '';
 
 const _TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
 // 参数文案随 tier: Team→AI经理覆盖 / Pro→守门员用你设的 / Basic→手动下单默认
+// 含「参数影响战绩 + 拿不准就升级」的转化提示 (user 2026-05-30): Basic 强、Pro 中、Team 不提示.
 function paramTierNote(tier) {
-  if (tier >= _TIER_RANK.team) return { sev: 'info', text: '🧠 你是 Team — 下面这些是默认底线。AI 经理会按每一单的行情在「难度信封」内动态优化(杠杆 / 止损距离 / 多段止盈 / 分批 / 保证金),不用你逐单填。' };
-  if (tier >= _TIER_RANK.pro) return { sev: 'success', text: '🛡️ 你是 Pro — 守门员就用你下面设的参数自动下单(同一套语言:价格距离止损 + 多段 R 止盈 + 分批)。' };
-  return { sev: 'warning', text: '📡 你是 Basic — 下面是你手动下单的默认值,跟 AI 经理同一套参数模型。升级 Pro 让守门员按这些自动执行。' };
+  if (tier >= _TIER_RANK.team) {
+    return { sev: 'info', upgrade: null,
+      text: '🧠 你是 Team — 下面这些是默认底线。AI 经理会按每一单的行情在「难度信封」内动态优化(杠杆 / 止损距离 / 多段止盈 / 分批 / 保证金),不用你逐单填。' };
+  }
+  if (tier >= _TIER_RANK.pro) {
+    return { sev: 'success', upgrade: 'team', upgradeLabel: '升级 Team',
+      text: '🛡️ 你是 Pro — 守门员就按你下面设的参数自动下单。⚠️ 这些参数直接影响盈利率和胜率,设错会反映在战绩上;拿不准可用上方「AI 推荐参数」,或升级 Team 让 AI 经理按行情逐单优化。' };
+  }
+  return { sev: 'warning', upgrade: 'pro', upgradeLabel: '升级 Pro / Team',
+    text: '📡 你是 Basic — 下面是你手动下单的默认值,跟 AI 经理同一套参数模型。⚠️ 这些参数直接影响策略的盈利率和胜率。不确定怎么设?升级 Pro 让守门员按你的参数自动执行、Team 让 AI 经理按行情逐单优化 —— 把猜参数的活交给系统。' };
 }
 
 // === 核心交易参数 (镜像 AI 经理 ai_manager_params 输出 schema) ===
@@ -152,7 +160,12 @@ export default function Settings() {
       <SectionTitle icon={<TuneIcon />} title="交易参数 · 与 AI 经理对齐"
         sub="跟 AI 经理同一套语言:价格距离止损 + 多段 R 止盈 + 分批" />
 
-      {(() => { const n = paramTierNote(tierRank()); return <Alert severity={n.sev} sx={{ mb: 2 }}>{n.text}</Alert>; })()}
+      {(() => { const n = paramTierNote(tierRank()); return (
+        <Alert severity={n.sev} sx={{ mb: 2 }}
+          action={n.upgrade ? <Button color="inherit" size="small" onClick={() => { window.location.href = '/pricing'; }}>{n.upgradeLabel}</Button> : null}>
+          {n.text}
+        </Alert>
+      ); })()}
 
       {/* AI 推荐参数 helper */}
       <SizingAdvisorCard onApplied={load} />
