@@ -210,12 +210,19 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
         print(f'[gatekeeper_live] {symbol} 下单失败 (mode={order_mode})')
         return
     fill = float(order.get('price') or price)
-    base_size = size_usdt * lev / fill
+    if order.get('simulated'):
+        base_size = size_usdt * lev / fill          # paper: 引擎口径(含lev), 模拟全额成交
+    else:
+        # live: 用交易所**真实成交量** — 保证金不足时 HL 部分成交(请求26.86只填23.16),
+        # 用请求量会让 orig_size 虚高 → 出场对账全错(误判已平14%/全平判定/真盈亏). 真钱铁律.
+        base_size = float(order.get('amount') or 0) or (size_usdt * lev / fill)
     exit_params = dict(ENGINE_EXIT_PARAMS); exit_params['init_sl_pct'] = init_sl
     for _k in ('tp1_r', 'tp2_r', 'tp3_r'):   # AI 经理给的盈亏比 R 也用上 (出场台阶随经理判断)
         if mparams.get(_k):
             exit_params[_k] = float(mparams[_k])
     state = new_exit_state(side, fill, init_sl)
+    # 真实保证金按成交量反推 (paper: = size_usdt; live 部分成交: 自动校正到真实占用) → R倍数/估算口径一致
+    real_margin = round(base_size * fill / lev, 4) if lev else size_usdt
     import time as _t
     _entry_ts = int(_t.time())   # 出场管理器只处理入场后新 5m bar (防回放入场前K线)
     pos = Position(
@@ -223,7 +230,7 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
         side=side, size=base_size, entry_price=fill, current_price=fill, status='open',
         gatekeeper_decision_id=d.get('decision_id'),
         gk_exit={'state': state, 'params': exit_params, 'last_ts': _entry_ts,
-                 'orig_size': base_size, 'margin': size_usdt, 'order_mode': order_mode,
+                 'orig_size': base_size, 'margin': real_margin, 'order_mode': order_mode,
                  'pnl': 0.0, 'strategy': stype, 'lev': lev, 'slippage_pct': 0.03,
                  'native': order_mode == 'live' and (exchange or '').lower() in ('hyperliquid', 'okx'),
                  'oids': {}},

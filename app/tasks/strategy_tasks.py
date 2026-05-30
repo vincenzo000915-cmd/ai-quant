@@ -131,7 +131,8 @@ def _place_order(symbol, side, amount_usdt, price, mode: str, leverage: float = 
                 return {
                     'id': str(filled.get('oid') or 'hl_unknown'),
                     'symbol': symbol, 'side': side, 'type': 'market',
-                    'amount': hl_res.get('size_base'),
+                    # amount = 真实成交 size (部分成交时 < 请求量); 调用方据此记 Position.size
+                    'amount': hl_res.get('filled_size') or hl_res.get('size_base'),
                     'price': float(filled.get('avgPx') or price),
                     'cost': amount_usdt,
                     'inst_id': f"{hl_res.get('base')}-PERP",

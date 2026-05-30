@@ -466,6 +466,12 @@ def place_order_live(
     first_status = statuses[0] if statuses else {}
     filled_ok = 'filled' in first_status
     reject_error = first_status.get('error') if isinstance(first_status, dict) else None
+    # 真实成交 size (totalSz) — 保证金不足时 HL 会**部分成交** (请求26.86只填23.16),
+    # 调用方必须用这个真实量记 Position, 否则 orig_size 虚高 → 出场对账全错 (closed_frac/全平判定/真盈亏).
+    try:
+        filled_size = float((first_status.get('filled') or {}).get('totalSz') or 0.0) or None
+    except Exception:
+        filled_size = None
 
     return {
         'ok': bool(outer_ok and filled_ok),
@@ -473,6 +479,7 @@ def place_order_live(
         'symbol': symbol, 'base': base,
         'side': 'long' if is_buy else 'short',
         'size_base': size_base_rounded,   # 14k-101: 真发出的 size (已按 szDecimals round)
+        'filled_size': filled_size,       # 真实成交 size (部分成交时 < size_base)
         'notional_usdt': round(notional, 2),
         'leverage': leverage,
         'sz_decimals': sz_dec,             # 14k-101: debug 用
