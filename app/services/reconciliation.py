@@ -110,6 +110,10 @@ def reconcile_hl_user(user_id: int) -> dict:
     grace_cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=60)
     for key, lp in local_by_key.items():
         if key not in hl_by_key:
+            # Phase 15: 守门员仓由 gatekeeper_exit_manage 专管 (探HL真size+拉真closedPnl平仓回填飞轮),
+            #   reconcile 让路 — 否则重复处理同一平仓 (orphan trade pnl ≠ 守门员真pnl, 还污染飞轮学习).
+            if lp.gatekeeper_decision_id is not None:
+                continue
             if lp.opened_at and lp.opened_at > grace_cutoff:
                 continue   # 新开不到 60s, 给 HL settle 时间
             try:

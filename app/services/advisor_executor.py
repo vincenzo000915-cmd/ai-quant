@@ -494,6 +494,12 @@ def run_auto_apply() -> dict:
     if not allowed:
         return {'skipped': True, 'reason': 'auto_apply_actions 為空'}
 
+    # Phase 15 (user 2026-05-30): 守门员独占时, running 策略被 benched(守门员管交易),
+    # 旧 advisor 再调它们杠杆/参数/重测 SL = 空转浪费 token+CPU + 没意义的 TG (还误把'0成交'
+    # 当不行去优化, 其实是独占benched). → 独占下只保留 invent(补库), 其余对策略的动作全跳过.
+    _gk_exclusive = cfg.get('gatekeeper_live_mode') == 'live'
+    _GK_ALLOWED_ACTIONS = {'invent_new_strategy'}
+
     daily_cap = int(cfg.get('auto_apply_max_per_day') or 0)   # 0=不限 (user 2026-05-30 拿掉过时的每日次数限制)
     promote_cap = int(cfg.get('auto_promote_max_per_day') or 2)
     already_today = _today_count()
@@ -524,6 +530,11 @@ def run_auto_apply() -> dict:
     for item in items:
         action = item['action']
         if action in INFO_ONLY:
+            continue
+        # 守门员独占: 只放行 invent(补库), 其余调 benched 策略的动作跳过 (省资源+去无意义TG)
+        if _gk_exclusive and action not in _GK_ALLOWED_ACTIONS:
+            skipped.append({'action': action, 'strategy_id': item.get('strategy_id'),
+                            'reason': '守门员独占: 策略交易由守门员管, 不再调它们'})
             continue
         if action not in allowed:
             skipped.append({'item': item, 'why': f'{action} not in allowed actions'})

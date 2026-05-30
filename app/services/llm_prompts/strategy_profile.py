@@ -222,18 +222,32 @@ def coverage_summary() -> dict:
                         grid[regime][tf].append(p.strategy_type)
     gaps = [(r, tf) for r in grid for tf in TFS if not grid[r][tf]]
     filled = [(r, tf, len(grid[r][tf])) for r in grid for tf in TFS if grid[r][tf]]
-    return {'grid': grid, 'gaps': gaps, 'filled': filled}
+    # Phase 15 (user 2026-05-30): 阈值调严 — 不只看"完全空", <THIN 也算薄弱该补.
+    #   尤其守门员核心维度 5m/15m (小波段); 现状 1h/4h趋势饱和但15m趋势就1个=实质空缺.
+    THIN = 3
+    CORE_TFS = ('5m', '15m')
+    thin = [(r, tf, len(grid[r][tf])) for r in grid for tf in TFS
+            if 0 < len(grid[r][tf]) < THIN]
+    # 核心维度(5m/15m)薄弱优先级最高
+    core_thin = [(r, tf, n) for (r, tf, n) in thin if tf in CORE_TFS] + \
+                [(r, tf) for (r, tf) in gaps if tf in CORE_TFS]
+    return {'grid': grid, 'gaps': gaps, 'filled': filled, 'thin': thin, 'core_thin': core_thin}
 
 
 def coverage_block() -> str:
-    """生成注入合成 prompt 的"策略池覆盖+缺口"文本块。"""
+    """生成注入合成 prompt 的"策略池覆盖+缺口"文本块 (含薄弱格子, 优先核心 5m/15m)。"""
     c = coverage_summary()
-    lines = ['## 策略池覆盖 (regime×周期格子)']
+    lines = ['## 策略池覆盖 (regime×周期格子, 数字=策略数)']
     for r in ('trend', 'range'):
         for tf in ['5m', '15m', '1h', '4h']:
             ss = c['grid'][r][tf]
-            mark = f"{len(ss)}个: {','.join(ss[:4])}" if ss else '⚠空缺'
-            lines.append(f"  {r}/{tf}: {mark}")
+            n = len(ss)
+            mark = '⚠空缺' if n == 0 else (f'⚠薄弱({n}个)' if n < 3 else f'{n}个饱和')
+            core = ' ★核心维度' if tf in ('5m', '15m') else ''
+            lines.append(f"  {r}/{tf}: {mark}{core}")
     if c['gaps']:
-        lines.append(f"**空缺格子(优先补): {', '.join(f'{r}/{tf}' for r, tf in c['gaps'])}**")
+        lines.append(f"**完全空缺: {', '.join(f'{r}/{tf}' for r, tf in c['gaps'])}**")
+    if c.get('core_thin'):
+        cells = ', '.join(f'{x[0]}/{x[1]}' for x in c['core_thin'])
+        lines.append(f"**🎯最该补=核心5m/15m维度薄弱: {cells} (守门员核心小波段, 优先合成这些; 别再造已饱和的1h/4h)**")
     return '\n'.join(lines)

@@ -3301,6 +3301,22 @@ def synthesize_dynamic_strategy(user_id: int = 1, symbol: str | None = None,
         # verify 失败也算合理拒绝, 不算 hard error
         return f'synth v2 failed at {r.get("stage")}: {r.get("error")}'
 
+    # Phase 15 (user 2026-05-30 Q2): 合成去重 — 目标 regime×周期 格子已饱和(≥3)就拒,
+    #   别浪费资源造重复 (该补薄弱/核心格子). 配合 coverage_block 引导合成只补薄弱.
+    try:
+        from app.services.llm_prompts.strategy_profile import coverage_summary
+        _bregime = (brief.get('regime') or '')
+        _reg = 'trend' if 'trend' in _bregime else ('range' if ('range' in _bregime or 'rang' in _bregime) else None)
+        _tf = r.get('timeframe')
+        if _reg and _tf:
+            _cell = coverage_summary()['grid'].get(_reg, {}).get(_tf, [])
+            if len(_cell) >= 3:
+                audit('synth_rejected_saturated', user_id=user_id, symbol=symbol,
+                      regime=_reg, timeframe=_tf, cell_count=len(_cell))
+                return f'合成拒绝: {_reg}/{_tf} 格子已饱和 ({len(_cell)}个), 不造重复 — 该补薄弱/核心5m15m格子'
+    except Exception:
+        pass
+
     cand = StrategyCandidate(
         user_id=user_id,
         source='synth',
