@@ -25,8 +25,6 @@ import TradingViewWidget from '../components/TradingViewWidget';
 import TradeView from '../components/TradeView';
 import TradesTimeline from '../components/TradesTimeline';
 // Phase 12.15.2: secondary panel lazy load — 減小 main bundle，首屏加快
-const RegimePanel = lazy(() => import('../components/RegimePanel'));
-const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
 // Phase 15 UI 重构: 守门员驾驶舱 (信号预告+守门员台+AI经理台+策略库+飞轮) 取代散落的 AI 面板
 const GatekeeperCockpit = lazy(() => import('../components/GatekeeperCockpit'));
 import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
@@ -805,16 +803,6 @@ export default function Dashboard() {
 
       {/* Phase 15 UI 重构: AiPickPanel/AiInsightsCard/AdvisorPanel/AiActivityLogCard 已并入
           GatekeeperCockpit (信号预告/守门员/AI经理/库/飞轮), 旧自主范式碎片砍掉. */}
-
-      {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
-      <Suspense fallback={<CardSkeleton height={240} headerWidth="40%" rows={3} />}>
-        <RegimePanel />
-      </Suspense>
-
-      {/* === Phase 10.4: 多時框一致性檢查 === */}
-      <Suspense fallback={<CardSkeleton height={200} headerWidth="40%" rows={3} />}>
-        <MTFConsensusPanel />
-      </Suspense>
 
       {/* === Open Positions === */}
       <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>

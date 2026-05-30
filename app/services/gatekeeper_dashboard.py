@@ -141,8 +141,19 @@ def gatekeeper_dashboard_data(user_id: int = 1) -> dict:
     cov = coverage_summary()
     lib_count = StrategyProfile.query.count()
 
-    # ⑥ 飞轮经验
-    exp = summarize_experience(min_samples=1)[:10]
+    # ⑥ 学习飞轮 — 聚合"学习进度"(不露具体策略@regime→EV, 防moat泄漏): 决策→回填→提炼模式
+    decisions_total = GatekeeperDecision.query.count()
+    settled = GatekeeperDecision.query.filter(GatekeeperDecision.realized_pnl.isnot(None)).count()
+    wins = GatekeeperDecision.query.filter(GatekeeperDecision.outcome == 'win').count()
+    live_decisions = GatekeeperDecision.query.filter_by(source='live').count()
+    patterns = len(summarize_experience(min_samples=2))   # 攒够≥2样本=提炼出的经验模式数
+    learning = {
+        'decisions_total': decisions_total,
+        'live_decisions': live_decisions,
+        'settled': settled,
+        'win_rate': round(wins / settled * 100, 0) if settled else None,
+        'patterns': patterns,
+    }
 
     return {
         'hero': {
@@ -162,5 +173,5 @@ def gatekeeper_dashboard_data(user_id: int = 1) -> dict:
             'count': lib_count,
             'coverage': cov.get('grid'), 'gaps': cov.get('gaps'), 'core_thin': cov.get('core_thin'),
         },
-        'flywheel': exp,
+        'learning': learning,
     }

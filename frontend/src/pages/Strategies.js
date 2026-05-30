@@ -26,7 +26,6 @@ import {
   AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer,
 } from 'recharts';
-import CorrelationHeatmap from '../components/CorrelationHeatmap';
 import { palette } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import StatusChip from '../components/common/StatusChip';
@@ -586,8 +585,6 @@ export default function Strategies() {
         </CardContent>
       </Card>
 
-      {/* Phase 10.1: 策略相關性熱力圖 */}
-      <CorrelationHeatmap />
 
       {/* 極短 */}
       {renderStrategyTable('ultra', '⚡ 極短策略 (15m K線，每15分鐘信號)')}

@@ -177,14 +177,30 @@ export default function GatekeeperCockpit() {
         {(data.library?.core_thin || []).length > 0 && <Typography variant="caption" sx={{ color: palette.accent, display: 'block', mt: 0.75 }}>🎯 核心 5m/15m 维度薄弱 → 合成飞轮优先补这里</Typography>}
       </Section>
 
-      {/* === 🔄 学习飞轮 === */}
-      <Section icon={<AutoGraphIcon sx={{ color: palette.accent }} />} title="学习飞轮 · 什么策略 × 什么市场 → 真EV">
-        {(data.flywheel || []).length > 0 ? (data.flywheel || []).map((e, i) => (
-          <Stack key={i} direction="row" alignItems="center" spacing={1} sx={{ py: 0.3 }}>
-            <Typography variant="caption" sx={{ flex: 1 }}>{e.strategy} @ {REG[e.regime] || e.regime}/{e.timeframe}</Typography>
-            <Typography variant="caption" sx={{ color: (e.avg_realized_pnl || 0) >= 0 ? palette.success : palette.error }}>实测均 {(e.avg_realized_pnl || 0) >= 0 ? '+' : ''}{e.avg_realized_pnl} · 胜率{(e.win_rate * 100).toFixed(0)}% (n={e.samples})</Typography>
-          </Stack>
-        )) : <Typography variant="caption" color="text.secondary">飞轮在积累中 — 守门员每笔真盈亏决策都记录,攒够后整合写更好的策略。</Typography>}
+      {/* === 🔄 学习飞轮 (进度感, 不露具体策略edge — moat) === */}
+      <Section icon={<AutoGraphIcon sx={{ color: palette.accent }} />} title="学习飞轮 · 越用越聪明">
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.25 }}>
+          守门员每一笔决策都在学 — 记下预期、平仓后回填真实盈亏、提炼出"什么有用",再喂回去写更好的策略。这是会复利的护城河。
+        </Typography>
+        <Grid container spacing={1}>
+          {[
+            { label: '已学习决策', value: data.learning?.decisions_total ?? 0, sub: `真钱 ${data.learning?.live_decisions ?? 0}` },
+            { label: '已结算回填', value: data.learning?.settled ?? 0, sub: '真实盈亏入账' },
+            { label: '整体胜率', value: data.learning?.win_rate != null ? `${data.learning.win_rate}%` : '—', sub: '攒越多越准' },
+            { label: '提炼经验', value: data.learning?.patterns ?? 0, sub: '个有效模式' },
+          ].map((s) => (
+            <Grid item xs={6} sm={3} key={s.label}>
+              <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(255,255,255,0.02)', border: `1px solid ${palette.border}`, textAlign: 'center' }}>
+                <Typography variant="h6" fontWeight={800} sx={{ color: palette.accent, lineHeight: 1.2 }}>{s.value}</Typography>
+                <Typography variant="caption" sx={{ display: 'block', fontWeight: 600 }}>{s.label}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10 }}>{s.sub}</Typography>
+              </Box>
+            </Grid>
+          ))}
+        </Grid>
+        {(data.learning?.settled ?? 0) < 10 && (
+          <Typography variant="caption" sx={{ color: palette.accent, display: 'block', mt: 1 }}>🌱 还在早期积累 — 样本越多,守门员的判断越聪明。</Typography>
+        )}
       </Section>
 
       {/* 手动下单 dialog (Basic) */}
