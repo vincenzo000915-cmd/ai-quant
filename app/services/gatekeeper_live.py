@@ -184,9 +184,9 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
     if side not in ('long', 'short'):
         return
     user_id = 1
-    # 独占 first-mover: 该 symbol 已有守门员持仓 → 不重开
-    exists = (Position.query.filter_by(symbol=symbol, status='open')
-              .filter(Position.gatekeeper_decision_id.isnot(None)).first())
+    # 独占 first-mover: 该 symbol 有任何 open 持仓(守门员或现有策略)→ 跳过, 等平了再开.
+    # 防 HL cross-margin 同币 netting 把仓合并 → PnL 归属混乱 (12.35.1 first-mover 同理).
+    exists = Position.query.filter_by(symbol=symbol, status='open').first()
     if exists:
         return
     stype = d['strategy']; init_sl = float(d['params']['init_sl_pct'])
@@ -477,7 +477,7 @@ def _native_realized_pnl(pos, gk, creds):
     try:
         from app.services.hyperliquid_service import _exchange_client, hl_base
         _, info = _exchange_client(creds)
-        addr = creds.get('account_address') or creds.get('wallet_address')
+        addr = creds.get('main_address')           # HL user-of-record (非 agent signer)
         fills = info.user_fills(addr) or []
         base = hl_base(pos.symbol)
         opened = pos.opened_at.timestamp() * 1000 if pos.opened_at else 0

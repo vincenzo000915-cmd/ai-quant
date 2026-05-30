@@ -580,7 +580,7 @@ def get_hl_position_size(symbol: str, creds: dict) -> float:
         return 0.0
     try:
         exchange, info = _exchange_client(creds)
-        addr = creds.get('account_address') or creds.get('wallet_address')
+        addr = creds.get('main_address')           # HL user-of-record (非 agent signer)
         st = info.user_state(addr)
         base = hl_base(symbol)
         for ap in (st.get('assetPositions') or []):
