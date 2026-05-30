@@ -1744,6 +1744,54 @@ def get_system_config():
     return jsonify(get_config())
 
 
+@api_bp.route('/gatekeeper/dashboard', methods=['GET'])
+def gatekeeper_dashboard_route():
+    """Phase 15 UI: 守门员驾驶舱 — 新 Dashboard 所有块一次 fetch (HERO/信号预告/守门员/AI经理/库/飞轮)。"""
+    from app.services.gatekeeper_dashboard import gatekeeper_dashboard_data
+    try:
+        return jsonify(gatekeeper_dashboard_data(current_user_id() or 1))
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@api_bp.route('/manual-order', methods=['POST'])
+@rate_limit('20/min')
+@require_tier('basic')
+def manual_order():
+    """Phase 15 UI: Basic+ 手动下单 (信号预告点过来预填 或 自己填). 创建 Position 走 legacy check_stop_loss 管。"""
+    from app.tasks.strategy_tasks import _place_order
+    from app.services.exchange_service import get_ticker
+    from app.services.config_service import get_config
+    from app.services.risk_levels import compute_sl_tp
+    from app.services.exchange_binding import routable_exchanges
+    from app.models import Position, Strategy, db
+    data = request.get_json() or {}
+    symbol = data.get('symbol'); side = data.get('side')
+    try:
+        size_usdt = float(data.get('size_usdt') or 0); leverage = float(data.get('leverage') or 5)
+    except Exception:
+        return jsonify({'error': 'size_usdt/leverage 数字'}), 400
+    if not symbol or side not in ('long', 'short') or size_usdt <= 0:
+        return jsonify({'error': 'symbol / side(long|short) / size_usdt 必填'}), 400
+    uid = current_user_id() or 1
+    cfg = get_config()
+    px = float(get_ticker(symbol)['price'])
+    ex = (routable_exchanges(uid) or ['hyperliquid'])[0]
+    okx_side = 'buy' if side == 'long' else 'sell'
+    order = _place_order(symbol, okx_side, size_usdt, px, cfg.get('trading_mode', 'paper'),
+                         leverage=leverage, pos_side=side, user_id=uid, exchange=ex)
+    if not order:
+        return jsonify({'error': '下单失败'}), 500
+    fill = float(order.get('price') or px)
+    sl_price, tp_price, _ = compute_sl_tp(symbol=symbol, timeframe='15m', side=side, entry_price=fill, cfg=cfg)
+    pos = Position(user_id=uid, exchange=ex, symbol=symbol, side=side,
+                   size=size_usdt * leverage / fill, entry_price=fill, current_price=fill,
+                   status='open', sl_price=sl_price, tp_price=tp_price)
+    db.session.add(pos); db.session.commit()
+    return jsonify({'ok': True, 'position_id': pos.id, 'entry': fill, 'sl': sl_price, 'tp': tp_price,
+                    'simulated': bool(order.get('simulated'))}), 200
+
+
 @api_bp.route('/audit', methods=['GET'])
 @require_admin
 def list_audit():

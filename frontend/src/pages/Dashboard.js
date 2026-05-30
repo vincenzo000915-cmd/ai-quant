@@ -25,18 +25,14 @@ import TradesTimeline from '../components/TradesTimeline';
 // Phase 12.15.2: secondary panel lazy load — 減小 main bundle，首屏加快
 const RegimePanel = lazy(() => import('../components/RegimePanel'));
 const MTFConsensusPanel = lazy(() => import('../components/MTFConsensusPanel'));
-const AdvisorPanel = lazy(() => import('../components/AdvisorPanel'));
-const AiInsightsCard = lazy(() => import('../components/AiInsightsCard'));
-const AiActivityLogCard = lazy(() => import('../components/AiActivityLogCard'));
-// Phase 12.42 v8: AI 精选策略一键上架面板
-const AiPickPanel = lazy(() => import('../components/AiPickPanel'));
+// Phase 15 UI 重构: 守门员驾驶舱 (信号预告+守门员台+AI经理台+策略库+飞轮) 取代散落的 AI 面板
+const GatekeeperCockpit = lazy(() => import('../components/GatekeeperCockpit'));
 import { PageSkeleton, KpiBarSkeleton, CardSkeleton } from '../components/Skeleton';
 // Phase 12.15.3: 新 design system
 import { palette, typo, pnlColor } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
-import AiStatusBar from '../components/AiStatusBar';
 import { prettifyType } from '../utils/strategyTypeLabels';
 import ProfitTargetCard from '../components/ProfitTargetCard';
 // Phase 12.20: NeuralBackdrop 已下架（装饰过头）
@@ -564,8 +560,10 @@ export default function Dashboard() {
       {/* refresh 時頂部 2px 細條 */}
       {loading && account && <LinearProgress sx={{ mb: 2, height: 2, borderRadius: 1, bgcolor: palette.border, '& .MuiLinearProgress-bar': { bgcolor: palette.accent } }} />}
 
-      {/* Phase 12.15.10: AI 駕駛狀態條 — 紫色 accent 區隔 system cyan */}
-      <AiStatusBar />
+      {/* Phase 15 UI 重构: 守门员驾驶舱 (信号预告+守门员台Pro+AI经理台Team+策略库+飞轮, tier分层) */}
+      <Suspense fallback={<CardSkeleton height={300} headerWidth="40%" rows={5} />}>
+        <GatekeeperCockpit />
+      </Suspense>
 
       {/* === Phase 12.20: 走势图全宽（删 Row 1 右侧重复 OPEN POSITIONS）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
@@ -780,25 +778,8 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
-      {/* === Phase 12.42 v8: AI 精选策略 (qualified 候选一键上架) === */}
-      <Suspense fallback={<CardSkeleton height={200} headerWidth="35%" rows={3} />}>
-        <AiPickPanel />
-      </Suspense>
-
-      {/* === Phase 11.5.6-8: AI 洞察（週復盤 / 個性化建議 / 故障診斷） === */}
-      <Suspense fallback={<CardSkeleton height={180} headerWidth="30%" rows={2} />}>
-        <AiInsightsCard />
-      </Suspense>
-
-      {/* === Phase 10.7: 综合操作建议（放最显眼） === */}
-      <Suspense fallback={<CardSkeleton height={280} headerWidth="35%" rows={4} />}>
-        <AdvisorPanel />
-      </Suspense>
-
-      {/* === Phase 14k-30 #4: AI 操作日记 === */}
-      <Suspense fallback={<CardSkeleton height={240} headerWidth="30%" rows={4} />}>
-        <AiActivityLogCard />
-      </Suspense>
+      {/* Phase 15 UI 重构: AiPickPanel/AiInsightsCard/AdvisorPanel/AiActivityLogCard 已并入
+          GatekeeperCockpit (信号预告/守门员/AI经理/库/飞轮), 旧自主范式碎片砍掉. */}
 
       {/* === Phase 10.3: 市場狀態 + 策略匹配度 === */}
       <Suspense fallback={<CardSkeleton height={240} headerWidth="40%" rows={3} />}>

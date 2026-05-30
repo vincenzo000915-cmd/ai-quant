@@ -213,30 +213,6 @@ export default function ProfitTargetCard() {
             </Tooltip>
           </Stack>
 
-          {/* Phase 15: 守门员实时托管 (全自动托管的进化版 — 实时扫描+信号驱动+引擎回测+真下单) */}
-          <Box sx={{ mb: 1.5, p: 1, borderRadius: 1, bgcolor: 'rgba(167,139,250,0.06)', border: `1px solid ${PURPLE}22` }}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.6 }}>
-              <Typography variant="caption" fontWeight={700} sx={{ color: PURPLE }}>
-                🤖 守门员实时托管
-              </Typography>
-              <Tooltip title="守门员 = 全自动托管的进化版: 实时扫描 ETH/AVAX, 信号触发→引擎回测达标→下单, 原生分批 TP/SL + 移动止损锁台阶. 影子=只记录决策不下单 / 纸面=模拟成交真价格 / 真钱=真下单(独占, 现有策略让路)">
-                <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>ⓘ</Typography>
-              </Tooltip>
-              <Box sx={{ flex: 1 }} />
-              {gkMode === 'live' && <Chip label="真钱运行中" size="small" color="error" sx={{ height: 18, fontSize: 10 }} />}
-            </Stack>
-            <Stack direction="row" spacing={0.5}>
-              {[['off', '关'], ['shadow', '影子'], ['paper', '纸面'], ['live', '真钱']].map(([m, label]) => (
-                <Button key={m} size="small" variant={gkMode === m ? 'contained' : 'outlined'}
-                  disabled={busy} onClick={() => handleGkMode(m)}
-                  sx={{ minWidth: 0, px: 1, py: 0.1, fontSize: 11,
-                    ...(gkMode === m && m === 'live' ? { bgcolor: '#f87171' } : {}),
-                    ...(gkMode === m && m !== 'live' ? { bgcolor: PURPLE } : {}) }}>
-                  {label}
-                </Button>
-              ))}
-            </Stack>
-          </Box>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 1.5, alignItems: { sm: 'baseline' } }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
