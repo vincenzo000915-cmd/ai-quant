@@ -34,11 +34,28 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
     if diff.get('blocked'):
         return {'ok': True, 'skip': True, 'reason_zh': '盈利目标超系统上限, 经理拒绝开仓'}
 
+    # 经理的眼睛之二: 账户真实可用资金 (统一账户 spot+perp). 没有这个 → 经理凭空挑本金,
+    # 会挑出 > 账户净值的保证金一仓吃光账户 (2026-05-30 AVAX $80 砸 $68 账户事故根因).
+    # position_size_usdt 是**保证金**, 必须按这个数的比例来定, 绝不超过它.
+    try:
+        from app.services.llm_prompts.strategy_recommend import _get_user_capital
+        equity = float(_get_user_capital(user_id) or 0.0)
+    except Exception:
+        equity = 0.0
+
     ind = {k: (v or {}).get('state') for k, v in (perception.get('indicators') or {}).items()}
     pa = perception.get('price_action') or {}
     prof = profile or {}
+    equity_txt = (f"约 ${equity:.2f}" if equity > 0 else "暂时拉取失败(按保守小仓处理)")
     prompt = f"""## 盈利目标难度 (你的约束信封)
 {difficulty_guidance_block(target_pct, days_remaining)}
+
+## 账户可用资金 (硬约束 — position_size_usdt 是保证金, 按这个定)
+- 当前可用权益: {equity_txt} (统一账户, 现货+合约共用)
+- position_size_usdt = 这一单投入的**保证金**(不是名义); 名义 = 保证金 × 杠杆.
+- 这是**单仓**保证金, 守门员会同时持多个币的仓 → 单仓别吃光账户, 给别的仓留余地.
+- 铁律: 单仓保证金**绝不超过可用权益**; 难度激进也最多占可用的一部分(如 1/3 ~ 1/2), 保守更小.
+  小账户($50~$100)更要克制, 一仓占满=没有容错, 一根反向针就逼近强平.
 
 ## 当前市场富感知 (你的眼睛)
 - regime={perception.get('regime')} 方向={perception.get('direction')} 波动={perception.get('volatility')} 量={perception.get('volume')}
@@ -59,7 +76,7 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
   "leverage": 数字,               // ≤ {lev_cap} (难度上限)
   "init_sl_pct": 数字,            // 初始止损价格距离% (杠杆前). 行情噪音大/弱点环境→给宽点防扫
   "tp1_r": 0.5, "tp2_r": 1.2, "tp3_r": 2.0,   // 盈亏比R倍数. 难度难 or 行情弱 → 可等比缩小求稳
-  "position_size_usdt": 数字,     // 保证金, 难度激进可大、保守小
+  "position_size_usdt": 数字,     // 保证金(≤可用权益, 单仓占可用的合理比例; 难度激进可大、保守小)
   "reason_zh": "为什么这样给 (结合当前行情 + 这策略的edge/弱点 一句话)"
 }}
 在难度信封内(杠杆≤{lev_cap}), 贴合当前行情和这策略特性. 踩中弱点就skip或更保守."""
@@ -76,6 +93,10 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
         # 验证/夹紧在难度信封内 (经理判断 + 硬约束双保险)
         lev = _clamp(float(p.get('leverage', lev_cap)), 1, lev_cap)
         sl = _clamp(float(p.get('init_sl_pct', 0.8)), 0.3, 5.0)
+        # 保证金硬天花板 = 可用权益 (统一账户总额; 经理判断比例, 这里只挡"超过账户总额"的不可能值,
+        # 与 leverage clamp 到 lev_cap 同性质的双保险). equity 拉取失败 → 保守 $20 上限.
+        max_margin = equity if equity > 0 else 20.0
+        default_margin = min(10.0, max_margin)
         out = {
             'ok': True, 'skip': False,
             'leverage': lev,
@@ -83,7 +104,7 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
             'tp1_r': _clamp(float(p.get('tp1_r', 0.5)), 0.2, 3),
             'tp2_r': _clamp(float(p.get('tp2_r', 1.2)), 0.4, 5),
             'tp3_r': _clamp(float(p.get('tp3_r', 2.0)), 0.6, 8),
-            'position_size_usdt': _clamp(float(p.get('position_size_usdt', 10)), 1, 1000),
+            'position_size_usdt': _clamp(float(p.get('position_size_usdt', default_margin)), 1, max_margin),
             'reason_zh': p.get('reason_zh', ''),
         }
         return out

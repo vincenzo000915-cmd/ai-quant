@@ -614,6 +614,8 @@ def _manage_native_position(pos, gk) -> dict:
     # 真实已平比例 (HL 持仓减少 = 真成交; minTradeNtl 被拒不会减 → 不会误判)
     closed_frac = max(0.0, 1 - cur_size / orig) if orig > 0 else 0.0
     last_frac = gk.get('last_closed_frac', 0.0)
+    # 回写真实剩余 size → DB/前端反映交易所实况 (否则分批平后仍显示满仓量, 看着像"没平仓")
+    pos.size = cur_size
     # 峰值 (棍轮 trailing 基准)
     pk = gk.get('peak')
     gk['peak'] = (max(pk, cur_px) if pk else cur_px) if side == 'long' else (min(pk, cur_px) if pk else cur_px)
