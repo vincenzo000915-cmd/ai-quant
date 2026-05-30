@@ -29,7 +29,7 @@ def _favorable(side, price, entry):
 def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
                      params=None, signal_fn=None, base_tf='1h', aux_tf='5m',
                      leverage=15.0, position_size_usdt=10.0, fee_pct=0.035,
-                     slippage_pct=0.03, warmup=60,
+                     slippage_pct=0.03, warmup=60, funding_apr=0.0,
                      # ② 位置层
                      use_position_filter=True, stretch_atr=2.0, require_confluence=False,
                      # ③ 出场层
@@ -60,6 +60,11 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         move = _favorable(side, filled, pos['entry']) / pos['entry']
         notional = position_size_usdt * frac
         pnl = move * notional * leverage - notional * (fee_pct / 100.0) * 2
+        # Gap B (user 2026-05-30): 资金费按持仓时长扣在**名义**上 (正费率=多头付空头 → 做多成本/做空收益).
+        # funding_apr=0 时无影响 (其它回测调用方不变). 持仓越久(长线)累积越明显.
+        if funding_apr:
+            hold_frac = max(0, ts - pos['entry_ts']) / 31_536_000.0   # /秒每年
+            pnl += (position_size_usdt * frac * leverage) * funding_apr * hold_frac * (1 if side == 'short' else -1)
         trades.append({'entry_ts': pos['entry_ts'], 'exit_ts': ts, 'side': side,
                        'entry': pos['entry'], 'exit': round(filled, 6), 'frac': frac,
                        'pnl': round(pnl, 4), 'reason': reason})

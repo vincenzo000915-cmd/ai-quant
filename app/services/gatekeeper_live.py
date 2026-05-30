@@ -249,7 +249,7 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
     exit_params = dict(ENGINE_EXIT_PARAMS); exit_params['init_sl_pct'] = init_sl
     from app.services.ai_manager import exchange_fee_pct
     exit_params['fee_pct'] = exchange_fee_pct(exchange)   # 出场/估算用路由所真实费率 (HL 0.035 / OKX 0.05)
-    for _k in ('tp1_r', 'tp2_r', 'tp3_r'):   # AI 经理给的盈亏比 R 也用上 (出场台阶随经理判断)
+    for _k in ('tp1_r', 'tp2_r', 'tp3_r', 'tp1_frac', 'tp2_frac'):   # 经理给的R位置+分批比例都用上(Gap A)
         if mparams.get(_k):
             exit_params[_k] = float(mparams[_k])
     state = new_exit_state(side, fill, init_sl)

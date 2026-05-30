@@ -83,16 +83,19 @@ def _risk_per_fill(size_usdt, lev, init_sl_pct):
     return size_usdt * lev * (init_sl_pct / 100.0)
 
 
-def _ev_for_params(stype, base_is, aux, base_tf, lev, init_sl, tp1_r, tp2_r, tp3_r, size_usdt=10.0, fee_pct=0.035):
+def _ev_for_params(stype, base_is, aux, base_tf, lev, init_sl, tp1_r, tp2_r, tp3_r, size_usdt=10.0,
+                   fee_pct=0.035, tp1_frac=0.5, tp2_frac=0.3, funding_apr=0.0):
     """用 AI 经理给的具体参数回测 EV (守门员把关经理的判断)。返回 {ev(USDT), ev_r(期望R), fills}。
     ev_r = 每笔期望盈亏 ÷ 每笔风险金 → **剥掉仓位/杠杆/SL宽度**, 比的是 edge 纯度 (选策略用这个,
-    不是原始USDT否则谁开得大谁赢, user 2026-05-30 定 EV标准=期望R)。"""
+    不是原始USDT否则谁开得大谁赢, user 2026-05-30 定 EV标准=期望R)。
+    tp1_frac/tp2_frac: 经理给的分批比例 (Gap A); funding_apr: 年化资金费率, 按持仓时长扣 (Gap B)。"""
     from app.services.strategy_engine import get_signal
     from app.services.segment_backtest import segment_backtest
     sig = lambda df, p: get_signal(stype, df, p)
     r = segment_backtest(base_is, aux, strategy_type=stype, signal_fn=sig,
                          base_tf=base_tf, aux_tf='5m', leverage=lev, position_size_usdt=size_usdt,
                          fee_pct=fee_pct, init_sl_pct=init_sl, tp1_r=tp1_r, tp2_r=tp2_r, tp3_r=tp3_r,
+                         tp1_frac=tp1_frac, tp2_frac=tp2_frac, funding_apr=funding_apr,
                          use_position_filter=False, lock_at_tp=True, trail_r=0.5)
     ev = r['ev_per_fill_usdt'] if r['fills'] >= 5 else -9
     risk = _risk_per_fill(size_usdt, lev, init_sl)
@@ -117,11 +120,17 @@ def _manager_params_and_ev(symbol, stype, perception, base_is, aux, base_tf,
     if mp.get('ok') and mp.get('skip'):
         return {'skip': True, 'manager': {'used': True, 'reason': mp.get('reason_zh')}}
     if mp.get('ok'):
+        # 资金费年化 (Gap B): perception 的 rate 是每结算周期(8h)→ ×3×365 年化, 用当前费率当前向估计
+        _fr = (perception.get('funding') or {}).get('rate')
+        funding_apr = (float(_fr) * 3 * 365) if _fr else 0.0
         r = _ev_for_params(stype, base_is, aux, base_tf, mp['leverage'], mp['init_sl_pct'],
-                           mp['tp1_r'], mp['tp2_r'], mp['tp3_r'], mp['position_size_usdt'], fee_pct=fee)
+                           mp['tp1_r'], mp['tp2_r'], mp['tp3_r'], mp['position_size_usdt'], fee_pct=fee,
+                           tp1_frac=mp.get('tp1_frac', 0.5), tp2_frac=mp.get('tp2_frac', 0.3),
+                           funding_apr=funding_apr)
         return {'skip': False, 'ev': r['ev'], 'ev_r': r['ev_r'], 'fills': r['fills'],
                 'params': {'init_sl_pct': mp['init_sl_pct'], 'leverage': mp['leverage'],
                            'tp1_r': mp['tp1_r'], 'tp2_r': mp['tp2_r'], 'tp3_r': mp['tp3_r'],
+                           'tp1_frac': mp.get('tp1_frac', 0.5), 'tp2_frac': mp.get('tp2_frac', 0.3),
                            'position_size_usdt': mp['position_size_usdt']},
                 'manager': {'used': True, 'reason': mp.get('reason_zh'), 'leverage': mp['leverage']}}
     # 经理失败 → 机械回退

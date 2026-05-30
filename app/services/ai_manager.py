@@ -142,11 +142,15 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
   "skip": false,                  // 若当前行情正好踩中这策略弱点(如震荡市+突破策略)、判断不该开 → true
   "leverage": 数字,               // ≤ {lev_cap} (难度上限)
   "init_sl_pct": 数字,            // 初始止损价格距离% (杠杆前). 行情噪音大/弱点环境→给宽点防扫
-  "tp1_r": 0.5, "tp2_r": 1.2, "tp3_r": 2.0,   // 盈亏比R倍数. 难度难 or 行情弱 → 可等比缩小求稳
+  "tp1_r": 0.5, "tp2_r": 1.2, "tp3_r": 2.0,   // 盈亏比R倍数(在哪几个位置止盈). 难度难 or 行情弱 → 可等比缩小求稳
+  "tp1_frac": 0.5, "tp2_frac": 0.3,   // 头档/中段各平多少比例(尾段=剩余自动). 吃头中段不贪尾:
+                                      // 强趋势可少吃早段多留尾(tp1_frac小)、震荡/弱势多吃早段落袋(tp1_frac大). 各0.2~0.6, 两者和≤0.85(尾段至少留0.15)
   "position_size_usdt": 数字,     // 保证金(≤可用权益, 单仓占可用的合理比例; 难度激进可大、保守小)
   "reason_zh": "为什么这样给 (结合当前行情 + 这策略的edge/弱点 一句话)"
 }}
-在难度信封内(杠杆≤{lev_cap}), 贴合当前行情和这策略特性. 踩中弱点就skip或更保守."""
+在难度信封内(杠杆≤{lev_cap}), 贴合当前行情和这策略特性. 踩中弱点就skip或更保守.
+**资金费**(上面富感知里的 funding): 正费率=多头付空头(做多是成本/做空收益), 负反之; 持仓跨结算窗会累积,
+极端费率要纳入 EV 和方向判断 (如高正费率=多头拥挤, 可能是做空的信号)."""
 
     try:
         r = call_llm(user_id=user_id, prompt=prompt, system=SYSTEM, max_tokens=600, model='opus',
@@ -168,6 +172,13 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
             return {'ok': True, 'skip': True,
                     'reason_zh': f'可用资金 ${max_margin:.0f} 不足以开 {con["exchange"]} 最小单(需保证金≥${min_margin:.0f})'}
         default_margin = _clamp(10.0, min_margin, max_margin)
+        # 分批比例 (Gap A, user 2026-05-30 给经理控制权): 头/中段各 0.2~0.6, 两者和≤0.85 保证尾段≥0.15
+        # (吃头中段不贪尾 = 经理控形状). tp3_frac = 剩余, 由出场引擎自动算.
+        tp1_frac = _clamp(float(p.get('tp1_frac', 0.5)), 0.2, 0.6)
+        tp2_frac = _clamp(float(p.get('tp2_frac', 0.3)), 0.2, 0.6)
+        if tp1_frac + tp2_frac > 0.85:           # 留尾段 ≥ 0.15
+            scale = 0.85 / (tp1_frac + tp2_frac)
+            tp1_frac = round(tp1_frac * scale, 4); tp2_frac = round(tp2_frac * scale, 4)
         out = {
             'ok': True, 'skip': False,
             'leverage': lev,
@@ -175,6 +186,7 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
             'tp1_r': _clamp(float(p.get('tp1_r', 0.5)), 0.2, 3),
             'tp2_r': _clamp(float(p.get('tp2_r', 1.2)), 0.4, 5),
             'tp3_r': _clamp(float(p.get('tp3_r', 2.0)), 0.6, 8),
+            'tp1_frac': tp1_frac, 'tp2_frac': tp2_frac,
             'position_size_usdt': _clamp(float(p.get('position_size_usdt', default_margin)), min_margin, max_margin),
             'reason_zh': p.get('reason_zh', ''),
             'fee_pct': con['fee_pct'],   # 本单路由所费率 → 守门员 EV 回测 + 出场用对
