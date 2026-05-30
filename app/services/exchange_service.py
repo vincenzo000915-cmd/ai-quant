@@ -848,3 +848,100 @@ def get_ticker(symbol='BTC-USDT'):
         }
     except Exception as e:
         raise Exception(f'獲取價格失敗: {str(e)}')
+
+
+# ============================================================
+# Phase 15 守门员 live: OKX 原生条件单(algo) 止盈止损 — venue-无关trigger的OKX侧
+# (与 HL place_hl_trigger 同接口). OKX 走 /api/v5/trade/order-algo (ordType=conditional).
+# user 2026-05-30: HL用户走原生trigger, OKX用户也要 → 多租户venue-无关.
+# ============================================================
+
+_OKX_TICK_CACHE = {}
+
+
+def _okx_tick_size(inst_id: str) -> float:
+    """OKX 合约 tickSz (价格最小变动) — 真钱trigger价必须 round 到 tick 否则被拒。public 接口+缓存。"""
+    if inst_id in _OKX_TICK_CACHE:
+        return _OKX_TICK_CACHE[inst_id]
+    try:
+        import requests
+        r = requests.get(f'https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId={inst_id}', timeout=8)
+        d = (r.json().get('data') or [{}])[0]
+        tick = float(d.get('tickSz') or 0.0001)
+    except Exception:
+        tick = 0.0001
+    _OKX_TICK_CACHE[inst_id] = tick
+    return tick
+
+
+def _okx_round_px(inst_id: str, px: float) -> float:
+    """把价格 round 到 OKX tick 整数倍。"""
+    tick = _okx_tick_size(inst_id)
+    if tick <= 0:
+        return px
+    return round(round(px / tick) * tick, 10)
+
+
+def place_okx_trigger(symbol: str, position_side: str, trigger_px: float, base_size: float,
+                      tpsl: str, creds: dict) -> dict:
+    """OKX 原生条件单(reduce-only SL/TP) — tpsl='sl'|'tp'. position_side='long'|'short'.
+    返回 {ok, oid(algoId), trigger_px, reject_reason} (与 place_hl_trigger 同形)。"""
+    if creds is None:
+        creds = _env_creds()
+    ak, sk, pw = creds.get('api_key'), creds.get('secret'), creds.get('passphrase')
+    if not (ak and sk and pw):
+        return {'ok': False, 'reject_reason': 'OKX creds 缺'}
+    from app.services.symbols import get_inst_id, get_contract_size
+    inst_id = get_inst_id(symbol)
+    cs = get_contract_size(symbol)
+    contracts = max(1, round(base_size / cs)) if cs else max(1, round(base_size))
+    close_side = 'buy' if position_side == 'short' else 'sell'   # 平空=买回, 平多=卖
+    tpx = _okx_round_px(inst_id, trigger_px)
+    body = {
+        'instId': inst_id, 'tdMode': 'cross', 'side': close_side,
+        'ordType': 'conditional', 'sz': str(int(contracts)), 'reduceOnly': 'true',
+    }
+    if tpsl == 'sl':
+        body['slTriggerPx'] = str(tpx); body['slOrdPx'] = '-1'; body['slTriggerPxType'] = 'last'
+    else:
+        body['tpTriggerPx'] = str(tpx); body['tpOrdPx'] = '-1'; body['tpTriggerPxType'] = 'last'
+    try:
+        data = _okx_post_signed('/api/v5/trade/order-algo', body, ak, sk, pw)
+        d0 = data[0] if data else {}
+        algo_id = d0.get('algoId')
+        ok = (d0.get('sCode') == '0') and algo_id
+        return {'ok': bool(ok), 'oid': algo_id, 'trigger_px': tpx,
+                'reject_reason': (d0.get('sMsg') or 'unknown') if not ok else None}
+    except Exception as e:
+        return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
+
+
+def cancel_okx_algo(symbol: str, algo_id, creds: dict) -> dict:
+    """撤 OKX 条件单 (algoId) — /api/v5/trade/cancel-algos。"""
+    if creds is None:
+        creds = _env_creds()
+    ak, sk, pw = creds.get('api_key'), creds.get('secret'), creds.get('passphrase')
+    if not (ak and sk and pw) or not algo_id:
+        return {'ok': False, 'reject_reason': 'creds/algoId 缺'}
+    from app.services.symbols import get_inst_id
+    try:
+        data = _okx_post_signed('/api/v5/trade/cancel-algos',
+                                [{'algoId': str(algo_id), 'instId': get_inst_id(symbol)}], ak, sk, pw)
+        d0 = data[0] if data else {}
+        return {'ok': d0.get('sCode') == '0', 'raw': d0}
+    except Exception as e:
+        return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
+
+
+def get_okx_position_base(symbol: str, creds: dict) -> float:
+    """OKX 当前持仓 base size (带符号 long+/short-)。探 TP 成交用。无仓=0。"""
+    try:
+        from app.services.symbols import get_inst_id, get_contract_size
+        inst_id = get_inst_id(symbol); cs = get_contract_size(symbol) or 1
+        for p in (fetch_okx_positions(creds) or []):
+            if p.get('inst_id') == inst_id:
+                return float(p.get('pos_contracts') or 0) * cs   # 张→base
+        return 0.0
+    except Exception as e:
+        print(f'[okx] get_position_base {symbol} fail: {e}')
+        return 0.0

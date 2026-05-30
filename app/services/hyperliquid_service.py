@@ -574,10 +574,12 @@ def cancel_hl_order(symbol: str, oid: int, creds: dict) -> dict:
         return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
 
 
-def get_hl_position_size(symbol: str, creds: dict) -> float:
-    """查当前 HL 持仓 size (base, 带符号: long+/short-). 用于探 TP 成交(size 变小)。无仓=0。"""
+def get_hl_position_size(symbol: str, creds: dict):
+    """查当前 HL 持仓 size (base, 带符号: long+/short-)。
+    ⚠️ 真钱关键: API 出错返回 **None** (≠ 0!) — 调用方绝不能把'查不到'当'没有了'去平仓
+    (否则 API 抖一下就假平仓, 仓还活在交易所=真钱敞口失管). 确认无仓才返回 0.0。"""
     if not creds:
-        return 0.0
+        return None
     try:
         exchange, info = _exchange_client(creds)
         addr = creds.get('main_address')           # HL user-of-record (非 agent signer)
@@ -587,7 +589,7 @@ def get_hl_position_size(symbol: str, creds: dict) -> float:
             pos = ap.get('position') or {}
             if pos.get('coin') == base:
                 return float(pos.get('szi') or 0.0)
-        return 0.0
+        return 0.0   # 确认查到了、无此仓 → 真 0
     except Exception as e:
         log.warning(f'get_hl_position_size {symbol} fail: {e}')
-        return 0.0
+        return None  # API 出错 → None, 不是 0

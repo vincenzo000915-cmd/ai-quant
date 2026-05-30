@@ -547,11 +547,17 @@ def _manage_native_position(pos, gk) -> dict:
     creds = get_decrypted_for_user(pos.user_id)
     if not creds:
         return {'managed': 0, 'closed': 0}
-    cur_size = abs(get_hl_position_size(pos.symbol, creds))
+    _raw_size = get_hl_position_size(pos.symbol, creds)
+    if _raw_size is None:
+        # ⚠️ 真钱关键: API 查不到 ≠ 仓没了. 出错就跳过本轮(下个*/5重试), 绝不假平仓
+        # (否则 HL 抖一下就 DB 标平、回填假数据, 仓还活在交易所=真钱敞口失管).
+        print(f'[gatekeeper_live] {pos.symbol} 持仓查询失败(None), 跳过本轮不动作')
+        return {'managed': 1, 'closed': 0}
+    cur_size = abs(_raw_size)
     cur_px = get_ticker(pos.symbol)['price']
     tp_plan = (gk.get('oids') or {}).get('tp_plan') or []
 
-    # 全平 (SL 或最后 TP 成交 → HL 已无仓)
+    # 全平 (SL 或最后 TP 成交 → HL 已确认无仓; 上面已挡掉 None=查询失败)
     if orig > 0 and cur_size <= orig * 0.02:
         pnl = _native_realized_pnl(pos, gk, creds)
         for k in ('sl', 'tp1', 'tp2', 'tp3'):
