@@ -306,11 +306,17 @@ def _notify_live_enter(symbol, d, fill, lev, order_mode, pos_id):
         dir_zh = '做空 🔻' if d.get('side') == 'short' else '做多 🔺'
         sl_pct = (d.get('params') or {}).get('init_sl_pct')
         sl_px = fill * (1 + sl_pct / 100) if d.get('side') == 'short' else fill * (1 - sl_pct / 100)
+        regime_zh = {'trend': '趋势', 'range': '震荡'}.get(d.get('regime'), d.get('regime') or '')
+        dir_read = {'up': '偏多', 'down': '偏空', 'flat': '横盘'}.get(d.get('direction'), '')
+        reasons = '、'.join((d.get('match_reasons') or [])[:2]) if d.get('match_reasons') else ''
         telegram_service.send(
             f"🎯 <b>守门员开仓</b>{tag}\n"
             f"<b>{s} · {dir_zh}</b>\n"
-            f"入场 <b>{round(fill, 4)}</b> · 杠杆 {lev:.0f} 倍\n"
-            f"初始止损 {round(sl_px, 4)}（{sl_pct}%）\n"
+            f"选用策略：<b>{(d.get('strategy') or '').upper()}</b>"
+            + (f"（配对分 {d.get('match_score')}）" if d.get('match_score') else "") + "\n"
+            f"市场判读：{regime_zh}{('/' + dir_read) if dir_read else ''}"
+            + (f" · {reasons}" if reasons else "") + "\n"
+            f"入场 <b>{round(fill, 4)}</b> · 杠杆 {lev:.0f} 倍 · 止损 {round(sl_px, 4)}（{sl_pct}%）\n"
             f"打法：锁 TP 台阶、吃头中段不贪尾", force=True)
     except Exception as e:
         print(f'[gatekeeper_live] notify enter error: {type(e).__name__}: {e}')
@@ -472,9 +478,11 @@ def _notify_gk_close(pos, gk):
         pnl = gk.get('pnl', 0.0)
         emo = '🟢' if pnl >= 0 else '🔴'
         label, r_mult = _exit_summary(pos, gk)
+        stype = (gk.get('strategy') or '').upper()
         telegram_service.send(
             f"{emo} <b>守门员平仓</b>{tag}\n"
-            f"<b>{s} · {dir_zh}</b> · {label}\n"
+            f"<b>{s} · {dir_zh}</b>" + (f" · 策略 {stype}" if stype else "") + "\n"
+            f"{label}\n"
             f"实现盈亏 <b>{pnl:+.3f}</b> USDT（{r_mult:+.2f}R）\n"
             f"本笔已记入学习飞轮", force=True)
     except Exception as e:
