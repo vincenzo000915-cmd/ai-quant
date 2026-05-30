@@ -35,6 +35,7 @@ import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import { prettifyType } from '../utils/strategyTypeLabels';
 import ProfitTargetCard from '../components/ProfitTargetCard';
+import { tierRank } from '../auth';
 // Phase 12.20: NeuralBackdrop 已下架（装饰过头）
 
 const API = process.env.REACT_APP_API_URL || '';
@@ -501,8 +502,9 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* Phase 14k-22: AI 目标驱动 — 顶部 */}
-      <ProfitTargetCard />
+      {/* Phase 15: 目标驱动 = AI 经理控制台 (设目标/暂停/启动/改目标 都是 AI 经理功能) → Team 专属.
+          否则 Pro 看到这张就等于在用 AI 经理 (user 查出). Pro 用守门员台, 无目标托管. */}
+      {tierRank() >= 3 && <ProfitTargetCard />}
 
       {/* === KPI bar — 6 cells，无 emoji 无 sparkline 高度统一（专业 trader 风）=== */}
       <Grid container spacing={1} sx={{ mb: 2.5 }}>
