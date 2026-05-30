@@ -439,6 +439,9 @@ class Position(db.Model):
     # Phase 15 学习飞轮: 该仓由守门员 live 决策开的 → 关联 gatekeeper_decisions.id,
     # 平仓时回填 realized_pnl 完成真盈亏校准环 (gatekeeper_learning.record_outcome).
     gatekeeper_decision_id = db.Column(db.Integer, nullable=True, index=True)
+    # 守门员仓的引擎出场状态 {state, params, last_ts} — 由 gatekeeper 出场管理器跑 segment_exit.exit_step
+    # (分批TP1/2/3+两段移动止损, 与算EV的引擎同一套); check_stop_loss 对守门员仓让路不管.
+    gk_exit = db.Column(db.JSON, nullable=True)
     opened_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     closed_at = db.Column(db.DateTime)
 

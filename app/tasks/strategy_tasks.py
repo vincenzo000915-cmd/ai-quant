@@ -359,6 +359,15 @@ def gatekeeper_live_scan():
     return f"gatekeeper_live[{r.get('mode')}] scanned={r.get('scanned')} enter={len(enters)}"
 
 
+@celery_app.task
+def gatekeeper_exit_scan():
+    """Phase 15 学习飞轮②: 守门员持仓出场管理 (beat */5).
+    逐新 5m bar 跑引擎分批出场(segment_exit.exit_step), 平仓回填真盈亏校准飞轮。"""
+    from app.services.gatekeeper_live import gatekeeper_exit_manage
+    r = gatekeeper_exit_manage()
+    return f"gatekeeper_exit managed={r.get('managed')} closed={r.get('closed')}"
+
+
 def _strategy_ev(strategy) -> float:
     """Phase 14k-131: 单笔期望值 EV = p_win×avg_win − (1−p_win)×|avg_loss|.
     读最近一条缓存 BacktestResult (不现算回测, 避开 14k-79 CPU 雪崩).
@@ -902,6 +911,9 @@ def check_stop_loss():
     positions = Position.query.filter_by(status='open').all()
     triggered = []
     for pos in positions:
+        # Phase 15: 守门员仓由专用出场管理器(segment_exit.exit_step 分批TP+两段移动止损)管, 这里让路
+        if pos.gatekeeper_decision_id is not None:
+            continue
         try:
             ticker = get_ticker(pos.symbol)
             current = ticker['price']

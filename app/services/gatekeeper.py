@@ -120,7 +120,9 @@ def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
     triggered = []
     for s in scored:
         try:
-            if get_signal(s['strategy'], df, {}) in ('buy', 'sell', 'long', 'short'):
+            sig = get_signal(s['strategy'], df, {})
+            if sig in ('buy', 'sell', 'long', 'short'):
+                s['side'] = 'long' if sig in ('buy', 'long') else 'short'   # 供 live 下单定方向
                 triggered.append(s)
         except Exception:
             continue
@@ -133,7 +135,8 @@ def _gatekeeper_decide_inner(symbol, base_candles, aux_candles, base_tf,
     for s in triggered:
         opt = _optimize_params(s['strategy'], base_candles, aux_candles, base_tf, lev)
         if opt['ev'] >= MIN_EV and (best is None or opt['ev'] > best['expected_ev']):
-            best = {'strategy': s['strategy'], 'match_score': s['score'], 'match_reasons': s['reasons'],
+            best = {'strategy': s['strategy'], 'side': s.get('side'),
+                    'match_score': s['score'], 'match_reasons': s['reasons'],
                     'params': {'init_sl_pct': opt['sl']}, 'expected_ev': opt['ev'], 'fills': opt['fills']}
     if best:
         return {'action': 'enter', 'regime': perc['regime'], 'direction': perc['direction'],
