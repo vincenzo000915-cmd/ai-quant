@@ -13,7 +13,7 @@ import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import LockIcon from '@mui/icons-material/Lock';
 import TouchAppIcon from '@mui/icons-material/TouchApp';
 import { palette } from '../theme';
-import { tierRank } from '../auth';
+import { tierRank, getUser } from '../auth';
 
 const API = process.env.REACT_APP_API_URL || '';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
@@ -40,6 +40,7 @@ export default function GatekeeperCockpit() {
   const tier = tierRank();
   const hasGatekeeper = tier >= TIER_RANK.pro;   // Pro+
   const hasManager = tier >= TIER_RANK.team;     // Team
+  const [hasLlmKey, setHasLlmKey] = useState(true);  // 绑了 LLM key → 经理判断壳上线 (admin claude_cli 视为有)
 
   const refresh = useCallback(async () => {
     try {
@@ -49,6 +50,10 @@ export default function GatekeeperCockpit() {
       ]);
       if (r.ok) setData(await r.json());
       if (rc.ok) setCfg(await rc.json());
+      // 经理是不是真上线 = 绑没绑 key (新架构: 不再只看 tier; Pro 绑了 key 也有经理)
+      const isAdmin = (getUser()?.role === 'admin');
+      const llm = await fetch(`${API}/api/me/llm`).then(x => x.json()).catch(() => ({}));
+      setHasLlmKey(isAdmin || Object.keys(llm.bound || {}).length > 0);
     } catch {}
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]);
@@ -201,8 +206,14 @@ export default function GatekeeperCockpit() {
             </Box>
           )}
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-            打法: 锁 TP 台阶、吃头中段不贪尾 · 参数{hasManager ? ' 由 AI 经理给' : '在「系统设定」自设'}
+            打法: 锁 TP 台阶、吃头中段不贪尾 · 参数{hasLlmKey ? ' 由 AI 经理逐单给(你的 LLM key)' : ' 走机械技能(感知+EV闸)按你「系统设定」择参'}
           </Typography>
+          {!hasLlmKey && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: palette.accent, cursor: 'pointer' }}
+              onClick={() => { window.location.href = '/settings'; }}>
+              🔑 绑定你自己的 LLM key → 解锁 AI 经理逐单临场判断(更聪明)。没绑也照跑机械技能,不影响下单。
+            </Typography>
+          )}
         </Section>
       )}
 
