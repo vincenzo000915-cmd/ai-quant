@@ -14,7 +14,7 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { useNavigate } from 'react-router-dom';
-import { tierRank } from '../auth';
+import { tierRank, getUser } from '../auth';
 
 const PURPLE = '#a78bfa';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
@@ -28,8 +28,9 @@ function driverMeta(tier) {
 export default function ProfitTargetCard() {
   const navigate = useNavigate();
   const [target, setTarget] = useState(null);
-  const [needsTeam, setNeedsTeam] = useState(false);
+  const [needsPro, setNeedsPro] = useState(false);   // 402 = 未达 Pro (③ Stage 2: 目标放开到 Pro)
   const [needsExchange, setNeedsExchange] = useState(false);
+  const [hasLlmKey, setHasLlmKey] = useState(true);  // 没绑 LLM key → AI 经理产不出判断, 提示绑定 (admin 用 claude_cli 视为有)
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState({ target_pct: 20, days: 30, max_dd_pct: 15, daily_loss_halt_pct: 5 });
   const [busy, setBusy] = useState(false);
@@ -38,15 +39,21 @@ export default function ProfitTargetCard() {
 
   const refresh = useCallback(async () => {
     try {
-      // 1. check Team tier (Phase 14k-23 升级后此 endpoint 要 Team, 14k-118 修变量名 needsPro→needsTeam)
+      // 1. ③ Stage 2: 此 endpoint 现要 Pro (原 Team) → 402 = 未达 Pro (Basic/free)
       const r = await fetch('/api/me/profit-target');
       if (r.status === 402) {
-        setNeedsTeam(true);
+        setNeedsPro(true);
         return;
       }
-      setNeedsTeam(false);
+      setNeedsPro(false);
       const d = await r.json();
       setTarget(d.target);
+      // ③ Stage 2: 检测 LLM key — 没绑 → AI 经理逐单判断产不出 (admin 走 claude_cli 视为有 key)
+      try {
+        const isAdmin = (getUser()?.role === 'admin');
+        const llm = await fetch('/api/me/llm').then(x => x.json()).catch(() => ({}));
+        setHasLlmKey(isAdmin || Object.keys(llm.bound || {}).length > 0);
+      } catch { setHasLlmKey(true); }
       // Phase 15: 守门员 live 档 + AI 经理判断流 (一次拿)
       const cfg = await fetch('/api/config').then(x => x.json()).catch(() => ({}));
       if (cfg && cfg.gatekeeper_live_mode) setGkMode(cfg.gatekeeper_live_mode);
@@ -121,20 +128,20 @@ export default function ProfitTargetCard() {
     } finally { setBusy(false); }
   };
 
-  // 需要 Team 订阅 (14k-23 升级)
-  if (needsTeam) {
+  // ③ Stage 2: 月目标放开到 Pro — 未达 Pro (Basic/free) 才看到升级提示
+  if (needsPro) {
     return (
       <Card sx={{ mb: 2, border: '1px dashed #fbbf24aa', bgcolor: 'rgba(251,191,36,0.04)' }}>
         <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <WorkspacePremiumIcon sx={{ color: '#fbbf24' }} />
           <Box sx={{ flex: 1, minWidth: { xs: 0, sm: 200 } }}>
-            <Typography variant="body2" fontWeight={700}>🤖 AI 自动托管 (Team 顶级方案)</Typography>
+            <Typography variant="body2" fontWeight={700}>🎯 目标驱动 · 守门员托管 (Pro 解锁)</Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-              设盈利目标 → AI 全权管理: 进度跟踪 / 回撤保护 / 策略轮换 / 资金跨档扩张 / 多交易所
+              设盈利目标 → 守门员按难度信封自动扫描·回测·下单 (绑你自己的 LLM key 再加 AI 经理逐单判断). Team 另加全自动托管/多交易所.
             </Typography>
           </Box>
           <Button size="small" variant="contained" color="warning" onClick={() => navigate('/pricing')}>
-            升级 Team
+            升级 Pro
           </Button>
         </CardContent>
       </Card>
@@ -161,9 +168,18 @@ export default function ProfitTargetCard() {
     );
   }
 
+  // ③ Stage 2: 没绑 LLM key → AI 经理判断壳产不出 (难度信封纯数学仍可跑机械托管). 精准提示放在目标入口.
+  const llmKeyBanner = !hasLlmKey ? (
+    <Alert severity="warning" sx={{ mb: 1.5, py: 0.3 }}
+      action={<Button color="inherit" size="small" onClick={() => navigate('/settings')}>去绑定</Button>}>
+      🔑 <b>AI 经理</b>要用<b>你自己的 LLM key</b> 才能逐单产出判断。没绑也能开守门员用<b>机械技能</b>按目标托管,但 AI 经理那层判断要绑 key 才有。
+    </Alert>
+  ) : null;
+
   if (!target) {
     return (
       <>
+        {llmKeyBanner}
         <Card sx={{ mb: 2, border: `1px dashed ${PURPLE}44` }}>
           <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <TrackChangesIcon sx={{ color: PURPLE }} />
@@ -199,6 +215,7 @@ export default function ProfitTargetCard() {
 
   return (
     <>
+      {llmKeyBanner}
       <Card sx={{ mb: 2, border: `1px solid ${PURPLE}33`, bgcolor: 'rgba(167,139,250,0.04)' }}>
         <CardContent sx={{ py: 1.5 }}>
           <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>

@@ -498,9 +498,9 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* Phase 15: 目标驱动 = AI 经理控制台 (设目标/暂停/启动/改目标 都是 AI 经理功能) → Team 专属.
-          否则 Pro 看到这张就等于在用 AI 经理 (user 查出). Pro 用守门员台, 无目标托管. */}
-      {tierRank() >= 3 && <ProfitTargetCard />}
+      {/* ③ Stage 2 (2026-05-30 user 改定): 月目标=难度信封(纯数学), 放开到 Pro — Pro 也跑我们技能栈,
+          经理判断壳跑在 Pro 自己的 LLM key (没绑→机械托管+提示绑key). Team 多的是自主托管层不是「能不能设目标」. */}
+      {tierRank() >= 2 && <ProfitTargetCard />}
 
       {/* === KPI bar — 6 cells，无 emoji 无 sparkline 高度统一（专业 trader 风）=== */}
       <Grid container spacing={1} sx={{ mb: 2.5 }}>

@@ -2804,7 +2804,7 @@ def me_profit_target_difficulty():
 
 @api_bp.route('/me/profit-target', methods=['GET'])
 @require_actor
-@require_team_tier
+@require_tier('pro')  # ③ Stage 2 (2026-05-30): 月目标难度信封放开到 Pro (Team 多的是自主托管不是「能不能设目标」)
 def me_profit_target_get():
     """当前 active profit target (None 若未设)"""
     from app.models import ProfitTarget
@@ -2817,7 +2817,7 @@ def me_profit_target_get():
 
 @api_bp.route('/me/profit-target', methods=['POST'])
 @require_actor
-@require_team_tier
+@require_tier('pro')  # ③ Stage 2 (2026-05-30): 月目标难度信封放开到 Pro (Team 多的是自主托管不是「能不能设目标」)
 def me_profit_target_set():
     """设置/重置 profit target.
     Body: {start_capital_usdt?, target_pct=20, days=30, max_dd_pct=15, daily_loss_halt_pct=5}
@@ -2939,7 +2939,7 @@ def me_profit_target_set():
 
 @api_bp.route('/me/profit-target/<int:tid>', methods=['DELETE'])
 @require_actor
-@require_team_tier
+@require_tier('pro')  # ③ Stage 2 (2026-05-30): 月目标难度信封放开到 Pro (Team 多的是自主托管不是「能不能设目标」)
 def me_profit_target_cancel(tid):
     """取消当前 target (status=paused, AI 暂停托管)"""
     from app.models import ProfitTarget
@@ -2956,7 +2956,7 @@ def me_profit_target_cancel(tid):
 
 @api_bp.route('/me/profit-target/<int:tid>/resume', methods=['POST'])
 @require_actor
-@require_team_tier
+@require_tier('pro')  # ③ Stage 2 (2026-05-30): 月目标难度信封放开到 Pro (Team 多的是自主托管不是「能不能设目标」)
 def me_profit_target_resume(tid):
     """恢复 paused 目标 → active (AI 重新接管)"""
     from app.models import ProfitTarget
@@ -2980,7 +2980,7 @@ def me_profit_target_resume(tid):
 
 @api_bp.route('/me/profit-target/paused', methods=['GET'])
 @require_actor
-@require_team_tier
+@require_tier('pro')  # ③ Stage 2 (2026-05-30): 月目标难度信封放开到 Pro (Team 多的是自主托管不是「能不能设目标」)
 def me_profit_target_paused_list():
     """列出可恢复的 paused/expired 目标 (供 UI '恢复' 选项)"""
     from app.models import ProfitTarget
