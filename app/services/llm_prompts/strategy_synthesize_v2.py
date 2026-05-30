@@ -601,8 +601,13 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
         return {'ok': False, 'error': s1.get('error'), 'stage': 'step1'}
     hypothesis = s1['hypothesis']
 
-    # 4. A Step 2: Python verify
-    verify = verify_hypothesis(candles, hypothesis)
+    # 4. A Step 2: verify 换守门员引擎 (user 2026-05-30: verify 与守门员实盘回测对齐,
+    #    不再固定SL/TP; 用引擎=保本+分批+移动止损+优化SL → 15m趋势等不被旧范式误杀)
+    try:
+        aux_v = fetch_ohlcv_history(symbol, '5m', total_limit=2000) if timeframe in ('15m', '1h') else None
+    except Exception:
+        aux_v = None
+    verify = verify_with_engine(candles, hypothesis, aux_v, base_tf=timeframe)
     if not verify.get('ok'):
         return {'ok': False, 'error': verify.get('reason'), 'stage': 'verify'}
     if verify['sample_size'] < MIN_SAMPLE_SIZE:
@@ -634,3 +639,100 @@ def synthesize_strategy_v2(symbol: str, timeframe: str, balance: float,
         'hypothesis': hypothesis,
         'verify_meta': verify,
     }
+
+
+# ============= verify 换守门员引擎 (user 2026-05-30: verify 与守门员回测对齐) =============
+
+def _indicator_series(df, indicator, period):
+    """复用 verify_hypothesis 的 12 种指标计算 (供 hypothesis→signal_fn)。"""
+    import ta
+    if indicator == 'RSI':
+        return ta.momentum.RSIIndicator(df['close'], window=period).rsi()
+    if indicator == 'BB_lower_touch':
+        bb = ta.volatility.BollingerBands(df['close'], window=period, window_dev=2)
+        return df['close'] / bb.bollinger_lband()
+    if indicator == 'BB_upper_touch':
+        bb = ta.volatility.BollingerBands(df['close'], window=period, window_dev=2)
+        return df['close'] / bb.bollinger_hband()
+    if indicator == 'MACD_hist':
+        return ta.trend.MACD(df['close']).macd_diff()
+    if indicator == 'EMA_ratio':
+        return df['close'] / ta.trend.EMAIndicator(df['close'], window=period).ema_indicator()
+    if indicator == 'ATR_pct':
+        atr = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=period).average_true_range()
+        return atr / df['close'] * 100
+    if indicator == 'volume_ratio':
+        return df['volume'] / df['volume'].rolling(period).mean()
+    if indicator == 'PSAR_distance':
+        psar = ta.trend.PSARIndicator(df['high'], df['low'], df['close'])
+        return (df['close'] - psar.psar()) / df['close'] * 100
+    if indicator == 'Donchian_high_touch':
+        return df['close'] / df['high'].rolling(period).max()
+    if indicator == 'Donchian_low_touch':
+        return df['close'] / df['low'].rolling(period).min()
+    if indicator == 'Stoch_K':
+        return ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'], window=period).stoch()
+    if indicator == 'CCI':
+        return ta.trend.CCIIndicator(df['high'], df['low'], df['close'], window=period).cci()
+    return None
+
+
+def _hypothesis_to_signal_fn(hypothesis):
+    """把 hypothesis.entry_condition 包成 signal_fn(df,params)→buy/sell/hold (喂守门员引擎)。"""
+    import pandas as pd
+    ec = hypothesis.get('entry_condition', {})
+    indicator = ec.get('indicator'); period = (ec.get('params') or {}).get('period', 14)
+    op = ec.get('op', '<'); threshold = float(ec.get('threshold', 30))
+    sig = 'buy' if hypothesis.get('expected_direction', 'long') == 'long' else 'sell'
+
+    def signal_fn(df, params=None):
+        if df is None or len(df) < period + 6:
+            return 'hold'
+        try:
+            s = _indicator_series(df, indicator, period)
+        except Exception:
+            return 'hold'
+        if s is None or len(s) < 2:
+            return 'hold'
+        v = s.iloc[-1]; vp = s.iloc[-2]
+        if pd.isna(v):
+            return 'hold'
+        fire = False
+        if op == '<': fire = v < threshold
+        elif op == '>': fire = v > threshold
+        elif op == 'cross_up': fire = (not pd.isna(vp)) and vp <= threshold < v
+        elif op == 'cross_down': fire = (not pd.isna(vp)) and vp >= threshold > v
+        elif op == 'touch': fire = abs(v - threshold) < 0.02
+        return sig if fire else 'hold'
+    return signal_fn
+
+
+def verify_with_engine(candles, hypothesis, aux_candles=None, base_tf='15m', lev=15.0):
+    """守门员引擎 verify (对齐守门员实盘回测): hypothesis→signal_fn 喂 segment_backtest +
+    扫SL优化, 取最优 EV. EV 口径换成"价格%/trade"对齐原门槛 (引擎净EV含fee/分批/保本)。"""
+    from app.services.segment_backtest import segment_backtest
+    fn = _hypothesis_to_signal_fn(hypothesis)
+    best = None
+    for sl in [0.5, 0.8, 1.2, 1.6]:
+        try:
+            r = segment_backtest(candles, aux_candles, strategy_type='hypo', signal_fn=fn,
+                                 base_tf=base_tf, aux_tf='5m', leverage=lev, init_sl_pct=sl)
+        except Exception:
+            continue
+        n_entry = len(set(t['entry_ts'] for t in r['trades']))
+        if n_entry < 5:
+            continue
+        # EV%/trade(价格%) = total_pnl_usdt / 笔 / (仓位×杠杆) ×100, 对齐原门槛口径
+        ev_pct = r['total_pnl'] / n_entry / (10.0 * lev) * 100
+        pf = r['profit_factor']
+        if best is None or ev_pct > best['expected_value']:
+            wr = sum(1 for t in r['trades'] if t['pnl'] > 0) / len(r['trades']) if r['trades'] else 0
+            best = {'ok': True, 'expected_value': round(ev_pct, 3), 'avg_pnl': round(ev_pct, 3),
+                    'profit_factor': (round(pf, 2) if pf and pf != float('inf') else pf),
+                    'win_rate': round(wr, 3), 'triggers': n_entry, 'sample_size': n_entry,
+                    'sl_used': sl, 'tp_used': None, 'rr_ratio': None, 'engine': True,
+                    'reason': f'守门员引擎(保本+分批+优化SL{sl}%) EV{ev_pct:+.2f}%/trade | PF{pf} | {n_entry}笔'}
+    if best:
+        return best
+    return {'ok': True, 'triggers': 0, 'expected_value': 0.0, 'profit_factor': None,
+            'win_rate': 0, 'sample_size': 0, 'engine': True, 'reason': '引擎下有效样本不足(<5笔)'}
