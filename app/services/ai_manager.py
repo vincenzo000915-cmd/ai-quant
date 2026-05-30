@@ -68,10 +68,13 @@ def instrument_constraints(exchange: str, symbol: str, lev: float) -> dict:
 
 def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile: dict,
                       target_pct: float, days_remaining: int, user_id: int = 1,
-                      exchange: str = 'hyperliquid', base_tf: str = '15m') -> dict:
+                      exchange: str = 'hyperliquid', base_tf: str = '15m',
+                      available_usdt: float | None = None) -> dict:
     """守门员问 AI 经理要参数. 返回 {ok, skip, leverage, init_sl_pct, tp1_r, tp2_r, tp3_r,
     position_size_usdt, reason_zh}. 失败/异常 → ok=False (守门员回退机械参数)。
-    exchange: 本单路由的交易所 (规格/费率/最小单都按它喂给经理)。"""
+    exchange: 本单路由的交易所 (规格/费率/最小单都按它喂给经理)。
+    available_usdt: 守门员组合层资金闸算好的**可用额度**(已扣安全垫+已开仓占用); 经理在此额度内下注,
+                    不再按总权益(否则每个币各按总额1/3 → 叠起来满仓). None=offline回退拉总权益。"""
     from app.services.llm_provider import call_llm
     from app.services.profit_difficulty import difficulty_guidance_block, profit_difficulty, monthly_equiv
 
@@ -84,14 +87,18 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
     # 或切到 <最小颗数留灰尘仓 (user 2026-05-30 指出灰尘仓根因); 没费率 → 贴近TP被手续费吃光算不准EV.
     con = instrument_constraints(exchange, symbol, lev_cap)
 
-    # 经理的眼睛之二: 账户真实可用资金 (统一账户 spot+perp). 没有这个 → 经理凭空挑本金,
-    # 会挑出 > 账户净值的保证金一仓吃光账户 (2026-05-30 AVAX $80 砸 $68 账户事故根因).
-    # position_size_usdt 是**保证金**, 必须按这个数的比例来定, 绝不超过它.
-    try:
-        from app.services.llm_prompts.strategy_recommend import _get_user_capital
-        equity = float(_get_user_capital(user_id) or 0.0)
-    except Exception:
-        equity = 0.0
+    # 经理的眼睛之二: 可用资金. 守门员传 available_usdt(组合层资金闸: 权益×(1−安全垫)−已开仓占用)→
+    # 经理在**剩余额度**内下注, 单笔视角不会当子弹无限 (user 2026-05-30 定: 资金感知是守门员的活).
+    # 没传 → 回退拉总权益 (offline). 事故根因: 经理凭空挑本金挑出 > 账户的保证金一仓吃光 (AVAX $80 砸 $68).
+    if available_usdt is not None:
+        equity = max(0.0, float(available_usdt)); equity_label = '本单可用额度(已扣安全垫+其它已开仓)'
+    else:
+        try:
+            from app.services.llm_prompts.strategy_recommend import _get_user_capital
+            equity = float(_get_user_capital(user_id) or 0.0)
+        except Exception:
+            equity = 0.0
+        equity_label = '当前可用权益(统一账户 现货+合约)'
 
     ind = {k: (v or {}).get('state') for k, v in (perception.get('indicators') or {}).items()}
     pa = perception.get('price_action') or {}
@@ -103,11 +110,11 @@ def ai_manager_params(symbol: str, strategy_type: str, perception: dict, profile
 {difficulty_guidance_block(target_pct, days_remaining)}
 
 ## 账户可用资金 (硬约束 — position_size_usdt 是保证金, 按这个定)
-- 当前可用权益: {equity_txt} (统一账户, 现货+合约共用)
+- {equity_label}: {equity_txt}
 - position_size_usdt = 这一单投入的**保证金**(不是名义); 名义 = 保证金 × 杠杆.
-- 这是**单仓**保证金, 守门员会同时持多个币的仓 → 单仓别吃光账户, 给别的仓留余地.
-- 铁律: 单仓保证金**绝不超过可用权益**; 难度激进也最多占可用的一部分(如 1/3 ~ 1/2), 保守更小.
-  小账户($50~$100)更要克制, 一仓占满=没有容错, 一根反向针就逼近强平.
+- 这个数字已是守门员**留好其它仓和安全垫后给你的额度** → 你最多用到它, 别超.
+- 铁律: 单仓保证金**绝不超过上面这个额度**; 难度激进也最多占一部分(如 1/3 ~ 1/2), 保守更小.
+  额度小($10~$30)就老实开小仓, 一仓占满=没有容错, 一根反向针就逼近强平.
 
 ## 本单交易所规格 + 成本 (硬约束 — 算 EV / 切仓位必看)
 - 路由交易所: {con['exchange']} · taker 手续费 {con['fee_pct']}%/单边 (开+平+每次分批都收, 贴近的TP1会被吃掉一截)

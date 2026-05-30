@@ -29,6 +29,26 @@ from __future__ import annotations
 WATCHED_SYMBOLS = ['ETH/USDT', 'AVAX/USDT']
 BASE_TF = '15m'   # 策略决策维度 (画像配 15m)
 AUX_TF = '5m'     # 更细市场维度 (富感知读 5m 算微观/猎杀/动能/MTF)
+RESERVE_PCT = 0.2  # 资金安全垫 (user 2026-05-30): 永远留 20% 不动, 防强平/留手; 与常规策略 _venue_open_slots 一致
+
+
+def _free_budget(user_id: int, exchange: str, reserve: float = RESERVE_PCT) -> float:
+    """组合层资金闸 (user 2026-05-30 定: 资金感知是守门员的活, 全账户统一算, 留安全垫).
+    可用额度 = 账户权益×(1−安全垫) − 已开仓占用保证金. 守门员据此决定还能不能开 + 给经理多少额度,
+    防经理单笔视角"当子弹无限"叠满仓 (每个币各按总额1/3 → 3币叠起来100%)。"""
+    from app.models import Position, db
+    try:
+        from app.services.llm_prompts.strategy_recommend import _get_user_capital
+        equity = float(_get_user_capital(user_id, exchange=exchange) or 0.0)
+    except Exception:
+        equity = 0.0
+    if equity <= 0:
+        return 0.0
+    open_pos = Position.query.filter(
+        Position.status == 'open', Position.user_id == user_id,
+        db.func.lower(Position.exchange) == (exchange or '').lower()).all()
+    committed = sum(float((p.gk_exit or {}).get('margin', 0) or 0) for p in open_pos)
+    return max(0.0, equity * (1 - reserve) - committed)
 
 
 def _to_candles(rows) -> list:
@@ -74,9 +94,17 @@ def gatekeeper_live_cycle() -> dict:
     target_pct, days_remaining = _target_and_days()
     lev_cap = profit_difficulty(monthly_equiv(target_pct, days_remaining)).get('leverage_cap') or 5
     route_ex = _primary_exchange(1)   # 本轮路由所 → 规格/费率/最小单按它喂给 AI 经理
+    min_feasible = 10.0 / max(float(lev_cap), 1.0)   # 能开的最小保证金 (HL最小$10 ÷ 最大杠杆)
     decisions = []
     for sym in WATCHED_SYMBOLS:
         try:
+            # 组合层资金闸 (user 2026-05-30): 先算账户还剩多少子弹 — 没子弹直接跳过, 不问经理 (省 LLM,
+            # 也不当子弹无限). 有则把可用额度传给经理在剩余内下注 (逐币重算 → 前一个币开了这个就看到减少).
+            avail = _free_budget(1, route_ex, RESERVE_PCT)
+            if avail < min_feasible:
+                decisions.append({'symbol': sym, 'action': 'skip',
+                                  'reason': f'资金闸: 可用额度 ${avail:.1f} 不足开新仓 (留{int(RESERVE_PCT*100)}%安全垫)'})
+                continue
             base = _to_candles(fetch_ohlcv(sym, BASE_TF, limit=400))
             aux = _to_candles(fetch_ohlcv(sym, AUX_TF, limit=1200))
             if len(base) < 60 or len(aux) < 60:
@@ -87,7 +115,7 @@ def gatekeeper_live_cycle() -> dict:
             d = gatekeeper_decide(sym, base, aux, BASE_TF,
                                   target_pct=target_pct, days_remaining=days_remaining,
                                   lev=float(lev_cap), record=True, record_source='live',
-                                  exchange=route_ex)
+                                  exchange=route_ex, available_usdt=avail)
             d['symbol'] = sym
             decisions.append({k: d.get(k) for k in
                               ('symbol', 'action', 'regime', 'direction', 'strategy',
