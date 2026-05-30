@@ -352,30 +352,31 @@ def check_reconcile_recent() -> dict:
 
 
 def check_running_strategies() -> dict:
-    """9. running 策略数 > 0 + 14k-52 stopped 池健康 (老 stopped 没堆积)"""
+    """9. Phase 15 守门员唯一范式: 老'running'策略数已无意义 (策略=库, 守门员动态选用,
+    不再独立交易). 改查 守门员选用库 > 0 (StrategyProfile) + stopped 池健康 (老 stopped 没堆积)。"""
     t = t0()
     rc, out = psql("""
         SELECT
-          (SELECT COUNT(*) FROM strategies WHERE status='running'),
+          (SELECT COUNT(*) FROM strategy_profiles),
           (SELECT COUNT(*) FROM strategies WHERE status='stopped'),
           (SELECT COUNT(*) FROM strategies WHERE status='stopped' AND created_at < NOW() - INTERVAL '7 days'),
           (SELECT COUNT(*) FROM strategies WHERE status='retired')
     """)
     if rc != 0: return {'status': WARN, 'detail': 'pg fail', 'latency_ms': ms(t)}
     try:
-        running, stopped, stopped_old, retired = [int(x) for x in out.strip().split('|')]
+        library, stopped, stopped_old, retired = [int(x) for x in out.strip().split('|')]
     except Exception as e:
         return {'status': WARN, 'detail': f'parse: {e}', 'latency_ms': ms(t)}
-    if running == 0:
-        return {'status': WARN, 'detail': '没有运行中的策略（可能被手动停了）', 'latency_ms': ms(t)}
+    if library == 0:
+        return {'status': WARN, 'detail': '守门员选用库为空 (无可选策略画像)', 'latency_ms': ms(t)}
     # 14k-52: 老 stopped > 20 → cleanup task 该跑了
     if stopped_old > 20:
         return {'status': WARN,
-                'detail': f'{running} 运行 / {stopped} stopped (其中 {stopped_old} > 7d 等 cleanup) / {retired} retired',
+                'detail': f'选用库 {library} 画像 / {stopped} stopped (其中 {stopped_old} > 7d 等 cleanup) / {retired} retired',
                 'latency_ms': ms(t),
                 'autofix_hint': '手动跑 cleanup_stale_candidates 释放 dedup slot'}
     return {'status': OK,
-            'detail': f'{running} 运行 / {stopped} stopped (老 {stopped_old}) / {retired} retired',
+            'detail': f'守门员选用库 {library} 画像 / {stopped} stopped (老 {stopped_old}) / {retired} retired',
             'latency_ms': ms(t)}
 
 
