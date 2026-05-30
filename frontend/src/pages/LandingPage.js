@@ -224,8 +224,8 @@ function HowItWorks() {
     },
     {
       icon: AccountTreeIcon,
-      title: '2 · AI 自动跑策略 + 改进闭环',
-      desc: 'L1 市场分析 + L2 信号 watcher + L3 实时合成 三层架构 · 候选池爬虫翻译 · 智能托管 10 actions 自动 retire / apply_params / fan_out / optimize_risk / invent。',
+      title: '2 · 守门员自动盯盘 · 系统自我进化',
+      desc: '守门员实时盯盘、信号触发自动择时下单（原生止损 + 分批止盈）；系统持续自我维护策略库——差的退役、好的复用、自动吸纳新策略。AI 用你自己的 key 逐单择参，越用越聪明。',
     },
     {
       icon: RocketLaunchIcon,
@@ -285,28 +285,28 @@ function HowItWorks() {
 function Features() {
   const items = [
     {
-      icon: AccountTreeIcon,
-      title: 'L1 / L2 / L3 三层 AI 架构',
-      desc: 'L1 多 TF 市场分析 brief → L2 事件驱动 watcher 5min 巡查 → L3 LLM 看 brief+余额+目标实时合成 signal_fn。AI 不再瞎调参，按市场状态精准下手',
-      tag: 'AI 核心',
-    },
-    {
-      icon: VerifiedIcon,
-      title: '回测真理 · EV 双轨守门',
-      desc: '文献 Sharpe 不算数。必须真 OOS walk-forward 跑过 per-TF EV gate（追盈利率不只追胜率）。所有 backtest 走单一漏斗自动回填 truth table',
-      tag: '反过拟合',
+      icon: BoltIcon,
+      title: '守门员自动盯盘下单',
+      desc: '实时扫描行情，信号触发自动择时进场，挂上交易所原生止损 + 分批止盈台阶，服务端执行不漏单。你设好参数，它替你执行',
+      tag: '核心',
     },
     {
       icon: AutoAwesomeIcon,
-      title: 'AI 改进顾问（你专属）',
-      desc: '看你现有策略 + 当前 regime + EV 数据自动为你生成补完候选（不跨用户共享）；EV 双轨过滤（per-TF Sharpe + EV/trade 阈值）；no_lift 静默 / lift 才推',
-      tag: 'Pro 专享',
+      title: 'AI 是壳 · 系统是核心',
+      desc: '我们卖的不是又一个 AI 订阅。AI 用你自己的 LLM key 跑、我们不抽 token 费；真正值钱的是这套打磨好的量化交易系统。没绑 key 也照跑',
+      tag: 'BYO key',
     },
     {
       icon: PsychologyIcon,
-      title: '智能托管',
-      desc: '10 actions 自动决策：apply_params / pause / retire / fan_out / promote / adjust_risk / optimize_risk_full / propose_signal_grid / invent / sizing。守门员每动作都过 sanity gate',
-      tag: '自动',
+      title: 'AI 经理逐单择参',
+      desc: '结合当下行情，临场判断每一单的杠杆 / 止损 / 止盈分批，不是机械套公式。踩到不利环境会更保守甚至跳过。用你自己的 key',
+      tag: 'Pro+',
+    },
+    {
+      icon: VerifiedIcon,
+      title: '只开经得起验证的策略',
+      desc: '每个策略进场前都要跑过严格的历史验证门槛——追的是真实盈利期望，不是漂亮的纸面数字。过拟合的进不来',
+      tag: '反过拟合',
     },
     {
       icon: ShowChartIcon,
@@ -315,16 +315,16 @@ function Features() {
       tag: '通用',
     },
     {
-      icon: BoltIcon,
-      title: 'HL LIVE 4 道安全网',
-      desc: 'szDecimals 按币精度截 size · market_close + reduce_only 守住平仓不反向 · place_order 双重 fill 校验 · 60s reconcile grace 防误关',
+      icon: LockIcon,
+      title: '真钱级安全执行',
+      desc: '实盘下单层层校验：按币种精度下单、平仓只减不反向、成交双重核对、对账宽限防误关。真钱铁律,不留灰尘仓',
       tag: 'LIVE',
     },
     {
       icon: HubIcon,
-      title: '动态候选池',
-      desc: '22 内置模板 + GitHub 爬虫 + LLM 翻译 + 沙箱验证 + 自动回测 + 守门员 EV 双轨过滤 + auto-promote。AI 每日筛新策略入池，质量越用越高',
-      tag: '24/7 扩张',
+      title: '策略库越用越厚',
+      desc: '内置多套量化策略，系统持续自动吸纳 / 验证 / 回测筛选新策略入库；表现差的自动退役、回暖的自动复用。库越用越厚、质量越用越高',
+      tag: '24/7 自进化',
     },
     {
       icon: CurrencyExchangeIcon,

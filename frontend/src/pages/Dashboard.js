@@ -35,6 +35,7 @@ import KpiCell from '../components/common/KpiCell';
 import StatusChip from '../components/common/StatusChip';
 import { prettifyType } from '../utils/strategyTypeLabels';
 import ProfitTargetCard from '../components/ProfitTargetCard';
+import AiInsightsCard from '../components/AiInsightsCard';
 import { tierRank } from '../auth';
 // Phase 12.20: NeuralBackdrop 已下架（装饰过头）
 
@@ -562,6 +563,10 @@ export default function Dashboard() {
       <Suspense fallback={<CardSkeleton height={300} headerWidth="40%" rows={5} />}>
         <GatekeeperCockpit />
       </Suspense>
+
+      {/* 修复 2026-05-30: AiInsightsCard(周复盘 / 个性化建议 / 故障诊断) Phase 15 重构时成孤儿(后端端点都还在),
+          重新挂回 — Pro+ 专享, 用户自己的 LLM key 跑. (user 发现「周复盘卡没了」) */}
+      {tierRank() >= 2 && <AiInsightsCard />}
 
       {/* === Phase 12.20: 走势图全宽（删 Row 1 右侧重复 OPEN POSITIONS）=== */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
