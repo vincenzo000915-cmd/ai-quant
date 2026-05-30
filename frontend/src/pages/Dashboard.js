@@ -719,10 +719,10 @@ export default function Dashboard() {
 
       </Grid>
 
-      {/* === Phase 12.19: 策略动作时间线 (取代 K 线上的 BUY/SELL markers) === */}
+      {/* === 紧凑布局 2026-05-30 (user): PnL 走势(宽) + 策略时间线(窄) 并排, 不再各占一整行 === */}
       <Grid container spacing={2} sx={{ mb: 2.5 }}>
-        <Grid item xs={12}>
-          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
+        <Grid item xs={12} md={4}>
+          <Box className="glass-card" sx={{ p: 2.25, height: '100%', position: 'relative', overflow: 'hidden' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
               <Box>
                 <Typography variant="overline" sx={{ color: 'text.secondary' }}>策略动作时间线 · STRATEGY TIMELINE</Typography>
@@ -739,16 +739,12 @@ export default function Dashboard() {
               positions={positions}
               strategyNameMap={Object.fromEntries((perfList || []).map(p => [p.id, p.name]))}
               maxRows={30}
-              height={380}
+              height={300}
             />
           </Box>
         </Grid>
-      </Grid>
-
-      {/* === PnL Row（從 Charts Row 移下來） === */}
-      <Grid container spacing={2} sx={{ mb: 2.5 }}>
-        <Grid item xs={12}>
-          <Box className="glass-card" sx={{ p: 2.25, position: 'relative', overflow: 'hidden' }}>
+        <Grid item xs={12} md={8}>
+          <Box className="glass-card" sx={{ p: 2.25, height: '100%', position: 'relative', overflow: 'hidden' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1.5 }}>
               <Box>
                 <Typography variant="overline" sx={{ color: 'text.secondary' }}>累積 PNL · TIMESERIES 30D</Typography>
