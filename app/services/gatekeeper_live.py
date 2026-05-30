@@ -123,6 +123,8 @@ ENGINE_EXIT_PARAMS = {
     'use_breakeven': True, 'be_activate_r': 0.3, 'be_lock_pct': 0.0,
     'use_partial_tp': True, 'tp1_r': 0.5, 'tp1_frac': 0.5, 'tp2_r': 1.2, 'tp2_frac': 0.3,
     'tp3_r': 2.0, 'tp1_lock_r': 0.3, 'use_tail_exit': False, 'fee_pct': 0.035,
+    # 引擎标准 (user 2026-05-30, OOS验证提EV): 吃到TPn→止损锁到TPn价位 + 连续trailing 0.5R
+    'lock_at_tp': True, 'trail_r': 0.5,
 }
 
 

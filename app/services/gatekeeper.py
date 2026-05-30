@@ -65,7 +65,8 @@ def _optimize_params(stype, base_is, aux, base_tf, lev=10.0):
     for sl in [0.5, 0.8, 1.2]:
         r = segment_backtest(base_is, aux, strategy_type=stype, signal_fn=sig,
                              base_tf=base_tf, aux_tf='5m', leverage=lev,
-                             init_sl_pct=sl, use_position_filter=False)
+                             init_sl_pct=sl, use_position_filter=False,
+                             lock_at_tp=True, trail_r=0.5)   # 引擎标准: 锁TP台阶+连续trailing (OOS提EV, user定)
         ev = r['ev_per_fill_usdt'] if r['fills'] >= 5 else -9
         if ev > best['ev']:
             best = {'sl': sl, 'ev': ev, 'fills': r['fills']}

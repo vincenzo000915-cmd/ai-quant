@@ -725,7 +725,8 @@ def verify_with_engine(candles, hypothesis, aux_candles=None, base_tf='15m', lev
     for sl in [0.5, 0.8, 1.2, 1.6]:
         try:
             r = segment_backtest(candles, aux_candles, strategy_type='hypo', signal_fn=fn,
-                                 base_tf=base_tf, aux_tf='5m', leverage=lev, init_sl_pct=sl)
+                                 base_tf=base_tf, aux_tf='5m', leverage=lev, init_sl_pct=sl,
+                                 lock_at_tp=True, trail_r=0.5)   # 对齐守门员引擎标准(锁TP台阶+trailing)
         except Exception:
             continue
         n_entry = len(set(t['entry_ts'] for t in r['trades']))

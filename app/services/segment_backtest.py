@@ -35,7 +35,8 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
                      # ③ 出场层
                      init_sl_pct=1.3, use_breakeven=True, be_activate_r=0.3, be_lock_pct=0.0,
                      use_partial_tp=True, tp1_r=0.5, tp1_frac=0.5, tp2_r=1.2, tp2_frac=0.3,
-                     tp3_r=2.0, tp1_lock_r=0.3, use_tail_exit=False):
+                     tp3_r=2.0, tp1_lock_r=0.3, use_tail_exit=False, trail_r=None,
+                     lock_at_tp=False):
                      # 两段移动止损: ①方向对(浮盈≥手续费)→移保本 ②TP1触发→移到+tp1_lock_r倍R锁利
                      # be_activate_r 废弃; 尾部走(动能)默认关(user定TP硬性不看动能)
     """三层段回测. 返回 {total_pnl, fills, win_rate, ev_per_fill_usdt, profit_factor,
@@ -88,7 +89,7 @@ def segment_backtest(base_candles, aux_candles=None, *, strategy_type='custom',
         'use_breakeven': use_breakeven, 'be_activate_r': be_activate_r, 'be_lock_pct': be_lock_pct,
         'use_partial_tp': use_partial_tp, 'tp1_r': tp1_r, 'tp1_frac': tp1_frac,
         'tp2_r': tp2_r, 'tp2_frac': tp2_frac, 'tp3_r': tp3_r, 'tp1_lock_r': tp1_lock_r,
-        'use_tail_exit': use_tail_exit,
+        'use_tail_exit': use_tail_exit, 'trail_r': trail_r, 'lock_at_tp': lock_at_tp,
     }
 
     def manage_exit(pos, ac, bwin):
