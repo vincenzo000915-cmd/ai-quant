@@ -27,7 +27,7 @@ import PageHeader from '../components/common/PageHeader';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { Radio, RadioGroup } from '@mui/material';
-import { getUser } from '../auth';
+import { getUser, tierRank } from '../auth';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -124,7 +124,7 @@ export default function Settings() {
       {msg && <Alert severity={msg.type} sx={{ mb: 2 }} onClose={() => setMsg(null)}>{msg.text}</Alert>}
 
       {/* Phase 15: 参数文案随 tier — 让用户懂这些参数对他是什么角色 */}
-      {(() => { const n = paramTierNote(_TIER_RANK[(getUser() || {}).subscription_tier] ?? 0); return <Alert severity={n.sev} sx={{ mb: 2 }}>{n.text}</Alert>; })()}
+      {(() => { const n = paramTierNote(tierRank()); return <Alert severity={n.sev} sx={{ mb: 2 }}>{n.text}</Alert>; })()}
 
       {/* === Phase 12.24.3: 我的订阅 === */}
       <SubscriptionCard />

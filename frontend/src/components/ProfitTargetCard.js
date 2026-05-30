@@ -14,7 +14,7 @@ import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { useNavigate } from 'react-router-dom';
-import { getUser } from '../auth';
+import { tierRank } from '../auth';
 
 const PURPLE = '#a78bfa';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
@@ -223,7 +223,7 @@ export default function ProfitTargetCard() {
 
           {/* HERO 卖点: 谁在替你驱动向目标 (tier 自适应) */}
           {(() => {
-            const drv = driverMeta(TIER_RANK[(getUser() || {}).subscription_tier] ?? 0);
+            const drv = driverMeta(tierRank());
             return (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1.25, p: 0.75, borderRadius: 1, bgcolor: `${PURPLE}10` }}>
                 <Typography sx={{ fontSize: 18 }}>{drv.icon}</Typography>

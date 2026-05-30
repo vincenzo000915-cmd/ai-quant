@@ -12,7 +12,7 @@ import InventoryIcon from '@mui/icons-material/Inventory2';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import LockIcon from '@mui/icons-material/Lock';
 import { palette } from '../theme';
-import { getUser } from '../auth';
+import { tierRank } from '../auth';
 
 const API = process.env.REACT_APP_API_URL || '';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
@@ -35,8 +35,7 @@ export default function GatekeeperCockpit() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [orderDlg, setOrderDlg] = useState(null);   // {symbol, side, size_usdt, leverage}
-  const user = getUser() || {};
-  const tier = TIER_RANK[user.subscription_tier] ?? 0;
+  const tier = tierRank();
   const hasGatekeeper = tier >= TIER_RANK.pro;   // Pro+
   const hasManager = tier >= TIER_RANK.team;     // Team
 

@@ -34,6 +34,13 @@ const _userListeners = new Set();
 export function getToken() { return _token; }
 export function getUser() { return _user; }
 
+// Phase 15: tier 等级 (0 free / 1 basic / 2 pro / 3 team). admin / system token = 最高 team.
+export function tierRank() {
+  const u = _user || {};
+  if (u.role === 'admin' || u._is_system) return 3;
+  return ({ free: 0, basic: 1, pro: 2, team: 3 })[u.subscription_tier] ?? 0;
+}
+
 export function setToken(t) {
   _token = t || '';
   if (typeof localStorage !== 'undefined') {
@@ -112,7 +119,7 @@ export async function verifyToken() {
         } catch {/* */}
       } else if (body.is_system) {
         // system token = admin 後門，無 user 物件
-        setUser({ id: 1, email: 'admin (system token)', role: 'admin', subscription_tier: 'pro', _is_system: true });
+        setUser({ id: 1, email: 'admin (system token)', role: 'admin', subscription_tier: 'team', _is_system: true });
       }
       return { enabled: true, ok: true, isSystem: body.is_system, userId: body.user_id };
     }
