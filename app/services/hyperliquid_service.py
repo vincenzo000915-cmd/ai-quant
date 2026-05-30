@@ -503,3 +503,91 @@ def cancel_all_orders(creds: dict, symbol: str | None = None) -> dict:
         except Exception as e:
             errors.append(f'{base}#{oid}: {e}')
     return {'cancelled': cancelled, 'errors': errors[:5]}
+
+
+# ============================================================
+# Phase 15 守门员 live: 原生 trigger 止盈止损单 (服务端执行, 最保真+worker挂也保护)
+# user 2026-05-30 定: 开仓挂原生 SL + TP1/2/3 trigger; TP成交回传→棍轮上移SL(撤旧挂新).
+# ============================================================
+
+def _hl_round_px(px: float, sz_decimals: int) -> float:
+    """HL 合法价格: ≤5 有效数字 且 perp ≤ (6 - szDecimals) 位小数 (否则 'invalid price')。"""
+    if px <= 0:
+        return px
+    px = float(f'{px:.5g}')                       # 5 有效数字
+    max_dec = max(0, 6 - int(sz_decimals))        # perp MAX_DECIMALS=6
+    return round(px, max_dec)
+
+
+def _hl_sz_dec(symbol: str) -> int:
+    try:
+        from app.services.hl_meta import get_hl_entry
+        e = get_hl_entry(symbol)
+        return int(e.get('szDecimals')) if e else 6
+    except Exception:
+        return 6
+
+
+def place_hl_trigger(symbol: str, position_side: str, trigger_px: float, size_base: float,
+                     tpsl: str, creds: dict, slippage: float = 0.05) -> dict:
+    """挂一张 reduce-only trigger 单 (tpsl='sl'|'tp'). position_side='long'|'short'.
+    平 long=卖(is_buy=False) / 平 short=买(is_buy=True). isMarket=True 触发即市价成交.
+    返回 {ok, oid, reject_reason}。"""
+    if not creds:
+        raise RuntimeError('HL creds 必填')
+    exchange, _ = _exchange_client(creds)
+    base = hl_base(symbol)
+    sz_dec = _hl_sz_dec(symbol)
+    is_buy = (position_side == 'short')           # 平空=买回, 平多=卖
+    sz = round(float(size_base), sz_dec)
+    if sz <= 0:
+        return {'ok': False, 'reject_reason': 'size round 后=0'}
+    tpx = _hl_round_px(trigger_px, sz_dec)
+    # market trigger 的 limit_px 给滑点保护价 (确保触发后能成交)
+    lpx = _hl_round_px(tpx * (1 + slippage) if is_buy else tpx * (1 - slippage), sz_dec)
+    order_type = {'trigger': {'triggerPx': tpx, 'isMarket': True, 'tpsl': tpsl}}
+    try:
+        res = exchange.order(base, is_buy, sz, lpx, order_type, reduce_only=True)
+    except Exception as e:
+        return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
+    outer_ok = res.get('status') == 'ok'
+    statuses = (res.get('response') or {}).get('data', {}).get('statuses') or []
+    st = statuses[0] if statuses else {}
+    # trigger 单挂上后通常 resting (等触发), 拿 oid
+    oid = None
+    if isinstance(st, dict):
+        oid = (st.get('resting') or {}).get('oid') or (st.get('filled') or {}).get('oid')
+    reject = st.get('error') if isinstance(st, dict) else None
+    return {'ok': bool(outer_ok and oid is not None and not reject), 'oid': oid,
+            'trigger_px': tpx, 'size_base': sz, 'tpsl': tpsl, 'reject_reason': reject, 'raw': res}
+
+
+def cancel_hl_order(symbol: str, oid: int, creds: dict) -> dict:
+    """撤一张挂单 (oid). 棍轮上移 SL 时先撤旧 SL。"""
+    if not creds or oid is None:
+        return {'ok': False, 'reject_reason': 'creds/oid 缺'}
+    try:
+        exchange, _ = _exchange_client(creds)
+        res = exchange.cancel(hl_base(symbol), int(oid))
+        return {'ok': res.get('status') == 'ok', 'raw': res}
+    except Exception as e:
+        return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
+
+
+def get_hl_position_size(symbol: str, creds: dict) -> float:
+    """查当前 HL 持仓 size (base, 带符号: long+/short-). 用于探 TP 成交(size 变小)。无仓=0。"""
+    if not creds:
+        return 0.0
+    try:
+        exchange, info = _exchange_client(creds)
+        addr = creds.get('account_address') or creds.get('wallet_address')
+        st = info.user_state(addr)
+        base = hl_base(symbol)
+        for ap in (st.get('assetPositions') or []):
+            pos = ap.get('position') or {}
+            if pos.get('coin') == base:
+                return float(pos.get('szi') or 0.0)
+        return 0.0
+    except Exception as e:
+        log.warning(f'get_hl_position_size {symbol} fail: {e}')
+        return 0.0

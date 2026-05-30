@@ -22,8 +22,10 @@ EXCLUDED_TRADE_REASONS = ('reconcile_orphan_hl', 'reconcile_orphan_okx', 'reconc
 
 
 def _real_trades_filter(query):
-    """加 filter 排除 reconcile orphan 的虚拟 trades (用于 PnL/胜率/halt 统计)"""
-    return query.filter(~Trade.reason.in_(EXCLUDED_TRADE_REASONS))
+    """加 filter 排除 reconcile orphan 虚拟 trades + 守门员 paper 模拟 trades (用于 PnL/胜率/halt 统计).
+    Phase 15: 守门员 paper 档(gkpaper_*)是模拟成交不算真钱; live 档(gk_*)是真钱正常计入。"""
+    return query.filter(~Trade.reason.in_(EXCLUDED_TRADE_REASONS),
+                        ~Trade.reason.like('gkpaper%'))
 
 
 def _owned_strategy(id):
