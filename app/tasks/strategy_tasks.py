@@ -1216,9 +1216,14 @@ def monitor_strategy_health():
             db.session.add(bt)
 
             # 退役判斷 (14k-69: EV 维度双轨制 — 两个都跌破才 retire, 任一 OK 就保留)
+            # Phase 15 (user 2026-05-30): 守门员范式下策略=模版库, standalone EV 无意义
+            #   (Donchian 突破在趋势好/震荡烂, 按当下负EV退它=错). 守门员每次入场即时EV才是过滤器.
+            #   → 守门员 live 时**不按 standalone 表现退役** (模版永远留库); 只留结构性退役(zombie/无grid).
+            from app.services.config_service import get as _cfg_get
+            _gk_exclusive = _cfg_get('gatekeeper_live_mode', 'off') == 'live'
             retire_reasons = []
-            if total_trades < RETIRE_MIN_TRADES:
-                # 樣本太少，不主動退役但記錄一下
+            if _gk_exclusive or total_trades < RETIRE_MIN_TRADES:
+                # 守门员模式=模版库不退 / 樣本太少不退; 都只記錄
                 pass
             else:
                 # 14k-69: 算 EV (per-trade % of capital)

@@ -48,6 +48,8 @@ DEFAULTS = {
     'auto_apply_max_running': 8,
     # Phase 15 学习飞轮: 守门员 live 总开关 (off | shadow | live)
     'gatekeeper_live_mode': 'off',
+    # Phase 15: 合成每日上限 (防无节制合成浪费; 0=不限)
+    'synth_max_per_day': 3,
 }
 
 

@@ -67,6 +67,17 @@ def _execute_one(item: dict) -> tuple[bool, str]:
     # Phase 14k-29 L6 + 14k-49: invent 全新策略 — 看 meta.invent_method 路由两种武器
     if action == 'invent_new_strategy':
         from app.services.audit import log as audit
+        # Phase 15 (user 2026-05-30 Q3): 合成每日上限 — 防无节制合成浪费资源/重复
+        from app.services.config_service import get as _cfg_get
+        _cap = int(_cfg_get('synth_max_per_day', 3) or 0)
+        if _cap > 0:
+            from app.models import AuditLog
+            import datetime as _dt
+            _since = _dt.datetime.combine(_dt.datetime.utcnow().date(), _dt.time.min)
+            _n = AuditLog.query.filter(AuditLog.event_type == 'advisor_invent_proposed',
+                                       AuditLog.created_at >= _since).count()
+            if _n >= _cap:
+                return False, f'今日合成已达上限 {_cap} 次, 明日再合成 (防浪费资源/重复)'
         meta = item.get('meta', {}) or {}
         uid = meta.get('user_id') or 1
         invent_method = meta.get('invent_method', 'catalog_first')
