@@ -20,7 +20,7 @@ const PURPLE = '#a78bfa';
 const TIER_RANK = { free: 0, basic: 1, pro: 2, team: 3 };
 // HERO 卖点: 谁在替你驱动向目标 (tier 自适应)
 function driverMeta(tier) {
-  if (tier >= TIER_RANK.team) return { icon: '🧠', who: 'AI 经理', desc: 'AI 看行情+懂策略临场给参,守门员执行 · 实时判断见下方「AI 经理」台' };
+  if (tier >= TIER_RANK.team) return { icon: '🧠', who: 'AI 经理', desc: 'AI 看行情+懂策略临场给参,守门员执行 (实时判断 ↓ 见下方)' };
   if (tier >= TIER_RANK.pro) return { icon: '🛡️', who: '守门员', desc: '按你在「系统设定」的参数自动扫描→回测→下单 · 控制见下方「守门员台」' };
   return { icon: '📡', who: '你自己', desc: '看下方「信号预告」手动跟单 (升级 Pro 解锁守门员自动)' };
 }
@@ -34,6 +34,7 @@ export default function ProfitTargetCard() {
   const [form, setForm] = useState({ target_pct: 20, days: 30, max_dd_pct: 15, daily_loss_halt_pct: 5 });
   const [busy, setBusy] = useState(false);
   const [gkMode, setGkMode] = useState('off');   // Phase 15: 守门员 live 档 off/shadow/paper/live
+  const [managerLog, setManagerLog] = useState([]);   // Phase 15: AI 经理实时判断流 (并入本卡)
 
   const refresh = useCallback(async () => {
     try {
@@ -46,9 +47,11 @@ export default function ProfitTargetCard() {
       setNeedsTeam(false);
       const d = await r.json();
       setTarget(d.target);
-      // Phase 15: 守门员 live 档
+      // Phase 15: 守门员 live 档 + AI 经理判断流 (一次拿)
       const cfg = await fetch('/api/config').then(x => x.json()).catch(() => ({}));
       if (cfg && cfg.gatekeeper_live_mode) setGkMode(cfg.gatekeeper_live_mode);
+      const gk = await fetch('/api/gatekeeper/dashboard').then(x => x.json()).catch(() => ({}));
+      if (gk && gk.manager_log) setManagerLog(gk.manager_log);
       // 2. check exchange bound
       if (!d.target) {
         const bind = await fetch('/api/me/exchange-binding').then(x => x.json()).catch(() => ({}));
@@ -284,6 +287,23 @@ export default function ProfitTargetCard() {
               {ddWarn && ` — 接近警戒线!`}
             </Alert>
           )}
+
+          {/* AI 经理实时判断流 (并入本卡 = 同一个 AI 经理, 不拆两块) */}
+          <Box sx={{ mt: 1.5, pt: 1.25, borderTop: `1px solid ${PURPLE}22` }}>
+            <Typography variant="caption" fontWeight={700} sx={{ color: PURPLE, display: 'block', mb: 0.5 }}>🧠 AI 经理实时判断</Typography>
+            {managerLog.length > 0 ? managerLog.slice(0, 6).map((m, i) => (
+              <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, py: 0.25 }}>
+                <Chip size="small" label={m.action === 'enter' ? '入场' : '观望'}
+                  sx={{ height: 16, fontSize: 9, bgcolor: m.action === 'enter' ? 'rgba(52,211,153,0.18)' : 'transparent', color: m.action === 'enter' ? '#34d399' : '#94a3b8' }} />
+                <Typography variant="caption" sx={{ flex: 1, color: 'text.secondary' }}>
+                  {m.symbol?.split('/')[0]} · {({ range: '震荡', trend: '趋势' }[m.regime] || m.regime)}{m.strategy ? ` · ${m.strategy}` : ''}
+                  {m.expected_ev != null && ` · 预期EV ${m.expected_ev.toFixed(3)}`}
+                </Typography>
+                {m.outcome && <Chip size="small" label={m.outcome === 'win' ? '赢' : m.outcome === 'loss' ? '亏' : '平'}
+                  sx={{ height: 16, fontSize: 9, bgcolor: m.outcome === 'win' ? 'rgba(52,211,153,0.18)' : m.outcome === 'loss' ? 'rgba(248,113,113,0.18)' : 'transparent' }} />}
+              </Box>
+            )) : <Typography variant="caption" color="text.secondary">守门员每来信号,经理带[难度+行情+策略画像]判断给参或 skip — 等信号触发。</Typography>}
+          </Box>
         </CardContent>
       </Card>
 

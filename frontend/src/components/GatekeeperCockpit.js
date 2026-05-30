@@ -138,32 +138,7 @@ export default function GatekeeperCockpit() {
         </Section>
       )}
 
-      {/* === 🧠 AI 经理 (Team 专属) === */}
-      {hasManager ? (
-        <Section icon={<PsychologyIcon sx={{ color: palette.accent }} />} title="AI 经理 · 参数大脑"
-          chip={<Chip size="small" label="Team" sx={{ height: 18, fontSize: 10, bgcolor: `${palette.accent}22`, color: palette.accent }} />}>
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-            握着你的月目标(+{data.hero?.target_pct}%)。守门员每来信号 → 经理带[难度+行情感知+策略画像]临场判断给参 或 skip(踩策略弱点不开)。
-          </Typography>
-          {(data.manager_log || []).slice(0, 8).map((m, i) => (
-            <Stack key={i} direction="row" alignItems="center" spacing={1} sx={{ py: 0.3, borderBottom: `1px solid ${palette.border}` }}>
-              <Chip size="small" label={m.action === 'enter' ? '入场' : '观望'} sx={{ height: 16, fontSize: 9, bgcolor: m.action === 'enter' ? `${palette.success}22` : 'transparent', color: m.action === 'enter' ? palette.success : palette.textMuted }} />
-              <Typography variant="caption" sx={{ flex: 1 }}>
-                {m.symbol?.split('/')[0]} · {REG[m.regime] || m.regime}{m.strategy ? ` · ${m.strategy}` : ''}
-                {m.expected_ev != null && <span style={{ color: palette.textMuted }}> · 预期EV {m.expected_ev.toFixed(3)}</span>}
-              </Typography>
-              {m.outcome && <Chip size="small" label={m.outcome === 'win' ? '赢' : m.outcome === 'loss' ? '亏' : '平'} sx={{ height: 16, fontSize: 9, bgcolor: m.outcome === 'win' ? `${palette.success}22` : m.outcome === 'loss' ? `${palette.error}22` : 'transparent' }} />}
-            </Stack>
-          ))}
-          {(data.manager_log || []).length === 0 && <Typography variant="caption" color="text.secondary">暂无判断记录 (等信号触发)</Typography>}
-        </Section>
-      ) : hasGatekeeper && (
-        <Section icon={<LockIcon sx={{ color: palette.textMuted }} />} title="AI 经理 · 参数大脑" accent={palette.textMuted}>
-          <Typography variant="caption" color="text.secondary">
-            🔒 Team 专属。升级 Team → AI 经理替你临场判断每一单的杠杆/止损/盈亏比(看行情+懂策略),不用自己设参。
-          </Typography>
-        </Section>
-      )}
+      {/* AI 经理判断流已并入顶部「目标驱动」卡 (同一个 AI 经理, 不拆两块). Pro 升级提示见守门员台. */}
 
       {/* === 📦 策略库 + 覆盖 === */}
       <Section icon={<InventoryIcon sx={{ color: palette.accent }} />} title={`策略库 · ${data.library?.count} 个模版`}>
