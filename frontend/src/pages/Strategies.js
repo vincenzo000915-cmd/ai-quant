@@ -79,6 +79,7 @@ const TIMEFRAMES = ['15m', '1h', '4h', '1d'];
 export default function Strategies() {
   const [strategies, setStrategies] = useState([]);
   const [config, setConfig] = useState(null);
+  const [librarySize, setLibrarySize] = useState(null);   // Phase 15: 守门员选用池 (StrategyProfile, 单一口径)
   const [supportedSymbols, setSupportedSymbols] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -241,6 +242,8 @@ export default function Strategies() {
   useEffect(() => {
     fetchStrategies();
     fetch(`${API}/api/config`).then(r => r.json()).then(setConfig).catch(() => {});
+    // Phase 15: 守门员选用池大小 (与 Dashboard KPI 同口径 StrategyProfile)
+    fetch(`${API}/api/pnl/summary`).then(r => r.json()).then(d => setLibrarySize(d?.library_size ?? null)).catch(() => {});
     // Phase 14k-17: 拉 user primary exchange 的 symbol 列表 (HL 14 perps / OKX 7)
     fetch(`${API}/api/symbols`).then(r => r.json()).then(d => setSupportedSymbols(Array.isArray(d) ? d : [])).catch(() => {});
   }, [fetchStrategies]);
@@ -496,7 +499,7 @@ export default function Strategies() {
       {/* === Phase 12.15.5: 統一 PageHeader === */}
       <PageHeader
         title="策略库"
-        subtitle={`${strategies.filter(s => s.status !== 'retired').length} 个模版在库 · 守门员按行情动态选用 · OOS 门槛 1.5`}
+        subtitle={`守门员选用库 ${librarySize ?? '…'} 个画像 · 下方 ${strategies.filter(s => s.status !== 'retired').length} 个可管理 · OOS 门槛 1.5`}
         actions={[
           <Button key="ai-improve" variant="outlined" startIcon={<AutoAwesomeIcon />} onClick={() => setImproveOpen(true)} size="small"
             sx={{ color: palette.warmAccent, borderColor: `${palette.warmAccent}55`, textTransform: 'none', '&:hover': { borderColor: palette.warmAccent, bgcolor: `${palette.warmAccent}11` } }}>
@@ -548,7 +551,8 @@ export default function Strategies() {
       {/* Phase 15: 守门员唯一范式 — 说明这页是守门员的策略库, 不是手动启停的运行名单 */}
       <Alert severity="info" icon={false} sx={{ mb: 2.5, bgcolor: 'rgba(0,212,170,0.08)', border: '1px solid rgba(0,212,170,0.25)', '& .MuiAlert-message': { fontSize: 13 } }}>
         🛡️ <b>这是守门员的策略库</b> — 守门员每次扫描市场,从这些模版里<b>按当下行情即时回测、动态选用</b>最匹配的来下单。
-        所以策略<b>没有"启动/停止"之分</b>:全部都在库里随时待命,守门员自己决定何时用哪个。这里你可以新增模版、跑回测看表现、查看画像。
+        所以策略<b>没有"启动/停止"之分</b>:全部都在库里随时待命,守门员自己决定何时用哪个。
+        选用库含<b>内置策略 + 候选模版</b>(故总数比下方多),下方是你可新增/回测/查看画像的部分。
       </Alert>
 
       {/* 模擬盤摘要 */}
@@ -575,8 +579,8 @@ export default function Strategies() {
               </Typography>
             </Grid>
             <Grid item xs={6} sm={3}>
-              <Typography variant="caption" color="text.secondary">策略库</Typography>
-              <Typography variant="h6" fontWeight={700}>{strategies.filter(s => s.status !== 'retired').length} <Typography component="span" variant="caption" color="text.secondary">模版</Typography></Typography>
+              <Typography variant="caption" color="text.secondary">守门员选用库</Typography>
+              <Typography variant="h6" fontWeight={700}>{librarySize ?? '…'} <Typography component="span" variant="caption" color="text.secondary">画像 · 可管理 {strategies.filter(s => s.status !== 'retired').length}</Typography></Typography>
             </Grid>
           </Grid>
         </CardContent>

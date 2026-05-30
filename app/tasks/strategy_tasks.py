@@ -544,9 +544,11 @@ def _run_signals(strategy_id=None, category_filter=None):
     # 新逻辑: 开仓前先给"要开新仓"的策略按 regime 调整后 EV 排序, 用资金感知预算
     #   N=floor(权益×80%/单仓保证金) 选出本轮可开的, 其余优雅跳过(不全停). 平仓不排队(只降风险).
     allowed_open = {}        # s.id -> ev_adj (本轮 EV 排序+预算选中、可开新仓的)
-    # Phase 15: 守门员独占 — gatekeeper_live_mode=live 时现有策略让路(不开新仓),
-    # 资金全给守门员决策循环, 归因干净 (user 选独占). 现有持仓仍正常平仓.
-    gk_exclusive = cfg.get('gatekeeper_live_mode') == 'live'
+    # Phase 15 (user 2026-05-30 定: 守门员唯一范式彻底): 老独立信号执行路径已退役 —
+    # 策略不再独立开仓, 守门员是唯一自动交易者 (Basic=信号预告手动 / Pro=守门员 / Team=AI经理).
+    # 之前只在 gatekeeper_live_mode=live 让路, 现永久让路 (off/shadow/paper 也不独立交易,
+    # 否则策略库里会有奇怪的"自己在跑"显示). 现有持仓仍正常平仓 (平仓逻辑在此 block 外).
+    gk_exclusive = True
     if not halted and not gk_exclusive:
         open_candidates = []   # [(ev_adj, s)]
         for s in strategies:
@@ -1219,8 +1221,9 @@ def monitor_strategy_health():
             # Phase 15 (user 2026-05-30): 守门员范式下策略=模版库, standalone EV 无意义
             #   (Donchian 突破在趋势好/震荡烂, 按当下负EV退它=错). 守门员每次入场即时EV才是过滤器.
             #   → 守门员 live 时**不按 standalone 表现退役** (模版永远留库); 只留结构性退役(zombie/无grid).
-            from app.services.config_service import get as _cfg_get
-            _gk_exclusive = _cfg_get('gatekeeper_live_mode', 'off') == 'live'
+            # Phase 15 (守门员唯一范式彻底): 策略=模版库永不按 standalone 表现退役 (永久),
+            # 守门员每次入场即时 EV 才是过滤器; 只留结构性退役 (zombie/无grid).
+            _gk_exclusive = True
             retire_reasons = []
             if _gk_exclusive or total_trades < RETIRE_MIN_TRADES:
                 # 守门员模式=模版库不退 / 樣本太少不退; 都只記錄
