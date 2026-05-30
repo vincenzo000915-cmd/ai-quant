@@ -933,15 +933,17 @@ def cancel_okx_algo(symbol: str, algo_id, creds: dict) -> dict:
         return {'ok': False, 'reject_reason': f'{type(e).__name__}: {e}'}
 
 
-def get_okx_position_base(symbol: str, creds: dict) -> float:
-    """OKX 当前持仓 base size (带符号 long+/short-)。探 TP 成交用。无仓=0。"""
+def get_okx_position_base(symbol: str, creds: dict):
+    """OKX 当前持仓 base size (带符号 long+/short-)。
+    ⚠️ 真钱铁律 (同 get_hl_position_size): API 出错返 **None(≠0)** — 调用方不能把'查不到'当'没了'
+    去假平仓。确认查到、无此仓才返 0.0。"""
     try:
         from app.services.symbols import get_inst_id, get_contract_size
         inst_id = get_inst_id(symbol); cs = get_contract_size(symbol) or 1
         for p in (fetch_okx_positions(creds) or []):
             if p.get('inst_id') == inst_id:
                 return float(p.get('pos_contracts') or 0) * cs   # 张→base
-        return 0.0
+        return 0.0   # 确认查到、无此仓 → 真 0
     except Exception as e:
         print(f'[okx] get_position_base {symbol} fail: {e}')
-        return 0.0
+        return None   # API 出错 → None

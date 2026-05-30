@@ -219,7 +219,8 @@ def _execute_live_enter(symbol: str, d: dict, lev: float, cfg: dict, order_mode:
         gk_exit={'state': state, 'params': exit_params, 'last_ts': _entry_ts,
                  'orig_size': base_size, 'margin': size_usdt, 'order_mode': order_mode,
                  'pnl': 0.0, 'strategy': stype, 'lev': lev, 'slippage_pct': 0.03,
-                 'native': order_mode == 'live' and exchange == 'hyperliquid', 'oids': {}},
+                 'native': order_mode == 'live' and (exchange or '').lower() in ('hyperliquid', 'okx'),
+                 'oids': {}},
     )
     db.session.add(pos); db.session.commit()
     # live 真钱: 挂原生 SL + TP1/2/3 trigger 单 (服务端执行); paper 走轮询出场管理器(模拟)
@@ -264,21 +265,54 @@ def _feasible_tp_plan(base_size, entry, side, exit_params):
     return plan
 
 
-def _place_native_brackets(pos, side, entry, base_size, exit_params):
-    """开仓后挂原生 reduce-only 止损/分批止盈 trigger 单 (HL 服务端执行)。
-    SL 全仓 @ init_sl; TP 按 _feasible_tp_plan 自适应(过 $10 最低). oid 存 gk_exit['oids']。"""
-    from app.models import db
+# ── venue-无关分派 (HL / OKX 同接口) — user 2026-05-30: 多租户, OKX用户也走原生trigger ──
+def _native_creds(exchange, user_id):
+    if (exchange or '').lower() == 'okx':
+        from app.services.exchange_service import _resolve_creds
+        return _resolve_creds(user_id)
     from app.services.hyperliquid_creds import get_decrypted_for_user
+    return get_decrypted_for_user(user_id)
+
+
+def _native_place_trigger(exchange, symbol, side, trigger_px, base_size, tpsl, creds):
+    if (exchange or '').lower() == 'okx':
+        from app.services.exchange_service import place_okx_trigger
+        return place_okx_trigger(symbol, side, trigger_px, base_size, tpsl, creds)
     from app.services.hyperliquid_service import place_hl_trigger
+    return place_hl_trigger(symbol, side, trigger_px, base_size, tpsl, creds)
+
+
+def _native_cancel(exchange, symbol, oid, creds):
+    if (exchange or '').lower() == 'okx':
+        from app.services.exchange_service import cancel_okx_algo
+        return cancel_okx_algo(symbol, oid, creds)
+    from app.services.hyperliquid_service import cancel_hl_order
+    return cancel_hl_order(symbol, oid, creds)
+
+
+def _native_position_size(exchange, symbol, creds):
+    """带符号持仓 base size; API出错返 None (查不到≠没了, 真钱铁律, HL/OKX 同)。"""
+    if (exchange or '').lower() == 'okx':
+        from app.services.exchange_service import get_okx_position_base
+        return get_okx_position_base(symbol, creds)
+    from app.services.hyperliquid_service import get_hl_position_size
+    return get_hl_position_size(symbol, creds)
+
+
+def _place_native_brackets(pos, side, entry, base_size, exit_params):
+    """开仓后挂原生 reduce-only 止损/分批止盈 trigger 单 (HL/OKX 服务端执行, 按 pos.exchange 分派)。
+    SL 全仓 @ init_sl; TP 按 _feasible_tp_plan 自适应. oid 存 gk_exit['oids']。"""
+    from app.models import db
     from sqlalchemy.orm.attributes import flag_modified
-    creds = get_decrypted_for_user(pos.user_id)
+    ex = pos.exchange
+    creds = _native_creds(ex, pos.user_id)
     if not creds:
-        print(f'[gatekeeper_live] {pos.symbol} 无HL creds, 不挂原生trigger'); return
+        print(f'[gatekeeper_live] {pos.symbol} 无 {ex} creds, 不挂原生trigger'); return
     R = exit_params['init_sl_pct']
     oids = {}
     # SL (全仓)
     sl_px = entry * (1 - R / 100) if side == 'long' else entry * (1 + R / 100)
-    r_sl = place_hl_trigger(pos.symbol, side, sl_px, base_size, 'sl', creds)
+    r_sl = _native_place_trigger(ex, pos.symbol, side, sl_px, base_size, 'sl', creds)
     oids['sl'] = r_sl.get('oid'); oids['sl_px'] = r_sl.get('trigger_px')
     if not r_sl.get('ok'):
         print(f"[gatekeeper_live] {pos.symbol} SL trigger 失败: {r_sl.get('reject_reason')}")
@@ -287,7 +321,7 @@ def _place_native_brackets(pos, side, entry, base_size, exit_params):
     oids['tp_plan'] = []   # [(level_r, frac, oid)] 实际挂上的
     for r_mult, frac, key in plan:
         tp_px = _native_tp_price(side, entry, r_mult, R)
-        rr = place_hl_trigger(pos.symbol, side, tp_px, base_size * frac, 'tp', creds)
+        rr = _native_place_trigger(ex, pos.symbol, side, tp_px, base_size * frac, 'tp', creds)
         oids[key] = rr.get('oid')
         oids['tp_plan'].append({'r': r_mult, 'frac': frac, 'oid': rr.get('oid'), 'notional': round(base_size*frac*tp_px,2)})
         if not rr.get('ok'):
@@ -536,34 +570,33 @@ def _manage_native_position(pos, gk) -> dict:
     """真·fill驱动: 按 HL 真实持仓 size 减少判定成交(非价格猜) → 才TG通知、才棍轮SL。"""
     from app.models import db
     from app.services.gatekeeper_learning import record_outcome
-    from app.services.hyperliquid_creds import get_decrypted_for_user
-    from app.services.hyperliquid_service import get_hl_position_size, cancel_hl_order
     from app.services.exchange_service import get_ticker
     from sqlalchemy.orm.attributes import flag_modified
     import datetime as _dt
 
     state = gk['state']; params = gk['params']; side = state['side']; entry = state['entry']
     orig = gk.get('orig_size', pos.size) or pos.size
-    creds = get_decrypted_for_user(pos.user_id)
+    ex = pos.exchange
+    creds = _native_creds(ex, pos.user_id)
     if not creds:
         return {'managed': 0, 'closed': 0}
-    _raw_size = get_hl_position_size(pos.symbol, creds)
+    _raw_size = _native_position_size(ex, pos.symbol, creds)
     if _raw_size is None:
         # ⚠️ 真钱关键: API 查不到 ≠ 仓没了. 出错就跳过本轮(下个*/5重试), 绝不假平仓
-        # (否则 HL 抖一下就 DB 标平、回填假数据, 仓还活在交易所=真钱敞口失管).
-        print(f'[gatekeeper_live] {pos.symbol} 持仓查询失败(None), 跳过本轮不动作')
+        # (否则交易所抖一下就 DB 标平、回填假数据, 仓还活在交易所=真钱敞口失管).
+        print(f'[gatekeeper_live] {pos.symbol}@{ex} 持仓查询失败(None), 跳过本轮不动作')
         return {'managed': 1, 'closed': 0}
     cur_size = abs(_raw_size)
     cur_px = get_ticker(pos.symbol)['price']
     tp_plan = (gk.get('oids') or {}).get('tp_plan') or []
 
-    # 全平 (SL 或最后 TP 成交 → HL 已确认无仓; 上面已挡掉 None=查询失败)
+    # 全平 (SL 或最后 TP 成交 → 交易所已确认无仓; 上面已挡掉 None=查询失败)
     if orig > 0 and cur_size <= orig * 0.02:
         pnl = _native_realized_pnl(pos, gk, creds)
         for k in ('sl', 'tp1', 'tp2', 'tp3'):
             oid = (gk.get('oids') or {}).get(k)
             if oid:
-                cancel_hl_order(pos.symbol, oid, creds)
+                _native_cancel(ex, pos.symbol, oid, creds)
         pos.status = 'closed'; pos.closed_at = _dt.datetime.utcnow()
         pos.realized_pnl = pnl; pos.size = 0.0; gk['pnl'] = pnl
         pos.gk_exit = gk; flag_modified(pos, 'gk_exit')
@@ -613,15 +646,15 @@ def _notify_tp_fill_real(pos, closed_frac, cur_px):
 
 
 def _resync_native_sl(pos, gk, state, cur_size, creds):
-    """撤旧 SL trigger, 按当前剩余 size 在 state['sl'] 价位挂新 SL (棍轮上移)。"""
-    from app.services.hyperliquid_service import cancel_hl_order, place_hl_trigger
+    """撤旧 SL trigger, 按当前剩余 size 在 state['sl'] 价位挂新 SL (棍轮上移). 按 pos.exchange 分派。"""
     from sqlalchemy.orm.attributes import flag_modified
     from app.models import db
+    ex = pos.exchange
     oids = gk.get('oids') or {}
     if oids.get('sl'):
-        cancel_hl_order(pos.symbol, oids['sl'], creds)
+        _native_cancel(ex, pos.symbol, oids['sl'], creds)
     sz = cur_size if cur_size > 0 else gk.get('orig_size', pos.size)
-    r = place_hl_trigger(pos.symbol, state['side'], state['sl'], sz, 'sl', creds)
+    r = _native_place_trigger(ex, pos.symbol, state['side'], state['sl'], sz, 'sl', creds)
     oids['sl'] = r.get('oid'); oids['sl_px'] = r.get('trigger_px')
     gk['oids'] = oids; pos.gk_exit = gk; flag_modified(pos, 'gk_exit'); db.session.commit()
     if not r.get('ok'):
@@ -629,22 +662,31 @@ def _resync_native_sl(pos, gk, state, cur_size, creds):
 
 
 def _native_realized_pnl(pos, gk, creds):
-    """平仓后真盈亏: 优先拉 HL 最近 fills 的 closedPnl 累加; 失败回退引擎估算。"""
+    """平仓后真盈亏: HL 拉 fills.closedPnl / OKX 拉 fetch_okx_order_real_pnl; 失败回退引擎估算。"""
+    ex = (pos.exchange or '').lower()
     try:
-        from app.services.hyperliquid_service import _exchange_client, hl_base
-        _, info = _exchange_client(creds)
-        addr = creds.get('main_address')           # HL user-of-record (非 agent signer)
-        fills = info.user_fills(addr) or []
-        base = hl_base(pos.symbol)
-        opened = pos.opened_at.timestamp() * 1000 if pos.opened_at else 0
-        tot = 0.0; hit = False
-        for f in fills:
-            if f.get('coin') == base and float(f.get('time', 0)) >= opened:
-                cp = f.get('closedPnl')
-                if cp is not None:
-                    tot += float(cp); hit = True
-        if hit:
-            return round(tot, 4)
+        if ex == 'okx':
+            from app.services.exchange_service import fetch_okx_order_real_pnl
+            from app.services.symbols import get_inst_id
+            # OKX 平仓真pnl — 用最近成交累加 (按inst); 简化: 拉该inst近期fills closedPnl
+            r = fetch_okx_order_real_pnl(get_inst_id(pos.symbol), None, creds=creds)
+            if r.get('found'):
+                return round(r['real_pnl'], 4)
+        else:
+            from app.services.hyperliquid_service import _exchange_client, hl_base
+            _, info = _exchange_client(creds)
+            addr = creds.get('main_address')           # HL user-of-record (非 agent signer)
+            fills = info.user_fills(addr) or []
+            base = hl_base(pos.symbol)
+            opened = pos.opened_at.timestamp() * 1000 if pos.opened_at else 0
+            tot = 0.0; hit = False
+            for f in fills:
+                if f.get('coin') == base and float(f.get('time', 0)) >= opened:
+                    cp = f.get('closedPnl')
+                    if cp is not None:
+                        tot += float(cp); hit = True
+            if hit:
+                return round(tot, 4)
     except Exception as e:
         print(f'[gatekeeper_live] native real_pnl fetch fail: {type(e).__name__}: {e}')
     return round(gk.get('pnl', 0.0), 4)   # 回退: 引擎累计估算
