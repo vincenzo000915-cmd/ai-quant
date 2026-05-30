@@ -621,10 +621,20 @@ class SystemConfig(db.Model):
     trading_mode = db.Column(db.String(10), default='paper')  # 'paper' | 'live'（live 暫鎖）
     capital_usdt = db.Column(db.Float, default=100.0)         # 模擬本金 / 真實本金
     leverage = db.Column(db.Float, default=15.0)
-    trade_size_usdt = db.Column(db.Float, default=10.0)       # 每筆下單金額
-    stop_loss_pct = db.Column(db.Float, default=5.0)          # 槓桿後的 PnL %
-    take_profit_pct = db.Column(db.Float, default=8.0)
+    trade_size_usdt = db.Column(db.Float, default=10.0)       # 每筆下單金額 (=每筆保證金 margin)
+    stop_loss_pct = db.Column(db.Float, default=5.0)          # [legacy] 槓桿後的 PnL % — 由 sl_price_pct 取代, 留作回退
+    take_profit_pct = db.Column(db.Float, default=8.0)        # [legacy] 由 tp1/2/3_r 多段取代, 留作回退
     max_daily_loss_usdt = db.Column(db.Float, default=10.0)
+
+    # Phase 15 (2026-05-30): 用户默认交易参数 — 镜像 AI 经理 ai_manager_params 输出 schema.
+    # 让 basic 在系统设定填的就是经理同款语言 (价格距离% / 多段R / 分批), 不再用旧的「杠杆后PnL单值」.
+    # 消费优先级仍是 strategy.params > TF-aware > 这里(cfg fallback); 经理路径(Team)用经理实时给的不读这.
+    sl_price_pct = db.Column(db.Float, default=1.0)           # 初始止损「价格距离%(杠杆前)」— 与经理 init_sl_pct 同义
+    tp1_r = db.Column(db.Float, default=0.5)                  # 多段止盈 R 倍数 (盈亏比); TP1 价 = entry ± tp1_r×sl_price_pct
+    tp2_r = db.Column(db.Float, default=1.2)
+    tp3_r = db.Column(db.Float, default=2.0)
+    tp1_frac = db.Column(db.Float, default=0.5)              # 头档平仓比例 (吃头中段不贪尾)
+    tp2_frac = db.Column(db.Float, default=0.3)              # 中段平仓比例; 尾段=剩余(1−tp1−tp2)≥0.15
 
     # Phase 6.1: 全局風控狀態。halted=True 時拒絕所有新開倉
     halted = db.Column(db.Boolean, default=False)
@@ -684,6 +694,12 @@ class SystemConfig(db.Model):
             'stop_loss_pct': self.stop_loss_pct,
             'take_profit_pct': self.take_profit_pct,
             'max_daily_loss_usdt': self.max_daily_loss_usdt,
+            'sl_price_pct': self.sl_price_pct if self.sl_price_pct is not None else 1.0,
+            'tp1_r': self.tp1_r if self.tp1_r is not None else 0.5,
+            'tp2_r': self.tp2_r if self.tp2_r is not None else 1.2,
+            'tp3_r': self.tp3_r if self.tp3_r is not None else 2.0,
+            'tp1_frac': self.tp1_frac if self.tp1_frac is not None else 0.5,
+            'tp2_frac': self.tp2_frac if self.tp2_frac is not None else 0.3,
             'halted': self.halted,
             'halt_reason': self.halt_reason,
             'halted_at': self.halted_at.isoformat() if self.halted_at else None,

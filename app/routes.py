@@ -1830,6 +1830,23 @@ def update_system_config():
         return jsonify({'error': 'stop_loss_pct out of range (0,50]'}), 400
     if 'take_profit_pct' in patch and not (0 < patch['take_profit_pct'] <= 200):
         return jsonify({'error': 'take_profit_pct out of range (0,200]'}), 400
+    # Phase 15: 经理对齐参数守卫 (价格距离% / 多段R / 分批比例)
+    if 'sl_price_pct' in patch and not (0.1 <= patch['sl_price_pct'] <= 20):
+        return jsonify({'error': 'sl_price_pct 价格距离% 须在 [0.1, 20]'}), 400
+    for _tpk, _lo, _hi in (('tp1_r', 0.1, 5), ('tp2_r', 0.2, 8), ('tp3_r', 0.3, 12)):
+        if _tpk in patch and not (_lo <= patch[_tpk] <= _hi):
+            return jsonify({'error': f'{_tpk} 须在 [{_lo}, {_hi}]'}), 400
+    for _fk in ('tp1_frac', 'tp2_frac'):
+        if _fk in patch and not (0.1 <= patch[_fk] <= 0.7):
+            return jsonify({'error': f'{_fk} 分批比例 须在 [0.1, 0.7]'}), 400
+    # 两档分批和 ≤ 0.85 (尾段至少留 0.15) — 与经理 ai_manager.py 同口径
+    _f1 = patch.get('tp1_frac'); _f2 = patch.get('tp2_frac')
+    if _f1 is not None and _f2 is not None and (_f1 + _f2) > 0.85 + 1e-9:
+        return jsonify({'error': 'tp1_frac + tp2_frac 须 ≤ 0.85 (尾段至少留 0.15)'}), 400
+    # R 阶梯须递增 (tp1 < tp2 < tp3) 才是合理的分段止盈
+    _r1 = patch.get('tp1_r'); _r2 = patch.get('tp2_r'); _r3 = patch.get('tp3_r')
+    if None not in (_r1, _r2, _r3) and not (_r1 < _r2 < _r3):
+        return jsonify({'error': 'tp1_r < tp2_r < tp3_r 须递增'}), 400
     if 'sizing_mode' in patch and patch['sizing_mode'] not in ('flat', 'vol_target', 'sharpe_weighted'):
         return jsonify({'error': 'sizing_mode must be flat / vol_target / sharpe_weighted'}), 400
     if 'target_vol_pct' in patch and not (0.1 <= patch['target_vol_pct'] <= 20):

@@ -22,6 +22,13 @@ DEFAULTS = {
     'stop_loss_pct': 5.0,
     'take_profit_pct': 8.0,
     'max_daily_loss_usdt': 10.0,
+    # Phase 15 (2026-05-30): 镜像 AI 经理参数 schema — 用户默认交易参数 (价格距离% / 多段R / 分批)
+    'sl_price_pct': 1.0,
+    'tp1_r': 0.5,
+    'tp2_r': 1.2,
+    'tp3_r': 2.0,
+    'tp1_frac': 0.5,
+    'tp2_frac': 0.3,
     'halted': False,
     'halt_reason': None,
     'sizing_mode': 'flat',
